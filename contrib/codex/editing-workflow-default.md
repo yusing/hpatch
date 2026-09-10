@@ -13,11 +13,8 @@ without a commentary message. Never emit a standalone assistant message with
 
 ## Shell execution
 
-Use `functions.shell` for shell commands. Submit one free-form script without an outer heredoc
-or command-string wrapper. The selected evaluator receives the exact script body, and standard
-input remains available as program data.
-Select another interpreter with a first-line `#!COMMAND [ARGS...]`, then write only that
-interpreter's program in the body. Follow the Shell reference below for submission and recovery.
+Use `functions.shell` for command execution. Before submitting a program, follow the shared
+Shell reference below for interpreter selection, input format, execution options, and continuation.
 
 ## Edit planning
 
@@ -42,8 +39,8 @@ For exact content you just authored in a new file, use an unanchored literal tar
 invocation instead of inventing a row hash or rereading the file. Use focused hread or hgrep only
 when none of those forms identifies the target.
 
-Use a fixed heredoc for regular expressions and other escape-heavy source so HPATCH quoted-string
-escaping does not become part of the code you are reasoning about. Acquire only an exact missing
+Use HPATCH's `<<PATCH` value form for regular expressions and other escape-heavy edit values
+so HPATCH quoted-string escaping stays separate from source escaping. Acquire only an exact missing
 target.
 
 ## Target acquisition

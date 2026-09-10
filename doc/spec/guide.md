@@ -64,7 +64,9 @@ for rejected target-bearing commands. Other evaluator rejections direct the mode
 ordinary script. A re-rejected recovery states that prior handles are stale and refreshes the
 listed commands from the latest evaluated script.
 
-Both model variants teach the following tool workflow, with different wording and detail.
+Both model variants use the shared Shell reference for execution rules; model-specific sections
+point to it rather than repeat submission syntax. Shell working-directory guidance applies with
+and without CTP. The variants teach the following tool workflow:
 
 1. Submit a shell call as one free-form script without an outer wrapper. Use Bash by default or
    select another interpreter with a direct compact shebang. Keep program input on standard input,
@@ -74,7 +76,9 @@ Both model variants teach the following tool workflow, with different wording an
    selected interpreter's program, without a closing heredoc delimiter. Examples do not limit
    interpreter selection. Subsequent shell checks belong in a separate default-Bash call
    after success. Runtime failure may leave earlier statements' effects in place; inspect affected
-   state before retrying. Distinguish HPATCH's `<<PATCH` value syntax from shell submission.
+   state before retrying. Distinguish HPATCH's `<<PATCH` edit-value syntax and shell data
+   heredocs from interpreter-program submission. Put the optional interpreter selector first,
+   followed by at most one `#!cmd=` and one `#!params=` in either order, then the source body.
 2. Inspect, edit, or rerun a retained shell script through its `@shell/` reference, and never mix
    retained and workspace paths in one hpatch script.
 3. Acquire target-bearing context for existing-file edits. When a known identifier or literal is
@@ -98,7 +102,8 @@ Both model variants teach the following tool workflow, with different wording an
    pre-edit rows or ranges covered by confirmed routed mappings. Use returned final-state rows
    or exact unanchored current text for other changed content. Acquire a focused read when these
    forms do not identify the intended current target; rereading solely to recover an available
-   target is unnecessary. Use a fixed heredoc for regular expressions and other escape-heavy source.
+   target is unnecessary. Use HPATCH's `<<PATCH` value form for regular expressions and other
+   escape-heavy edit values.
 8. Use nonempty `type` to replace and empty target-bearing `type` to delete. Use `add` to
    insert before a line or text destination and `add EOF` to append. Use inline values for
    short text and `<<PATCH` for multiline or escape-heavy values.

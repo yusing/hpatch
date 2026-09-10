@@ -30,7 +30,7 @@ func (r *parsedResponsesRequest) responseTools() *responsesToolCatalog {
 	return r.toolCatalog
 }
 
-func (r *parsedResponsesRequest) isToolFreeStructuredRequest() bool {
+func (r *parsedResponsesRequest) isAuxiliaryStructuredRequest() bool {
 	var text struct {
 		Format struct {
 			Type string `json:"type"`
@@ -42,15 +42,66 @@ func (r *parsedResponsesRequest) isToolFreeStructuredRequest() bool {
 	// Admission runs before instruction rewriting can remove input items. Do not
 	// cache additional-tool indexes until those transformations have finished.
 	catalog := decodeResponsesToolCatalog(r.fields)
-	if catalog.inputObjectsErr != nil || catalog.top.err != nil || len(catalog.top.rawTools) != 0 {
+	if catalog.inputObjectsErr != nil {
+		return false
+	}
+	var execSeen, waitSeen bool
+	var acceptSection func(*responsesToolSection, bool) bool
+	acceptSection = func(section *responsesToolSection, namespaces bool) bool {
+		if section == nil || section.err != nil {
+			return false
+		}
+		for _, node := range section.nodes {
+			if node == nil || node.definition == nil {
+				return false
+			}
+			tool := node.definition
+			if tool.Type == "namespace" {
+				if !namespaces || tool.Name != "functions" || node.nested == nil || !node.nested.array || !acceptSection(node.nested, false) {
+					return false
+				}
+				continue
+			}
+			if node.nested != nil {
+				return false
+			}
+			switch tool.Name {
+			case "exec":
+				if execSeen || tool.Type != "custom" || !isBareCodeModeDescription(tool.Description) {
+					return false
+				}
+				execSeen = true
+			case "wait":
+				if waitSeen || tool.Type != "function" {
+					return false
+				}
+				waitSeen = true
+			default:
+				return false
+			}
+		}
+		return true
+	}
+	if !acceptSection(catalog.top, true) {
 		return false
 	}
 	for _, group := range catalog.additional {
-		if group.tools.err != nil || !group.tools.array || len(group.tools.rawTools) != 0 {
+		if !group.tools.array || !acceptSection(group.tools, true) {
 			return false
 		}
 	}
-	return true
+	return !waitSeen || execSeen
+}
+
+// Codex can retain its JavaScript exec/wait wrapper in auxiliary requests even
+// when there are no advertised nested tools. Examples in the generic preamble
+// mention exec_command; only tool declarations establish an executor catalog.
+func isBareCodeModeDescription(description string) bool {
+	return strings.HasPrefix(description, "Run JavaScript code to orchestrate/compose tool calls\n") &&
+		strings.Contains(description, "global `tools` object") &&
+		strings.Contains(description, "no Node, no file system, no network access, no console") &&
+		!strings.Contains(description, "###") &&
+		!strings.Contains(description, "declare const tools")
 }
 
 // setInput updates the request input and re-indexes additional tool groups.

@@ -352,9 +352,10 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if !metadataValid || metadata.RequestKind != "turn" {
 		return nil, errors.New("hpatch rewrite requires valid turn metadata")
 	}
-	// Codex's temporary structured requests (for example, task titles) have
-	// no executor. Leave their instructions and output schema provider-owned.
-	if request.isToolFreeStructuredRequest() {
+	// Codex's temporary structured requests (for example, task titles) can
+	// retain bare Code Mode wrappers without advertising any nested tools.
+	// Leave their instructions and output schema provider-owned.
+	if request.isAuxiliaryStructuredRequest() {
 		if strings.TrimSpace(threadID) == "" {
 			return nil, errors.New("hpatch rewrite requires a valid Codex thread ID")
 		}

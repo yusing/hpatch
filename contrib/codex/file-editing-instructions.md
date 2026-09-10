@@ -40,9 +40,7 @@ leading, trailing, and final line feeds.
 
 Emit novel assistant prose natively. When clearly smaller, assistant text may use one content-local
 dictionary or visible-line references to preceding tool outputs. Emit CTP syntax only in assistant
-text. Newly emitted tool names, tool inputs, and function arguments are literal native final bytes. In
-`functions.shell`, omit `workdir` so execution uses the current workspace; a necessary override is
-a fully expanded existing absolute path, never a reference or placeholder.
+text. Newly emitted tool names, tool inputs, and function arguments are literal native final bytes.
 
 {{.EditingWorkflow}}
 
@@ -59,13 +57,15 @@ alone and wait for its result before another tool call. Use only the tools expos
 
 ## Shell reference
 
-The default interpreter is Bash. Select another interpreter with a first-line
-`#!COMMAND [ARGS...]`, then write its program directly below it. The selector accepts an
-interpreter command or path with arguments, for example `#!python3`, `#!ruby`, `#!node`,
-`#!uv run python`, or `#!node --experimental-strip-types`; these are examples, not a whitelist.
-Use a direct command or path rather than `/usr/bin/env`.
+Submit one free-form program to `functions.shell`. Choose its interpreter before writing the body:
 
-For example:
+- Bash: write commands directly, without a shebang.
+- Another interpreter: put `#!COMMAND [ARGS...]` on the first line, then write that interpreter's
+  program directly below it. Use a direct command or path rather than `/usr/bin/env`.
+  Examples include `#!python3`, `#!ruby`, `#!node`, `#!uv run python`, and
+  `#!node --experimental-strip-types`; interpreter selection is not limited to these examples.
+
+For Python, submit the contents of this example without the Markdown fence:
 
 ```python
 #!python3
@@ -73,23 +73,30 @@ values = [2, 3, 5]
 print(sum(values))
 ```
 
-Submit the example's contents, without the Markdown fence. End the body at the last program
-statement, without a closing heredoc delimiter. Every body line belongs to the selected interpreter;
-run subsequent shell commands such as `gofmt` or tests in a separate default-Bash call after
-the interpreter call succeeds. After a runtime failure, check any affected state before retrying:
-statements before the failure may already have executed.
+Every body line is program source for the selected interpreter. Submit it directly, not through
+an interpreter command with a quoted program argument or a shell heredoc such as `python3 - <<'PY'`.
+There is no closing delimiter. Run subsequent Bash commands such as `gofmt` or tests in a separate
+call after the interpreter call succeeds. Interpreter flags belong in the selector, not around
+the program body. Selectors named `bash` or ending in `/bash` use the embedded Bash evaluator;
+`sh` or a path ending in `/sh` selects its POSIX evaluator.
 
-Selectors named `bash` or ending in `/bash` use the embedded Bash evaluator; selectors named
-`sh` or ending in `/sh` use its POSIX evaluator.
-Omit Bash shebangs, and pass the script directly instead of wrapping it in Bash, `-c` or `-e`
-command-string quoting, or a heredoc. The HPATCH `<<PATCH` value form belongs only inside an
-Hpatch edit script, not around a shell call.
+HPATCH's `<<PATCH` is a multiline edit-value form used inside `functions.hpatch`, not a shell
+submission wrapper. Shell redirections and heredocs that supply command data remain shell syntax;
+they are not the way to submit an interpreter's program.
 
-Optional `#!key=value` directives follow the interpreter shebang or appear first. `#!cmd=`
-accepts exactly one `{.}` placeholder, which expands to the normalized shell helper command
-while leaving standard input available to the script. `#!params=<JSON object>` supplies
-request-specific outer execution arguments and may appear before or after `#!cmd=`. The body
-supplies `cmd`, so omit it from params; when `login` is present, it must be `false`.
+### Execution options and program input
+
+The input order is: optional interpreter selector, optional directive lines, then program source.
+Without a selector, the body is Bash. Put directives together before the body; `#!cmd=` and
+`#!params=` may appear in either order, at most once each.
+
+- `#!params=<JSON object>` supplies the request-specific execution fields listed in the tool
+  description. The body supplies `cmd`, so omit that field; if setting `login`, use `false`.
+  Omit `workdir` to use the current workspace. A necessary override must be a fully expanded
+  existing absolute path, never a reference or placeholder.
+- `#!cmd=` accepts exactly one `{.}` placeholder, which expands to the script runner invocation.
+  Use it to connect a producer to the program's standard input, independently of its source body.
+
 
 For example, keep a producer in `#!cmd=` and write the consumer directly as the body:
 
@@ -105,6 +112,11 @@ print("count", len(records))
 for record in records:
     print(record["name"])
 ```
+
+### Results, continuation, and retry
+
+A runtime failure may leave earlier statements' effects in place. Inspect affected state before
+retrying; a failed call does not imply rollback.
 
 A retained result includes `retained: true` and a `script_ref`. Read the source with
 `hread @shell/<reference>`, edit it with hpatch, or rerun its current content with a shell call

@@ -103,12 +103,16 @@ supported tool catalog. It retains native input for the next turn without
 performing tool rewriting. Generating requests cannot use prewarm metadata to
 bypass ordinary turn validation.
 
-Tool-free structured turns used by Codex for auxiliary work such as task titles pass
-through without Hpatch instruction or tool rewriting or CTP encoding. They require valid turn metadata,
-session and thread IDs, a `text.format.type` of `json_schema`, and no tools in either
-the top-level or additional-tool catalogs. Their output schema remains provider-owned.
-Malformed or nonempty catalogs do not qualify; unsupported tool-bearing requests still
-fail before upstream forwarding.
+Structured turns used by Codex for auxiliary work such as task titles pass through without
+Hpatch instruction or tool rewriting or CTP encoding when they advertise no nested or native
+execution tools. They require valid turn metadata, session and thread IDs, and a
+`text.format.type` of `json_schema`. Catalogs may be empty or contain only Codex's bare
+JavaScript Code Mode `exec` and optional `wait`, flat or in the `functions` namespace.
+The bare Code Mode description contains the isolated JavaScript runtime contract but no
+nested tool declarations. Generic preamble examples mentioning `tools.exec_command` are
+not declarations. Their output schema remains provider-owned. Malformed catalogs, other
+tools, or Code Mode descriptions with nested tool declarations do not qualify; ordinary
+tool-bearing requests retain the existing Hpatch admission and rewriting checks.
 
 Request preparation and response restoration retain Hpatch tools, replay,
 CTP/2, and native carrier behavior. Incremental input must retain enough

@@ -64,8 +64,6 @@ func TestInstructionsOwnCTP2Representation(t *testing.T) {
 		"compaction removes sources that are no longer visible",
 		"`!ctp2 L` plus a line feed starts literal text",
 		"Newly emitted tool names, tool inputs, and function arguments are literal",
-		"`functions.shell`, omit `workdir`",
-		"fully expanded existing absolute path, never a reference or placeholder",
 		"Every decoded byte is final text",
 	} {
 		if !strings.Contains(InstructionsForModel("", true), required) {
@@ -116,8 +114,12 @@ func TestInstructionsBindCommentaryToSupportedTools(t *testing.T) {
 
 func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 	for _, required := range []string{
-		"Submit one free-form script without an outer heredoc",
-		"The default interpreter is Bash.",
+		"Submit one free-form program to `functions.shell`",
+		"Bash: write commands directly, without a shebang.",
+		"a shell heredoc such as `python3 - <<'PY'`",
+		"There is no closing delimiter.",
+		"optional interpreter selector, optional directive lines, then program source",
+		"Omit `workdir` to use the current workspace.",
 		"rather than `/usr/bin/env`",
 		"accepts exactly one `{.}` placeholder",
 		"`#!params=<JSON object>`",
@@ -126,9 +128,14 @@ func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 		"never mix retained scripts and workspace files",
 		"PTY-backed, interactive, and long-running programs",
 	} {
-		if !strings.Contains(InstructionsForModel("", true), required) {
-			t.Errorf("default instructions omit shell workflow %q", required)
+		for _, model := range []string{"", "gpt-6-astra"} {
+			for _, compact := range []bool{false, true} {
+				if !strings.Contains(InstructionsForModel(model, compact), required) {
+					t.Errorf("model %q compact %v: instructions omit shell workflow %q", model, compact, required)
+				}
+			}
 		}
+
 	}
 }
 

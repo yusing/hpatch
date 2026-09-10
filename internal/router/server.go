@@ -560,7 +560,7 @@ func executeRequest(
 			return fmt.Errorf("prepare hpatch response proxy: %w", err)
 		}
 		if hpatchTransform == nil {
-			// Compaction and tool-free structured turns do not receive the
+			// Compaction and auxiliary structured turns do not receive the
 			// Hpatch instructions needed to decode CTP text.
 			compactTokens = nil
 		}
