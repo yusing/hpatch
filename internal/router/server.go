@@ -522,7 +522,11 @@ func executeRequest(
 		}
 	}()
 	var hpatchTransform *hpatchResponseTransform
-	if hpatchCalls != nil {
+	// Only the WebSocket provider guarantees non-generating warmup for every
+	// supported model. HTTP requests must retain ordinary preparation checks.
+	_, webSocketRequest := provider.(*webSocketExchange)
+	prewarm := webSocketRequest && metadataValid && metadata.RequestKind == "prewarm" && string(parsedRequest.fields["generate"]) == "false"
+	if hpatchCalls != nil && !prewarm {
 		hpatchTransform, err = hpatchCalls.prepareRequest(
 			ctx,
 			&parsedRequest,

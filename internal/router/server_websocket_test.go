@@ -399,3 +399,195 @@ func TestResponsesWebSocketEndpointCloseWaitsAndRejectsNewAdmission(t *testing.T
 		t.Fatalf("admission after shutdown: response=%v err=%v", response, err)
 	}
 }
+
+func TestResponsesWebSocketStartupPrewarmMetadata(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	proxy := newManagedHPatchProxy(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
+		t.Error("prewarm must not execute tools")
+		return nil, nil
+	}))
+	headers := codexAuthHeaders()
+	headers.Set(sessionIDHeader, "prewarm-session")
+	headers.Set(threadIDHeader, "prewarm-thread")
+	conn := testResponsesSocket(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstream, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer upstream.CloseNow()
+		for i, id := range []string{"warm", "turn", "continuation"} {
+			request, err := providerSocketRead(ctx, upstream)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if i == 0 {
+				if string(request["generate"]) != "false" {
+					t.Errorf("warmup may generate: %s", mustMarshalJSON(request))
+				}
+			} else {
+				if len(request["generate"]) != 0 {
+					t.Error("warmup generate setting inherited")
+				}
+				if !strings.Contains(string(request["tools"]), "shell") {
+					t.Errorf("ordinary turn tools were not rewritten: %s", request["tools"])
+				}
+				wantParent := "warm"
+				wantInput := "task"
+				if i == 2 {
+					wantParent = "turn"
+					wantInput = "next"
+				}
+				if jsonString(request, "previous_response_id") != wantParent {
+					t.Errorf("parent = %s", request["previous_response_id"])
+				}
+				var input []map[string]json.RawMessage
+				if err := json.Unmarshal(request["input"], &input); err != nil || len(input) != 1 || jsonString(input[0], "content") != wantInput {
+					t.Errorf("incremental history = %s", request["input"])
+				}
+			}
+			if err := providerSocketWrite(ctx, upstream, socketEvent("response.completed", id)); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+		_, _, _ = upstream.Read(ctx)
+	}), proxy, nil, headers)
+	metadata := func(value any) map[string]string {
+		return map[string]string{codexTurnMetadataHeader: string(mustMarshalJSON(value))}
+	}
+	socketWrite(t, ctx, conn, map[string]any{"type": "response.create", "model": "gpt-test", "input": []any{map[string]string{"role": "user", "content": "warmup context"}}, "generate": false, "client_metadata": metadata(map[string]string{"request_kind": "prewarm"})})
+	if got := socketRead(t, ctx, conn); jsonString(got, "type") != "response.completed" {
+		t.Fatalf("warmup produced a warning: %s", mustMarshalJSON(got))
+	}
+	turnMetadata := metadata(codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{t.TempDir(): nil}})
+	for i, parent := range []string{"warm", "turn"} {
+		input := "task"
+		if i == 1 {
+			input = "next"
+		}
+		socketWrite(t, ctx, conn, map[string]any{"type": "response.create", "model": "gpt-test", "input": []any{map[string]string{"role": "user", "content": input}}, "previous_response_id": parent, "tools": testNativeResponsesTools(), "client_metadata": turnMetadata})
+		if got := socketRead(t, ctx, conn); jsonString(got, "type") != "response.completed" {
+			t.Fatalf("turn produced a warning: %s", mustMarshalJSON(got))
+		}
+	}
+}
+
+func TestHPatchPrewarmRequiresExplicitNonGeneratingRequest(t *testing.T) {
+	for _, generate := range []string{"", "true", "null", `"false"`} {
+		t.Run("generate="+generate, func(t *testing.T) {
+			request, err := parseResponsesRequest([]byte(`{"model":"gpt-test","input":[]}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if generate != "" {
+				request.fields["generate"] = json.RawMessage(generate)
+			}
+			proxy := &hpatchProxy{}
+			if err := executeRequest(t.Context(), t.Context(), request, serverMetadataHeaders(t, "prewarm", nil), "session", &webSocketExchange{}, io.Discard, nil, proxy, nil, nil); err == nil {
+				t.Fatal("generating prewarm bypassed turn validation")
+			}
+		})
+	}
+}
+
+func TestResponsesHTTPPrewarmCannotBypassPreparation(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"grok-test","input":[],"generate":false}`))
+	request.Header = serverMetadataHeaders(t, "prewarm", nil)
+	request.Header.Set(sessionIDHeader, "prewarm-session")
+	request.Header.Set(threadIDHeader, "prewarm-thread")
+	provider := &serverFakeProvider{}
+	recorder := httptest.NewRecorder()
+	responsesHandler(t.Context(), time.Minute, provider, nil, &hpatchProxy{}, nil, nil)(recorder, request)
+	if len(provider.forwarded) != 0 {
+		t.Fatal("HTTP prewarm reached a potentially generating provider")
+	}
+	if !strings.Contains(recorder.Body.String(), "valid turn metadata") {
+		t.Fatalf("response = %s", recorder.Body.String())
+	}
+}
+
+func TestResponsesWebSocketLocalErrorStatus(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		body     string
+		metadata string
+		status   string
+	}{
+		{name: "invalid JSON", body: `{`, status: "400"},
+		{name: "invalid input", body: `{"type":"response.create","model":"gpt-test","input":42}`, status: "400"},
+		{name: "unknown parent", body: `{"type":"response.create","model":"gpt-test","previous_response_id":"missing"}`, status: "400"},
+		{name: "unsupported tools", body: `{"type":"response.create","model":"gpt-test","input":[]}`, metadata: "turn", status: "400"},
+		{name: "execution failure", body: `{"type":"response.create","model":"gpt-test","input":[]}`, metadata: "invalid", status: "502"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			headers := codexAuthHeaders()
+			headers.Set(sessionIDHeader, "error-session")
+			headers.Set(threadIDHeader, "error-thread")
+			var proxy *hpatchProxy
+			if test.metadata != "" {
+				proxy = newManagedHPatchProxy(t, testTranslator(t, new(int)))
+				metadata := serverMetadataHeaders(t, test.metadata, map[string]json.RawMessage{t.TempDir(): nil})
+				headers.Set(codexTurnMetadataHeader, metadata.Get(codexTurnMetadataHeader))
+			}
+			conn := testResponsesSocket(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Error("invalid request reached provider")
+			}), proxy, nil, headers)
+			if err := conn.Write(ctx, websocket.MessageText, []byte(test.body)); err != nil {
+				t.Fatal(err)
+			}
+			for {
+				event := socketRead(t, ctx, conn)
+				if jsonString(event, "type") != "error" {
+					continue
+				}
+				if string(event["status"]) != test.status {
+					t.Fatalf("status = %s, want %s: %s", event["status"], test.status, mustMarshalJSON(event))
+				}
+				var detail map[string]json.RawMessage
+				if err := json.Unmarshal(event["error"], &detail); err != nil || jsonString(detail, "message") == "" {
+					t.Fatalf("missing Codex error detail: %s", event["error"])
+				}
+				break
+			}
+		})
+	}
+}
+
+func TestResponsesWebSocketAutomaticParentErrorStatus(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	conn := testResponsesSocket(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstream, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer upstream.CloseNow()
+		if _, err := providerSocketRead(ctx, upstream); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := providerSocketWrite(ctx, upstream, socketEvent("response.completed", "parent")); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := providerSocketWrite(ctx, upstream, map[string]any{"type": "response.created", "response": map[string]string{"id": "automatic", "previous_response_id": "missing"}}); err != nil {
+			t.Error(err)
+			return
+		}
+		_, _, _ = upstream.Read(ctx)
+	}), nil, nil, codexAuthHeaders())
+	socketWrite(t, ctx, conn, map[string]any{"type": "response.create", "model": "gpt-test", "input": "task"})
+	if event := socketRead(t, ctx, conn); jsonString(event, "type") != "response.completed" {
+		t.Fatalf("completion = %s", mustMarshalJSON(event))
+	}
+	event := socketRead(t, ctx, conn)
+	if jsonString(event, "type") != "error" || string(event["status"]) != "502" {
+		t.Fatalf("provider ancestry must not be a client error: %s", mustMarshalJSON(event))
+	}
+}

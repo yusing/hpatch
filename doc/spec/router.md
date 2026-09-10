@@ -78,6 +78,12 @@ keeps reading after a steered `response.incomplete` or normal completion for an
 automatic successor. A pending tool-result continuation uses the same
 `previous_response_id` and does not resend accepted steering.
 
+Startup metadata with `request_kind="prewarm"` and explicit `generate=false`
+is a non-generating transport handshake and does not require workspaces or a
+supported tool catalog. It retains native input for the next turn without
+performing tool rewriting. Generating requests cannot use prewarm metadata to
+bypass ordinary turn validation.
+
 Request preparation and response restoration retain Hpatch tools, replay,
 CTP/2, and native carrier behavior. Incremental input must retain enough
 connection-local native history to resolve those transformations while sending
@@ -85,6 +91,11 @@ only new transformed input upstream. Automatic successors inherit the parent
 request's translation context; explicit continuations use their own settings.
 Neither a dropped connection nor a failed send silently replays requests or
 steering. Shutdown and downstream disconnect release the owned connection.
+
+Router-generated WebSocket error events include a numeric HTTP-style `status`
+so Codex can recognize them: incompatible requests and malformed client messages
+use 400, other execution failures use 502, and provider upgrade rejections retain
+the provider status and error body.
 
 Client messages and reconstructed requests have a 32 MiB buffer budget;
 provider messages have a 64 MiB budget. A session conservatively charges retained

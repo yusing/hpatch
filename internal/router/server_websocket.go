@@ -97,7 +97,11 @@ func (e *webSocketStatusError) Error() string {
 }
 
 func (s *responsesWebSocket) writeError(ctx context.Context, err error) ([]byte, error) {
-	fields := map[string]any{"type": "error", "error": map[string]string{"type": "invalid_request_error", "message": err.Error()}}
+	status := http.StatusBadGateway
+	if _, ok := errors.AsType[*requestCompatibilityError](err); ok {
+		status = http.StatusBadRequest
+	}
+	fields := map[string]any{"type": "error", "status": status, "error": map[string]string{"type": "invalid_request_error", "message": err.Error()}}
 	if upstream, ok := errors.AsType[*webSocketStatusError](err); ok {
 		fields["status"] = upstream.status
 		var body map[string]json.RawMessage
@@ -125,11 +129,15 @@ func readResponsesWebSocket(ctx context.Context, conn *websocket.Conn, disconnec
 			if err != nil && disconnected != nil {
 				disconnected()
 			}
+			readFailed := err != nil
 			if err == nil && kind != websocket.MessageText {
 				err = errors.New("Responses WebSocket requires text JSON messages")
 			}
 			if err == nil && !json.Valid(body) {
 				err = errors.New("Responses WebSocket received invalid JSON")
+			}
+			if !readFailed && err != nil && disconnected != nil {
+				err = incompatibleRequest("invalid_websocket_request", err.Error())
 			}
 			select {
 			case messages <- webSocketMessage{body, err}:
@@ -216,7 +224,7 @@ func webSocketInput(raw json.RawMessage) ([]json.RawMessage, error) {
 	}
 	var items []json.RawMessage
 	if err := json.Unmarshal(raw, &items); err != nil {
-		return nil, fmt.Errorf("decode WebSocket input: %w", err)
+		return nil, incompatibleRequest("invalid_websocket_request", "decode WebSocket input: "+err.Error())
 	}
 	return items, nil
 }
@@ -278,13 +286,13 @@ func (s *responsesWebSocket) control(body []byte) error {
 	_ = json.Unmarshal(body, &fields)
 	if jsonString(fields, "type") == "response.create" {
 		if s.queuedCreate != nil {
-			return errors.New("a Responses WebSocket continuation is already queued")
+			return incompatibleRequest("invalid_websocket_request", "a Responses WebSocket continuation is already queued")
 		}
 		s.queuedCreate = bytes.Clone(body)
 		return nil
 	}
 	if s.upstream == nil {
-		return errors.New("send response.create before a WebSocket control message; Grok does not support steering")
+		return incompatibleRequest("invalid_websocket_request", "send response.create before a WebSocket control message; Grok does not support steering")
 	}
 	if jsonString(fields, "type") == "response.steer" {
 		input, err := webSocketInput(fields["input"])
@@ -386,10 +394,10 @@ func (s *responsesWebSocket) execute(command, firstEvent []byte) error {
 	var fields map[string]json.RawMessage
 	if !automatic {
 		if err := json.Unmarshal(command, &fields); err != nil || fields == nil {
-			return errors.New("invalid response.create")
+			return incompatibleRequest("invalid_websocket_request", "invalid response.create")
 		}
 		if value := fields["stream_id"]; len(value) != 0 && string(value) != "null" {
-			return errors.New("multiplexed Responses WebSocket lanes are not supported")
+			return incompatibleRequest("invalid_websocket_request", "multiplexed Responses WebSocket lanes are not supported")
 		}
 	} else {
 		var event struct {
@@ -409,7 +417,10 @@ func (s *responsesWebSocket) execute(command, firstEvent []byte) error {
 	if parentID != "" {
 		parent = s.histories[parentID]
 		if parent == nil {
-			return errors.New("previous_response_id is not retained on this Responses WebSocket")
+			if automatic {
+				return errors.New("provider automatic response names an unretained previous_response_id")
+			}
+			return incompatibleRequest("invalid_websocket_request", "previous_response_id is not retained on this Responses WebSocket")
 		}
 	}
 	if !automatic {
@@ -466,7 +477,10 @@ func (s *responsesWebSocket) execute(command, firstEvent []byte) error {
 	}
 	parsed, err := parseResponsesRequest(body)
 	if err != nil {
-		return err
+		if automatic {
+			return err
+		}
+		return incompatibleRequest("invalid_websocket_request", err.Error())
 	}
 	parsed.cachedInput = cachedInput
 	headers := s.headers.Clone()
