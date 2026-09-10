@@ -1,1 +1,0 @@
-{"hooks":{"diagnose":["hpatch-benchmark-report-issue {{shellquote .Title}} {{shellquote (format_markdown .)}}"]}}
