@@ -22,6 +22,13 @@ func TestCaptureShellMisuseAndInstructionRewrite(t *testing.T) {
 			for _, streaming := range []bool{false, true} {
 				t.Run("recovery="+strconv.FormatBool(recovery)+"/native="+strconv.FormatBool(native)+"/stream="+strconv.FormatBool(streaming), func(t *testing.T) {
 					capturePath := filepath.Join(t.TempDir(), "capture.jsonl")
+					flags := newRouterFlags(io.Discard)
+					*flags.debug = true
+					debug, err := openDebugOutput(flags)
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { _ = debug.close(); _ = os.RemoveAll(filepath.Dir(debug.paths[0])) })
 					recorder, err := capturer.New(capturer.Config{Mode: "hpatch", ModelProtocol: "native", Output: capturePath})
 					if err != nil {
 						t.Fatal(err)
@@ -44,6 +51,17 @@ func TestCaptureShellMisuseAndInstructionRewrite(t *testing.T) {
 							t.Error(err)
 						}
 						instructions := jsonString(request, "instructions")
+						dump, err := os.ReadFile(debug.paths[3])
+						var exported map[string]json.RawMessage
+						if err != nil || json.Unmarshal(dump, &exported) != nil {
+							t.Errorf("read instruction dump: %v", err)
+						}
+						if !sameJSONValue(exported["instructions"], request["instructions"]) || !sameJSONValue(exported["tools"], request["tools"]) {
+							t.Error("dump does not match final upstream instructions and tools")
+						}
+						if bytes.Contains(dump, []byte("private-script-sentinel")) {
+							t.Error("dump included a tool call")
+						}
 						if !strings.Contains(instructions, codexinstructions.InstructionsForModel("gpt-5.6-luna", false)) || strings.Contains(instructions, stockExecInstruction) {
 							t.Error("Astra-shaped override was not rewritten for Luna")
 						}
@@ -61,7 +79,7 @@ func TestCaptureShellMisuseAndInstructionRewrite(t *testing.T) {
 					proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 					proxy.customizedInstructions = true
 					headers := serverMetadataHeaders(t, "turn", map[string]json.RawMessage{t.TempDir(): nil})
-					handler := recorder.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					handler := recorder.Handler(debug.handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 						body, _ := io.ReadAll(r.Body)
 						parsed, err := parseResponsesRequest(body)
 						if err != nil {
@@ -71,7 +89,7 @@ func TestCaptureShellMisuseAndInstructionRewrite(t *testing.T) {
 						if err := executeRequest(r.Context(), r.Context(), parsed, headers, "capture-diagnostic", provider, w, nil, proxy, nil, nil); err != nil {
 							t.Error(err)
 						}
-					}))
+					})))
 					initial := serverRequest(t, func(fields map[string]any) {
 						fields["model"] = "gpt-5.6-luna"
 						fields["instructions"] = stockAstraIntroduction + "\n\n" + stockWorkHeading + "\n\n" + stockRGInstruction + "\n" + stockExecInstruction + "\nprivate-prompt-sentinel"

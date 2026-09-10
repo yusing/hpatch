@@ -647,7 +647,7 @@ func TestRunSessionUsesProviderWebSocketsByDefault(t *testing.T) {
 	ready := make(chan string, 1)
 	done := make(chan error, 1)
 	go func() {
-		done <- RunSession(ctx, []string{"--mode", "passthrough"}, nil, func(session Session) { ready <- session.BaseURL })
+		done <- RunSession(ctx, []string{"--mode", "passthrough"}, nil, func(session Session) { ready <- session.BaseURL }, nil)
 	}()
 	var baseURL string
 	select {

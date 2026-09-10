@@ -26,7 +26,7 @@ one `hpatch dashboard: http://127.0.0.1:PORT/` line to stderr. It does not write
 the announcement to stdout or repeat it during the active Codex UI. The URL and
 in-memory metrics belong to this invocation and expire on shutdown.
 
-Operational logging is absent. Startup and cleanup failures are concise stderr
+Operational logging is absent unless `--debug` is enabled. Startup and cleanup failures are concise stderr
 errors outside the active Codex UI. Critical request failures use the user-only
 commentary contract. The launcher prints undelivered notices and repetition
 summaries after Codex exits. In-memory metrics, explicit sanitized capture and
@@ -43,6 +43,25 @@ Cleanup is explicit, never inferred from one thread's truncation.
 `--capture-output PATH` appends records; `--metrics-output PATH` overwrites a final
 snapshot from the same capturer. The destinations must be distinct.
 
+`--debug` is a boolean flag requiring no argument. It creates a private, unique
+`hpatch-debug-*` directory in the system temporary directory, with router diagnostics,
+sanitized capture, final metrics, and an instruction dump. Explicit capture and metrics
+destinations retain precedence. The wrapper prints all four absolute artifact paths to
+stderr only on exit, after the child and router have stopped; it never prints debug paths
+over the active Codex UI. Startup failures after debug initialization also report the paths.
+The files survive shutdown. Default files use mode 0600 and the directory uses mode 0700.
+
+The instruction JSONL records preserve instruction text and JSON values for the final
+`instructions`, developer-role input messages, top-level tools, and `additional_tools`
+items after all request rewriting. They include timestamp, unique local request ID,
+client request ID, thread/session IDs, model, previous response ID, and cached input count.
+The dump records the effective Responses request before cached-prefix removal, not a raw
+wire message; Grok records precede Chat Completions conversion. No ordinary user messages,
+tool call bodies, or authentication headers are exported. Router diagnostics record lifecycle
+and parsed-request outcome/phase/status, never arbitrary error text. Debug files remain
+separate from sanitized metrics/capture. Initialization failure prevents launch; subsequent
+debug write failures are surfaced on exit without changing request execution.
+
 Acceptance:
 
 1. Each invocation owns a bound random loopback port without close-and-rebind races.
@@ -50,7 +69,7 @@ Acceptance:
 3. Startup failure does not launch Codex; all exits release owned resources.
 4. Codex arguments, exit status, terminal input, stdout, and stderr remain intact.
 5. Simultaneous configured-plugin sessions have disjoint frontends and independent cleanup.
-6. No operational logs or session log files are created or mixed with Codex output. Private replay
+6. Without `--debug`, no operational logs or session log files are created or mixed with Codex output. Private replay
    correctness records survive shutdown and are shared safely by simultaneous wrappers.
 7. Invalid native editing/execution catalogs and forced incompatible tool choices
    fail closed with actionable HTTP 400 errors, not retryable upstream 502 errors.

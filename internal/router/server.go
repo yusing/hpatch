@@ -43,7 +43,8 @@ type Session struct {
 }
 
 // RunSession owns the private router for one wrapped Codex process.
-func RunSession(ctx context.Context, args []string, issues *CriticalErrors, ready func(Session)) (runErr error) {
+// artifacts receives retained debug paths at completion, even if startup was canceled.
+func RunSession(ctx context.Context, args []string, issues *CriticalErrors, ready func(Session), artifacts func([]string)) (runErr error) {
 	flags := newRouterFlags(io.Discard)
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -92,6 +93,19 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 	if *flags.streamIdleTimeout <= 0 {
 		return errors.New("--stream-idle-timeout must be positive")
 	}
+	debug, err := openDebugOutput(flags)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if debug != nil {
+			debug.event(map[string]any{"event": "router_stop", "failed": runErr != nil})
+			runErr = errors.Join(runErr, debug.close())
+			if artifacts != nil {
+				artifacts(debug.paths)
+			}
+		}
+	}()
 	capture, err := capturer.New(capturer.Config{Output: *flags.captureOutput, Mode: *flags.mode, ModelProtocol: *flags.modelProtocol})
 	if err != nil {
 		return fmt.Errorf("initialize capture: %w", err)
@@ -232,7 +246,7 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 	server := &http.Server{
 		ErrorLog:          log.New(io.Discard, "", 0), // Disable net/http terminal diagnostics while Codex owns it.
 		Addr:              defaultListenAddress,
-		Handler:           capture.Handler(mux),
+		Handler:           capture.Handler(debug.handler(mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       requestBodyReadTimeout,
 		IdleTimeout:       2 * time.Minute,
@@ -485,12 +499,19 @@ func executeRequest(
 	mentor *mentorHandoff,
 ) (requestErr error) {
 	finalization := requestFinalization{failurePhase: requestFailurePrepare}
+	debug, debugID := debugRequest(ctx)
 	if sessionID != "" {
 		finalization.sessionID = sessionID
 	}
 
 	defer func() {
 		requestErr = errors.Join(requestErr, finalization.finish(executionCtx, requestErr, output, issues))
+		debug.event(map[string]any{
+			"event": "request_complete", "request_id": debugID,
+			"client_request_id": headers.Get("x-client-request-id"), "thread_id": codexThreadID(headers),
+			"session_id": sessionID, "outcome": finalization.observation.outcome.String(),
+			"phase": finalization.failurePhase, "upstream_status": finalization.upstreamStatusCode,
+		})
 	}()
 
 	if err := ctx.Err(); err != nil {
@@ -593,6 +614,7 @@ func executeRequest(
 	if forwardBody == nil {
 		forwardBody = nativeBody
 	}
+	debug.instructions(forwardBody, headers, sessionID, debugID, parsedRequest.cachedInput)
 	finalization.failurePhase = requestFailureForward
 	cacheKey := parsedRequest.promptCacheKey()
 	if cacheKey == "" {

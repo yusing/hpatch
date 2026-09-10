@@ -52,10 +52,16 @@ func wrapCodex(ctx context.Context, routerArgs, args []string) (int, error) {
 	defer cancel()
 	ready := make(chan router.Session, 1)
 	routerDone := make(chan error, 1)
+	var debugPaths []string
+	defer func() {
+		for _, path := range debugPaths {
+			fmt.Fprintf(os.Stderr, "hpatch debug: %s\n", path)
+		}
+	}()
 	go func() {
 		routerDone <- router.RunSession(ctx, routerArgs, issues, func(session router.Session) {
 			ready <- session
-		})
+		}, func(paths []string) { debugPaths = paths })
 	}()
 	var session router.Session
 	select {

@@ -184,6 +184,7 @@ request or accepted steering. Grok provider requests remain on HTTP.
 | `--stream-idle-timeout` | `4m` | Limit gaps between provider messages during an active response, or HTTP response bytes |
 | `--capture-output PATH` | Disabled | Append sanitized JSONL metrics |
 | `--metrics-output PATH` | Disabled | Write the final metrics snapshot on shutdown, overwriting the destination |
+| `--debug` | Disabled | Record diagnostics, capture, metrics, and patched instructions; print all artifact paths on exit |
 
 For a transport-only session:
 
@@ -303,6 +304,35 @@ rerouted. `shell-code-mode-recovered` instead identifies an established Code Mod
 with a warning to use `functions.exec` directly. Missing fields mean the evidence was not recorded. Export capture or metrics before
 shutdown if you need to investigate later; neither export contains raw prompts or scripts.
 
+To record the patched instructions for new requests, use:
+
+```sh
+hpatch --debug codex
+```
+
+Debug mode creates a private `hpatch-debug-*` directory in the system temporary
+directory. After Codex exits, it prints absolute paths to stderr for:
+
+- `router.jsonl`: router lifecycle and parsed-request outcomes, without raw error text.
+- `capture.jsonl`: the same sanitized capture described above.
+- `metrics.json`: the final metrics snapshot.
+- `instructions.jsonl`: exact instruction text, developer messages, and tool declarations
+  after request rewriting, with thread and request identifiers.
+
+The dump includes effective Responses input before cached history is omitted from
+incremental WebSocket requests. `cached_input_items` identifies that cached prefix;
+`scope` is `effective_responses_request`. For Grok, this is the Responses representation
+before conversion to Chat Completions, not a raw provider-wire dump. Ordinary user
+messages, tool calls, and authentication headers are excluded. Instruction text is not
+sanitized and can contain private information supplied in your instructions.
+
+Artifacts survive wrapper exit, but the operating system may eventually clean temporary
+files. Copy them elsewhere if needed. Existing `--capture-output` and `--metrics-output`
+paths take precedence over the debug defaults and are included in the exit listing.
+Debug output failures are reported on exit without changing request execution.
+Resuming with `hpatch --debug codex resume SESSION_ID` records future requests; it cannot
+recover an earlier request that was not dumped.
+
 ## Configuration and troubleshooting
 
 - **Custom instructions:** Hpatch supplies tool guidance in memory without
@@ -320,7 +350,7 @@ shutdown if you need to investigate later; neither export contains raw prompts o
   absolute path.
 - **Failures:** startup errors appear before Codex launches. Session failures
   appear as user-only commentary; undelivered notices appear on stderr after
-  Codex exits. Hpatch does not create operational log files.
+  Codex exits. Hpatch does not create operational log files unless `--debug` is enabled.
 - **Agent issue reports:** see [opt-in agent issue reports](doc/spec/diagnose.md).
 
 ### Replay storage

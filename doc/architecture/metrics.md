@@ -2,6 +2,11 @@
 
 ## CTR-METRICS-001 — Capture-owned metrics
 
+The opt-in debug artifact bundle is router-owned in `internal/router/debug.go`, not part
+of sanitized capture. It reuses capturer exports for capture and metrics, records a selected
+instruction snapshot after rewriting, and logs lifecycle/request outcomes without raw errors.
+`cmd/hpatch/wrap.go` prints its paths only after the child and router exit.
+
 The root `capturer` subpackage is the sole owner of request correlation, payload measurement,
 provider-usage metrics, cache attribution, representation differences, transported-tool accounting, Hpatch
 delivery accounting, capture health, durable capture records, and the structured metrics snapshot.

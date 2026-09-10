@@ -20,7 +20,7 @@ func TestRunSessionUsesBoundPortAndClosesListener(t *testing.T) {
 	go func() {
 		done <- RunSession(ctx, []string{"--mode", "passthrough"}, nil, func(session Session) {
 			ready <- session.BaseURL
-		})
+		}, nil)
 	}()
 	var baseURL string
 	select {
@@ -56,7 +56,7 @@ func TestRunSessionUsesBoundPortAndClosesListener(t *testing.T) {
 
 func TestRunSessionDoesNotNotifyOnStartupFailure(t *testing.T) {
 	for _, args := range [][]string{{"--mode", "unknown"}, {"--model-protocol", "ctp1"}, {"--mode", "passthrough", "--model-protocol", "ctp2"}, {"--mode", "passthrough", "--mentor-handoff=true"}, {"--stream-idle-timeout", "0"}, {"--listen", "127.0.0.1:0"}, {"--provider-base-url", "https://example.com"}} {
-		if err := RunSession(t.Context(), args, nil, func(Session) { t.Error("ready called despite startup failure") }); err == nil {
+		if err := RunSession(t.Context(), args, nil, func(Session) { t.Error("ready called despite startup failure") }, nil); err == nil {
 			t.Fatalf("accepted %q", args)
 		}
 	}
@@ -77,7 +77,7 @@ func TestRunSessionExportsFinalMetricsWithoutLogging(t *testing.T) {
 			response.Body.Close()
 		}
 		cancel()
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestRunSessionRejectsAliasedExportDestinations(t *testing.T) {
 	if err := os.Symlink(capture, metrics); err != nil {
 		t.Fatal(err)
 	}
-	err := RunSession(t.Context(), []string{"--mode", "passthrough", "--capture-output", capture, "--metrics-output", metrics}, nil, func(Session) { t.Error("aliased exports reached readiness") })
+	err := RunSession(t.Context(), []string{"--mode", "passthrough", "--capture-output", capture, "--metrics-output", metrics}, nil, func(Session) { t.Error("aliased exports reached readiness") }, nil)
 	if err == nil {
 		t.Fatal("aliased outputs accepted")
 	}
@@ -116,7 +116,7 @@ func TestRunSessionRejectsUnusableReplayStorageBeforeReady(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(state, "hpatch"), []byte("not a directory"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	err := RunSession(t.Context(), []string{"--mode", "hpatch", "--model-protocol", "native", "--mentor-handoff=false"}, nil, func(Session) { t.Error("unusable replay storage reached readiness") })
+	err := RunSession(t.Context(), []string{"--mode", "hpatch", "--model-protocol", "native", "--mentor-handoff=false"}, nil, func(Session) { t.Error("unusable replay storage reached readiness") }, nil)
 	if err == nil || !strings.Contains(err.Error(), "initialize replay storage") {
 		t.Fatalf("startup error = %v", err)
 	}
@@ -127,7 +127,7 @@ func TestRunSessionPassthroughIgnoresInvalidReplayStorage(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	notified := false
-	err := RunSession(ctx, []string{"--mode", "passthrough"}, nil, func(Session) { notified = true; cancel() })
+	err := RunSession(ctx, []string{"--mode", "passthrough"}, nil, func(Session) { notified = true; cancel() }, nil)
 	if err != nil || !notified {
 		t.Fatalf("passthrough ready=%v error=%v", notified, err)
 	}

@@ -321,7 +321,7 @@ func TestToolRegistryStartup(t *testing.T) {
 		}
 		writePlugin(t, pluginDirectory, "invalid.mjs", "export default null;\n")
 		var stderr strings.Builder
-		err = RunSession(t.Context(), nil, nil, func(Session) { t.Error("invalid registry reached readiness") })
+		err = RunSession(t.Context(), nil, nil, func(Session) { t.Error("invalid registry reached readiness") }, nil)
 		if err == nil || !strings.Contains(err.Error(), "initialize tool registry") {
 			t.Fatalf("Run() error = %v", err)
 		}

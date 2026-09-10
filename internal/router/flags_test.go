@@ -8,6 +8,8 @@ import (
 func TestSplitCommand(t *testing.T) {
 	for _, prefix := range [][]string{
 		nil,
+		{"--debug"},
+		{"--debug", "--capture-output", "capture.jsonl"},
 		{"--grok"},
 		{"--grok=false", "--timeout", "30s"},
 		{"--capture-output", "wrap", "--grok"},

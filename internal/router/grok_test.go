@@ -449,7 +449,7 @@ func TestGrokAPIKeyStartupWithoutHome(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	err := RunSession(ctx, []string{"--grok", "--model-protocol", "native", "--mentor-handoff=false"}, nil, func(Session) { cancel() })
+	err := RunSession(ctx, []string{"--grok", "--model-protocol", "native", "--mentor-handoff=false"}, nil, func(Session) { cancel() }, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -481,7 +481,7 @@ func TestGrokOutputBudgetRejectedBeforeInference(t *testing.T) {
 func TestGrokWhitespaceAPIKeyUsesOAuthHome(t *testing.T) {
 	t.Setenv("HOME", "")
 	t.Setenv("XAI_API_KEY", " \t ")
-	err := RunSession(t.Context(), []string{"--grok"}, nil, nil)
+	err := RunSession(t.Context(), []string{"--grok"}, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "locate Grok credentials") {
 		t.Fatalf("expected default OAuth path lookup, got %v", err)
 	}
