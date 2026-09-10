@@ -1,6 +1,6 @@
 # hpatch
 
-Verified edits and direct script execution for Codex, with less model-generated
+Hashline edits and direct script execution for Codex, with less model-generated
 boilerplate. Hpatch routes Codex requests through a private local router while
 keeping Codex's sandbox, permissions, command sessions, and normal patch diff UI.
 
@@ -45,7 +45,7 @@ keeping Codex's sandbox, permissions, command sessions, and normal patch diff UI
 
 ### AX
 
-- **Verified editing.**
+- **Hashline edits.**
   - `functions.hpatch` identifies existing text with `LINE:HASH` references and
     writes the replacement once.
   - Invalid scripts are rejected as a whole before Codex applies the generated patch.
@@ -221,7 +221,7 @@ credential handling.
 
 ## How editing and execution work
 
-### Verified edits
+### Hashline edits
 
 Instead of emitting old source lines, new source lines, and patch framing, the
 agent selects a verified `LINE:HASH` target and sends the new text once. Hpatch
