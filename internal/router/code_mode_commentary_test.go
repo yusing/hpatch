@@ -1,8 +1,10 @@
 package router
 
 import (
+	"bytes"
 	"encoding/json"
 	"maps"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -154,5 +156,65 @@ func TestCodeModeWithoutExplicitCommentaryPreservesOutput(t *testing.T) {
 	}
 	if len(response.Output) != 1 || jsonString(response.Output[0], "input") != "text('done');" {
 		t.Fatalf("operation output changed: %s", output)
+	}
+}
+
+func TestCodeModeUnparseableInputPassesThrough(t *testing.T) {
+	for _, source := range []string{
+		`text("unterminated);`,
+		`await commentary("Working"); text(`,
+		`const value: number = 1; text(value);`,
+	} {
+		for _, streaming := range []bool{false, true} {
+			t.Run(source+"/streaming="+strconv.FormatBool(streaming), func(t *testing.T) {
+				transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+				proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
+				item := map[string]any{
+					"type": "custom_tool_call", "name": transform.codeModeToolName,
+					"call_id": "call-invalid", "id": "item-invalid", "input": source,
+					"status": "completed",
+				}
+				response := map[string]any{"status": "completed", "output": []any{item}}
+				if streaming {
+					added := maps.Clone(item)
+					added["input"] = ""
+					added["status"] = "in_progress"
+					for _, event := range []map[string]any{
+						{"type": "response.output_item.added", "item": added},
+						{"type": "response.custom_tool_call_input.delta", "item_id": "item-invalid", "delta": source},
+						{"type": "response.custom_tool_call_input.done", "item_id": "item-invalid", "call_id": "call-invalid", "input": source},
+						{"type": "response.output_item.done", "item": item},
+						{"type": "response.completed", "response": response},
+					} {
+						payload := mustTestJSON(t, event)
+						events, err := transform.TransformSSE(payload)
+						if err != nil || len(events) != 1 || !bytes.Equal(events[0], payload) {
+							t.Fatalf("event %s: output = %s, error = %v", event["type"], events, err)
+						}
+					}
+				} else {
+					output, err := transform.TransformJSON(mustTestJSON(t, response))
+					if err != nil {
+						t.Fatal(err)
+					}
+					var decoded struct {
+						Output []map[string]json.RawMessage `json:"output"`
+					}
+					if err := json.Unmarshal(output, &decoded); err != nil {
+						t.Fatal(err)
+					}
+					if len(decoded.Output) != 1 || jsonString(decoded.Output[0], "input") != source {
+						t.Fatalf("input changed: %s", output)
+					}
+				}
+				history := transform.local["call-invalid"]
+				if history.script != source || history.carrierPayload != source || jsonString(history.upstreamItem, "input") != source {
+					t.Fatal("replay did not retain the exact program")
+				}
+				if len(transform.commentarySubscriptions) != 0 {
+					t.Fatal("unparseable program created a commentary subscription")
+				}
+			})
+		}
 	}
 }

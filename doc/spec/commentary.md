@@ -23,7 +23,10 @@ router-owned commentary fails before the tool call is exposed.
 
 Code Mode may publish runtime progress with `await commentary(value)`. The JavaScript parser
 replaces only the reserved awaited call while preserving ordinary strings, comments, and unrelated
-identifiers. Bash and POSIX shell programs may publish expanded text through the reserved
+identifiers. If the commentary parser cannot parse a Code Mode program, it leaves the program
+unchanged for the executor to validate and report errors through the normal tool result. It never
+partially rewrites a recovered parse tree or rejects the response transport for a syntax error.
+Bash and POSIX shell programs may publish expanded text through the reserved
 `commentary` command; the command writes nothing and succeeds without changing surrounding shell
 control flow, redirections, output, or exit status. Other interpreters receive no runtime
 commentary handling, and shell calls without an authored command receive no default.

@@ -23,7 +23,10 @@ func findCodeModeCommentaryCalls(source string) ([]codeModeCommentaryCall, error
 	defer tree.Close()
 	root := tree.RootNode()
 	if root == nil || root.HasError() {
-		return nil, errors.New("Code Mode commentary program has invalid JavaScript syntax")
+		// Commentary is auxiliary, not JavaScript validation. Leave programs the
+		// parser cannot understand intact for the executor, including its normal
+		// syntax-error reporting. Never rewrite a partially recovered parse tree.
+		return nil, nil
 	}
 	var calls []codeModeCommentaryCall
 	var walk func(*sitter.Node)
