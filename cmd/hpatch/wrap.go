@@ -112,7 +112,7 @@ func codexArgs(baseURL string, args []string) []string {
 	}
 	return slices.Insert(slices.Clone(args), index,
 		"-c", `model_provider="hpatch_wrap"`,
-		"-c", fmt.Sprintf(`model_providers.hpatch_wrap={name="hpatch",base_url=%q,wire_api="responses",requires_openai_auth=true}`, baseURL),
+		"-c", fmt.Sprintf(`model_providers.hpatch_wrap={name="hpatch",base_url=%q,wire_api="responses",requires_openai_auth=true,supports_websockets=true}`, baseURL),
 	)
 }
 

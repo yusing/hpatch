@@ -122,6 +122,15 @@ func metricsFromRecords(mode, protocol string, records []captureRecord) (metrics
 	var order []string
 	sequences := make(map[uint64]bool)
 	for _, record := range records {
+		if record.Boundary == "codex_control" || record.Boundary == "provider_control" {
+			if record.CaptureID == "" {
+				return metricsSnapshot{}, errors.New("missing control capture identity")
+			}
+			if !addWebSocketControl(&recorder.metrics.Transport, record) {
+				return metricsSnapshot{}, errors.New("invalid WebSocket control direction")
+			}
+			continue
+		}
 		if record.CaptureID == "" || record.RequestSequence == 0 {
 			return metricsSnapshot{}, errors.New("missing capture identity")
 		}

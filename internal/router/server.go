@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -223,6 +224,9 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 	if hpatchCalls != nil {
 		mux.HandleFunc("POST "+commentaryPublisherPath, hpatchCalls.commentary.serveHTTP)
 	}
+	webSocketEndpoint := responsesWebSocketHandler(ctx, *flags.timeout, provider, issues, hpatchCalls, compactTokens, mentor)
+	defer webSocketEndpoint.Close()
+	mux.Handle("GET /v1/responses", webSocketEndpoint)
 	mux.HandleFunc("POST /v1/responses", responsesHandler(ctx, *flags.timeout, provider, issues, hpatchCalls, compactTokens, mentor))
 
 	server := &http.Server{
@@ -497,7 +501,7 @@ func executeRequest(
 	if hpatchCalls != nil && metadataValid && !metadata.activityIdentityInvalid && (metadata.ThreadID == "" || metadata.ThreadID == threadID) {
 		finalization.observeCriticalNotice = func(source, text string) { hpatchCalls.activity.collect(threadID, source, "error", text) }
 	}
-	issues.stripInput(&parsedRequest, sessionID)
+	parsedRequest.filterInput(func(map[string]json.RawMessage) { issues.stripInput(&parsedRequest, sessionID) })
 	notices := issues.transform(sessionID, metadata.SubagentKind != "")
 	defer func() { notices.finish(requestErr == nil) }()
 	handoffRequest, err := mentor.prepare(headers, metadata, metadataValid, &parsedRequest)
@@ -518,7 +522,11 @@ func executeRequest(
 		}
 	}()
 	var hpatchTransform *hpatchResponseTransform
-	if hpatchCalls != nil {
+	// Only the WebSocket provider guarantees non-generating warmup for every
+	// supported model. HTTP requests must retain ordinary preparation checks.
+	_, webSocketRequest := provider.(*webSocketExchange)
+	prewarm := webSocketRequest && metadataValid && metadata.RequestKind == "prewarm" && string(parsedRequest.fields["generate"]) == "false"
+	if hpatchCalls != nil && !prewarm {
 		hpatchTransform, err = hpatchCalls.prepareRequest(
 			ctx,
 			&parsedRequest,
@@ -552,7 +560,11 @@ func executeRequest(
 	}
 	var bridge *subagentBridge
 	var compactTransform *ctp2ResponseTransform
-	if client, ok := provider.(*providerClient); ok && client.grok != nil {
+	bridgeProvider := provider
+	if exchange, ok := provider.(*webSocketExchange); ok {
+		bridgeProvider = exchange.session.provider
+	}
+	if client, ok := bridgeProvider.(*providerClient); ok && client.grok != nil {
 		bridge, err = prepareSubagentBridge(&parsedRequest)
 		if err != nil {
 			return fmt.Errorf("prepare Grok collaboration bridge: %w", err)
@@ -562,7 +574,17 @@ func executeRequest(
 	if err != nil {
 		return fmt.Errorf("encode native Responses request: %w", err)
 	}
-	capturer.ObserveNativeRequest(ctx, nativeBody)
+	nativeWire, err := parsedRequest.incrementalBody(nativeBody)
+	if err != nil {
+		return err
+	}
+	if exchange, ok := provider.(*webSocketExchange); ok && exchange.automatic {
+		// An automatic successor has no request on either wire. Record that
+		// explicitly so CTP capture can distinguish it from missing evidence.
+		capturer.ObserveNativeRequest(ctx, nil)
+	} else {
+		capturer.ObserveNativeRequest(ctx, nativeWire)
+	}
 	var forwardBody []byte
 	compactTransform, forwardBody, err = compactTokens.prepareRequest(&parsedRequest, nativeBody)
 	if err != nil {
@@ -575,6 +597,10 @@ func executeRequest(
 	cacheKey := parsedRequest.promptCacheKey()
 	if cacheKey == "" {
 		cacheKey = sessionID
+	}
+	forwardBody, err = parsedRequest.incrementalBody(forwardBody)
+	if err != nil {
+		return err
 	}
 	response, err := provider.forwardExecution(ctx, executionCtx, forwardBody, headers, cacheKey)
 	if err != nil {
@@ -691,7 +717,7 @@ func executeRequest(
 	case response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices:
 		finalization.observation.outcome = requestOutcomeFailed
 		finalization.failurePhase = requestFailureTerminalValidation
-	case finalization.upstreamTerminalState == responseTerminalCompleted:
+	case finalization.upstreamTerminalState == responseTerminalCompleted || finalization.upstreamTerminalState == responseTerminalSteered:
 		finalization.observation.outcome = requestOutcomeCompleted
 		recordHandoff(true)
 	case finalization.upstreamTerminalState == responseTerminalFailed:
@@ -705,5 +731,5 @@ func executeRequest(
 }
 
 func acceptsResponseEnd(state responseTerminalState) bool {
-	return state == responseTerminalCompleted || state == responseTerminalFailed
+	return state == responseTerminalCompleted || state == responseTerminalFailed || state == responseTerminalSteered
 }

@@ -335,7 +335,7 @@ func validateHPatchCompactionRequest(request *parsedResponsesRequest, metadata c
 
 func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedResponsesRequest, sessionID, threadID string, metadata codexTurnMetadata, metadataValid bool) (*hpatchResponseTransform, error) {
 	if p != nil {
-		p.activity.stripInput(request.fields)
+		request.filterInput(p.activity.stripInput)
 	}
 	if metadataValid && metadata.RequestKind == "compaction" {
 		if err := validateHPatchCompactionRequest(request, metadata); err != nil {

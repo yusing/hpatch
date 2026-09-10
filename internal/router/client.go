@@ -481,6 +481,7 @@ const (
 	responseTerminalInvalid
 	responseTerminalPending
 	responseTerminalCompleted
+	responseTerminalSteered
 	responseTerminalFailed
 )
 
@@ -492,6 +493,8 @@ func (state responseTerminalState) String() string {
 		return "pending"
 	case responseTerminalCompleted:
 		return "completed"
+	case responseTerminalSteered:
+		return "steered"
 	case responseTerminalFailed:
 		return "failed"
 	default:
@@ -589,7 +592,7 @@ func copySSETransformed(writer io.Writer, reader io.Reader, transformer response
 }
 
 func isResponseTerminal(state responseTerminalState) bool {
-	return state == responseTerminalCompleted || state == responseTerminalFailed
+	return state == responseTerminalCompleted || state == responseTerminalFailed || state == responseTerminalSteered
 }
 
 func consumeOptionalUTF8BOM(reader *bufio.Reader) error {
@@ -778,7 +781,19 @@ func observeResponseTerminal(body []byte, streamEvent bool) responseTerminalStat
 	switch status {
 	case "completed":
 		return responseTerminalCompleted
-	case "failed", "incomplete":
+	case "incomplete":
+		var event struct {
+			Response struct {
+				Incomplete struct {
+					Reason string `json:"reason"`
+				} `json:"incomplete_details"`
+			} `json:"response"`
+		}
+		if streamEvent && json.Unmarshal(body, &event) == nil && event.Response.Incomplete.Reason == "steered" {
+			return responseTerminalSteered
+		}
+		return responseTerminalFailed
+	case "failed":
 		return responseTerminalFailed
 	case "queued", "in_progress":
 		return responseTerminalPending
@@ -799,6 +814,9 @@ func mergeResponseTerminalState(current, observed responseTerminalState) respons
 	}
 	if current == responseTerminalFailed || observed == responseTerminalFailed {
 		return responseTerminalFailed
+	}
+	if current == responseTerminalSteered || observed == responseTerminalSteered {
+		return responseTerminalSteered
 	}
 	if current == responseTerminalCompleted || observed == responseTerminalCompleted {
 		return responseTerminalCompleted

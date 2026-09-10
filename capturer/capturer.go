@@ -76,38 +76,40 @@ type toolCallMetrics struct {
 }
 
 type captureRecord struct {
-	Transport           string                    `json:"transport,omitempty"`
-	InstructionRewrite  *InstructionRewrite       `json:"instruction_rewrite,omitempty"`
-	ProviderResponse    *providerResponseEvidence `json:"provider_response,omitempty"`
-	PredecessorSequence uint64                    `json:"predecessor_sequence,omitempty"`
-	SchemaVersion       int                       `json:"schema_version"`
-	Boundary            string                    `json:"boundary"`
-	CaptureID           string                    `json:"capture_id"`
-	RequestSequence     uint64                    `json:"request_sequence"`
-	ProviderAttempt     uint64                    `json:"provider_attempt,omitempty"`
-	Mode                string                    `json:"mode"`
-	ModelProtocol       string                    `json:"model_protocol"`
-	RequestID           string                    `json:"request_id,omitempty"`
-	SessionID           string                    `json:"session_id,omitempty"`
-	ThreadID            string                    `json:"thread_id,omitempty"`
-	Subagent            string                    `json:"subagent,omitempty"`
-	RequestModel        string                    `json:"request_model,omitempty"`
-	Request             payloadMetrics            `json:"request"`
-	Fingerprint         *requestFingerprint       `json:"cache_fingerprint,omitempty"`
-	NativeFingerprint   *requestFingerprint       `json:"native_fingerprint,omitempty"`
-	NativeRequest       *payloadMetrics           `json:"native_request,omitempty"`
-	RequestTools        []string                  `json:"request_tools,omitempty"`
-	StatusCode          int                       `json:"status_code"`
-	ResponseComplete    bool                      `json:"response_complete"`
-	ResponseStatus      string                    `json:"response_status,omitempty"`
-	Usage               *ProviderUsage            `json:"usage,omitempty"`
-	ToolCalls           []toolCallMetrics         `json:"tool_calls,omitempty"`
-	Response            payloadMetrics            `json:"response"`
-	FinalOutput         payloadMetrics            `json:"final_output,omitzero"`
-	FinalText           payloadMetrics            `json:"final_text,omitzero"`
-	CaptureError        string                    `json:"capture_error,omitempty"`
-	DurationMillis      uint64                    `json:"duration_ms"`
-	CapturedAt          time.Time                 `json:"captured_at"`
+	Transport           string                             `json:"transport,omitempty"`
+	ControlDirection    ResponsesWebSocketControlDirection `json:"control_direction,omitempty"`
+	InstructionRewrite  *InstructionRewrite                `json:"instruction_rewrite,omitempty"`
+	ProviderResponse    *providerResponseEvidence          `json:"provider_response,omitempty"`
+	PredecessorSequence uint64                             `json:"predecessor_sequence,omitempty"`
+	SchemaVersion       int                                `json:"schema_version"`
+	Boundary            string                             `json:"boundary"`
+	CaptureID           string                             `json:"capture_id"`
+	RequestSequence     uint64                             `json:"request_sequence"`
+	ProviderAttempt     uint64                             `json:"provider_attempt,omitempty"`
+	Mode                string                             `json:"mode"`
+	ModelProtocol       string                             `json:"model_protocol"`
+	RequestID           string                             `json:"request_id,omitempty"`
+	SessionID           string                             `json:"session_id,omitempty"`
+	ThreadID            string                             `json:"thread_id,omitempty"`
+	Subagent            string                             `json:"subagent,omitempty"`
+	ProviderExpected    *bool                              `json:"provider_expected,omitempty"`
+	RequestModel        string                             `json:"request_model,omitempty"`
+	Request             payloadMetrics                     `json:"request"`
+	Fingerprint         *requestFingerprint                `json:"cache_fingerprint,omitempty"`
+	NativeFingerprint   *requestFingerprint                `json:"native_fingerprint,omitempty"`
+	NativeRequest       *payloadMetrics                    `json:"native_request,omitempty"`
+	RequestTools        []string                           `json:"request_tools,omitempty"`
+	StatusCode          int                                `json:"status_code"`
+	ResponseComplete    bool                               `json:"response_complete"`
+	ResponseStatus      string                             `json:"response_status,omitempty"`
+	Usage               *ProviderUsage                     `json:"usage,omitempty"`
+	ToolCalls           []toolCallMetrics                  `json:"tool_calls,omitempty"`
+	Response            payloadMetrics                     `json:"response"`
+	FinalOutput         payloadMetrics                     `json:"final_output,omitzero"`
+	FinalText           payloadMetrics                     `json:"final_text,omitzero"`
+	CaptureError        string                             `json:"capture_error,omitempty"`
+	DurationMillis      uint64                             `json:"duration_ms"`
+	CapturedAt          time.Time                          `json:"captured_at"`
 }
 
 // Recorder owns correlation, sanitized measurement, durable capture, and
@@ -227,10 +229,17 @@ func (r *Recorder) Close() error {
 	return r.file.Close()
 }
 
-// Handler observes the existing Responses listener. Other routes pass through
-// without capture state or buffering.
+// Handler observes the existing Responses listener. POST requests are measured
+// directly. GET requests receive a private WebSocket capture factory in their
+// context, but the upgrade itself does not create a logical request.
 func (r *Recorder) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/v1/responses" && request.Method == http.MethodGet {
+			capture := r.newResponsesWebSocketCapture(request.Header)
+			request = request.WithContext(context.WithValue(request.Context(), responsesWebSocketFactoryKey{}, capture))
+			next.ServeHTTP(writer, request)
+			return
+		}
 		if request.Method != http.MethodPost || request.URL.Path != "/v1/responses" {
 			next.ServeHTTP(writer, request)
 			return
@@ -446,6 +455,7 @@ func (r *Recorder) recordExchange(state *requestState, boundary string, attempt 
 		}
 	}
 	var requestEnvelope struct {
+		Generate *bool             `json:"generate"`
 		Model    string            `json:"model"`
 		Messages json.RawMessage   `json:"messages"`
 		Tools    []json.RawMessage `json:"tools"`
@@ -455,6 +465,9 @@ func (r *Recorder) recordExchange(state *requestState, boundary string, attempt 
 			record.CaptureError = "invalid request JSON"
 		} else {
 			record.RequestModel = requestEnvelope.Model
+			if boundary == "codex" && requestEnvelope.Generate != nil && !*requestEnvelope.Generate {
+				record.ProviderExpected = new(false)
+			}
 			record.RequestTools = requestToolNames(requestEnvelope.Tools)
 			if strings.TrimSpace(requestEnvelope.Model) == "" {
 				record.CaptureError = "missing request model"
@@ -542,6 +555,8 @@ func (r *Recorder) write(record captureRecord, state *requestState) {
 	}
 	if record.Boundary == "codex" {
 		r.addExchange(record, state, state.providerRecords())
+	} else {
+		addWebSocketControl(&r.metrics.Transport, record)
 	}
 	if encodeErr != nil {
 		r.metrics.Capture.WriteErrors++

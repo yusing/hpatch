@@ -35,6 +35,38 @@ func newToolPluginTestRegistry(t *testing.T) (*toolRegistry, string) {
 	return registry, liveModule
 }
 
+// copiedToolPluginTestRegistry gives worker-contract tests an isolated,
+// authenticated copy of the real configured-plugin snapshot. Those tests
+// mutate or install frontends around the snapshot; plugin discovery and
+// snapshot creation themselves are covered by the startup and pinning tests.
+func copiedToolPluginTestRegistry(t *testing.T) *toolRegistry {
+	t.Helper()
+	source := pluginProxyTestFixture.get(t, testToolPluginDeclaration)
+	snapshot := filepath.Join(t.TempDir(), filepath.Base(source.SnapshotDir))
+	if err := os.CopyFS(snapshot, os.DirFS(source.SnapshotDir)); err != nil {
+		t.Fatal(err)
+	}
+
+	registry := &toolRegistry{
+		SnapshotDir:       snapshot,
+		RuntimeRoot:       filepath.Join(snapshot, "runtime"),
+		NodeExecutable:    source.NodeExecutable,
+		DiagnoseHooks:     source.DiagnoseHooks,
+		builtinTranslator: source.builtinTranslator,
+		frontendDirectory: filepath.Join(snapshot, "bin"),
+		runtimeDirectory:  source.runtimeDirectory,
+		shellRuntime:      filepath.Join(snapshot, filepath.Base(source.shellRuntime)),
+		ordered:           source.ordered,
+		byName:            source.byName,
+		wrappers:          make(map[string]string, len(source.wrappers)),
+		frontends:         make(map[string]string),
+	}
+	for name := range source.wrappers {
+		registry.wrappers[name] = filepath.Join(snapshot, name)
+	}
+	return registry
+}
+
 func TestToolPluginWorkerRunsPinnedImplementationInCodexContext(t *testing.T) {
 	registry, liveModule := newToolPluginTestRegistry(t)
 	wrapper, ok := registry.wrapper("plugin_tool")
@@ -71,11 +103,11 @@ func TestToolPluginWorkerRunsPinnedImplementationInCodexContext(t *testing.T) {
 }
 
 func TestToolPluginWorkerResolvesBasenameFromPath(t *testing.T) {
-	registry, _ := newToolPluginTestRegistry(t)
+	registry := copiedToolPluginTestRegistry(t)
 	if err := registry.installFrontends(); err != nil {
 		t.Fatal(err)
 	}
-	second, _ := newToolPluginTestRegistry(t)
+	second := copiedToolPluginTestRegistry(t)
 	if err := second.installFrontends(); err != nil {
 		t.Fatalf("concurrent session frontend installation: %v", err)
 	}
@@ -181,7 +213,7 @@ func TestBuiltinToolWorkersRunGeneratedTypeScriptImplementations(t *testing.T) {
 }
 
 func TestToolPluginWorkerRejectsSnapshotMismatch(t *testing.T) {
-	registry, _ := newToolPluginTestRegistry(t)
+	registry := copiedToolPluginTestRegistry(t)
 	wrapper, ok := registry.wrapper("plugin_tool")
 	if !ok {
 		t.Fatal("plugin wrapper is unavailable")
@@ -209,7 +241,7 @@ func TestToolPluginWorkerRejectsSnapshotMismatch(t *testing.T) {
 	}
 }
 func TestToolPluginWorkerRejectsMissingManifest(t *testing.T) {
-	registry, _ := newToolPluginTestRegistry(t)
+	registry := copiedToolPluginTestRegistry(t)
 	wrapper, ok := registry.wrapper("plugin_tool")
 	if !ok {
 		t.Fatal("plugin wrapper is unavailable")

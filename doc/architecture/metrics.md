@@ -8,8 +8,12 @@ delivery accounting, capture health, durable capture records, and the structured
 The router's terminal-payload seam parses provider usage once and passes the resulting counts to
 the capturer, Mentor Handoff, and user-only usage commentary.
 
-The capturer is in-process. `hpatch` wraps its existing `POST /v1/responses` handler and
-its existing provider `http.RoundTripper` for HTTP Responses and Chat Completions, and observes each provider WebSocket JSON-message exchange at its transport boundary; it does not start a second HTTP server, open another
+The capturer is in-process. `hpatch` wraps its `POST /v1/responses` handler and
+provider `http.RoundTripper` for HTTP Responses and Chat Completions. For
+`GET /v1/responses`, that wrapper supplies a context-private factory for
+Codex-facing WebSocket exchanges, without counting the upgrade as an inference
+request. It observes client and provider WebSocket JSON-message exchanges at
+their transport boundaries; it does not start a second HTTP server, open another
 listener, or require another process. `GET /api/metrics` serves the capturer snapshot from the same
 router listener as Responses and models traffic. The embedded `GET /` dashboard is a presentation
 view of that snapshot on the same listener and owns no metric state or calculation.
@@ -96,11 +100,22 @@ sent message and received message bytes at the transport seam, and closes that
 attempt after terminal usage observation. The capturer owns bounded raw-payload
 observation, JSON-message parsing, exact payload lengths, transport labeling,
 cache-fingerprint normalization, and sanitized persistence. Router-generated
-SSE and reconstructed nonstream JSON belong only to the Codex boundary.
+SSE and reconstructed nonstream JSON belong only to the HTTP Codex boundary.
+The dedicated Codex WebSocket path measures restored JSON messages, not its
+internal SSE adaptation. Each explicit create or automatic successor receives
+its own correlation context; automatic successors have no request payload.
+Application-level controls use immediate, sanitized boundary-and-direction
+records and separate transport measures. The capturer owns their measurement
+and offline aggregation; the router supplies actual wire payloads without
+computing metrics or retaining a second control history for capture.
 
-`internal/router/client_websocket.go` owns connection leases, credential/routing
-partitioning, message framing, HTTP fallback decisions, response-body ownership,
-and cleanup. The connection pool retains no conversation or capture history.
+`internal/router/server_websocket.go` owns each downstream session and its
+dedicated provider connection, incremental native history, steering lifecycle,
+and adaptation through the shared request/response pipeline.
+`internal/router/client_websocket.go` owns the HTTP-client connection pool's
+leases, credential/routing partitioning, message framing, HTTP fallback
+decisions, response-body ownership, and cleanup. That pool retains no
+conversation or capture history.
 A lease's response body owns its attempt until Close, even after the socket has
 received a terminal event. Capturer state never decides whether to reuse a
 connection or whether a provider request may be retried.

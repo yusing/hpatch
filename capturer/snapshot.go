@@ -40,10 +40,30 @@ type payloadTotals struct {
 }
 
 type transportMetrics struct {
-	ClientRequests          payloadTotals `json:"client_requests"`
-	ProviderAttemptRequests payloadTotals `json:"provider_attempt_requests"`
-	ProviderResponses       payloadTotals `json:"provider_responses"`
-	ClientResponses         payloadTotals `json:"client_responses"`
+	ClientControlRequests    payloadTotals `json:"client_control_requests"`
+	ClientRequests           payloadTotals `json:"client_requests"`
+	ProviderAttemptRequests  payloadTotals `json:"provider_attempt_requests"`
+	ProviderControlRequests  payloadTotals `json:"provider_control_requests"`
+	ProviderControlResponses payloadTotals `json:"provider_control_responses"`
+	ProviderResponses        payloadTotals `json:"provider_responses"`
+	ClientControlResponses   payloadTotals `json:"client_control_responses"`
+	ClientResponses          payloadTotals `json:"client_responses"`
+}
+
+func addWebSocketControl(metrics *transportMetrics, record captureRecord) bool {
+	switch {
+	case record.Boundary == "codex_control" && record.ControlDirection == ResponsesWebSocketControlRequest:
+		addPayload(&metrics.ClientControlRequests, record.Request)
+	case record.Boundary == "codex_control" && record.ControlDirection == ResponsesWebSocketControlResponse:
+		addPayload(&metrics.ClientControlResponses, record.Response)
+	case record.Boundary == "provider_control" && record.ControlDirection == ResponsesWebSocketControlRequest:
+		addPayload(&metrics.ProviderControlRequests, record.Request)
+	case record.Boundary == "provider_control" && record.ControlDirection == ResponsesWebSocketControlResponse:
+		addPayload(&metrics.ProviderControlResponses, record.Response)
+	default:
+		return false
+	}
+	return true
 }
 
 type semanticOutputMetrics struct {
@@ -181,7 +201,7 @@ func (r *Recorder) addExchange(front captureRecord, state *requestState, provide
 	sort.Slice(providers, func(i, j int) bool {
 		return providers[i].ProviderAttempt < providers[j].ProviderAttempt
 	})
-	if len(providers) == 0 && front.ResponseStatus == "completed" {
+	if len(providers) == 0 && front.ResponseStatus == "completed" && (front.ProviderExpected == nil || *front.ProviderExpected) {
 		r.metrics.Capture.MissingProvider++
 	}
 	for index, provider := range providers {

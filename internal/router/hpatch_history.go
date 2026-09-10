@@ -268,7 +268,8 @@ func (p *hpatchProxy) reconcileVisibleInput(ctx context.Context, request *parsed
 	changed := false
 	commentaryIDs := p.commentaryMessageIDs(sessionID)
 	filtered := make([]map[string]json.RawMessage, 0, len(items))
-	for _, item := range items {
+	removedCached := 0
+	for index, item := range items {
 		if jsonString(item, "type") == "message" {
 			id := jsonString(item, "id")
 			_, generated := commentaryIDs[id]
@@ -279,6 +280,9 @@ func (p *hpatchProxy) reconcileVisibleInput(ctx context.Context, request *parsed
 					return nil, err
 				}
 			}
+			if generated && index < request.cachedInput {
+				removedCached++
+			}
 			if generated {
 				changed = true
 				continue
@@ -286,6 +290,7 @@ func (p *hpatchProxy) reconcileVisibleInput(ctx context.Context, request *parsed
 		}
 		filtered = append(filtered, item)
 	}
+	request.cachedInput -= removedCached
 	items = filtered
 	validatedCarriers := make(map[string]bool)
 	for index, item := range items {

@@ -56,13 +56,78 @@ Acceptance:
    fail closed with actionable HTTP 400 errors, not retryable upstream 502 errors.
 8. Fixed listener and provider flags, bare serving, and the former wrap command reject.
 
-### Provider WebSocket transport
+### Codex WebSocket transport
 
-The Codex-facing interface remains HTTP: streaming Responses use SSE, and
-nonstream requests return terminal response JSON. The ChatGPT Responses path
-uses persistent WebSockets by default in both Hpatch and passthrough modes.
-Models discovery and Grok keep their existing HTTP transports. No downstream
-WebSocket endpoint or Codex WebSocket capability override is introduced.
+The router accepts Responses WebSocket upgrades at `GET /v1/responses`. The
+wrapper advertises `supports_websockets=true` in its invocation-only provider
+override without modifying Codex configuration. HTTP `POST /v1/responses` remains
+available for streaming SSE and nonstream terminal JSON. Models discovery and
+Grok retain their HTTP provider transports.
+
+The Codex-facing endpoint supports one unnamed response lane per connection.
+A non-null `stream_id` is rejected rather than mixing independently translated
+responses. Use separate connections for independent sessions.
+
+A Codex WebSocket session owns its ChatGPT connection. It must preserve that
+connection across terminal events for incremental `response.create` requests,
+`generate=false` prewarming, and `response.steer`. Steering is sent while output
+is still being read, on the connection that owns the target response. Accepted
+steering is queued, not committed: the successor's `response.created` is the
+commit point. The router forwards acceptance, pending, and failure events and
+keeps reading after a steered `response.incomplete` or normal completion for an
+automatic successor. A pending tool-result continuation uses the same
+`previous_response_id` and does not resend accepted steering.
+
+Startup metadata with `request_kind="prewarm"` and explicit `generate=false`
+is a non-generating transport handshake and does not require workspaces or a
+supported tool catalog. It retains native input for the next turn without
+performing tool rewriting. Generating requests cannot use prewarm metadata to
+bypass ordinary turn validation.
+
+Request preparation and response restoration retain Hpatch tools, replay,
+CTP/2, and native carrier behavior. Incremental input must retain enough
+connection-local native history to resolve those transformations while sending
+only new transformed input upstream. Automatic successors inherit the parent
+request's translation context; explicit continuations use their own settings.
+Neither a dropped connection nor a failed send silently replays requests or
+steering. Shutdown and downstream disconnect release the owned connection.
+
+Router-generated WebSocket error events include a numeric HTTP-style `status`
+so Codex can recognize them: incompatible requests and malformed client messages
+use 400, other execution failures use 502, and provider upgrade rejections retain
+the provider status and error body.
+
+Client messages and reconstructed requests have a 32 MiB buffer budget;
+provider messages have a 64 MiB budget. A session conservatively charges retained
+request settings, native input, and finalized output against a cumulative
+64 MiB history budget. Exceeding a budget fails the session rather than dropping
+history needed for translation.
+
+`--timeout` covers each response's preparation, connection setup, write, and
+first non-control, non-ancillary event. Steering acknowledgements do not satisfy
+that deadline. `--stream-idle-timeout` limits message gaps during an active
+response, not quiet intervals after completion or while waiting for pending
+tool results. A completed session's connection is not retired merely for being
+idle, because it may still own queued steering. There is no transparent
+reconnect or migration of that state to another socket.
+
+Acceptance:
+
+1. The launch override enables Codex WebSockets without persistent config edits.
+2. A client can steer after `response.created` while the parent is still running
+   and receive an automatic successor through the same connection.
+3. Accepted steering waiting on tool output survives parent completion, and one
+   incremental tool-result continuation does not duplicate the steering input.
+4. Prewarming, incremental history, tool restoration, and CTP references preserve
+   their existing meaning across responses.
+5. HTTP clients remain supported; a dropped active WebSocket fails without
+   transparent replay, and lifecycle cancellation closes owned sockets.
+
+### Provider WebSocket transport for HTTP clients
+
+HTTP requests to ChatGPT use pooled persistent WebSockets by default in both
+Hpatch and passthrough modes. The following pool and fallback rules apply to
+that HTTP-to-WebSocket path, not the dedicated Codex WebSocket session.
 
 Each `response.create` carries the complete transformed request input. HTTP's
 `stream` field is omitted; incremental `previous_response_id` requests are
