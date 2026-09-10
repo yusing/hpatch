@@ -127,7 +127,8 @@ Different files in one patch have independently identified commentary messages, 
 and are never grouped into one message. Their identities include the source call and file-section
 index, so repeated completed-call observations do not duplicate files, including repeated paths.
 Each file independently follows the existing delivery budget, deferral, and replay rules.
-Other consecutive tool displays from the same child share an `In <canonical path>` heading with
+Single-item root copies retain the inline agent prefix without an `In` heading or bullet wrapper.
+Two or more consecutive tool displays from the same child share an `In <canonical path>` heading with
 nested bullet items, including mixed action kinds. Grouping uses only calls already pending
 at a root delivery boundary and never waits for more calls. A different child, notice, or
 deferred/current boundary ends the group. Multiline details keep their nested code fences.
@@ -210,8 +211,8 @@ state; provider completion is not agent completion.
 
 Root SSE transforms offer ready activity at response-event boundaries, including
 before the terminal. JSON responses offer ready activity before substantive output.
-Events observed before the current response are labelled “Subagent activity since
-the last update.” No production response is held open, and no polling or model
+Events observed before the current response use the same formatting without an additional
+update heading. No production response is held open, and no polling or model
 turn is created. During an idle stream there may be no event boundary to deliver
 through; once a response closes, updates wait for the next eligible root response.
 This guarantees attributed deferred inline updates, not continuous wait-time display.

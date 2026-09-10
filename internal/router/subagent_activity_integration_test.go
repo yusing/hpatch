@@ -113,7 +113,7 @@ func TestActualChildActivityProjectsWithoutChangingChildResult(t *testing.T) {
 			p.commentary.publish(token, "Late runtime progress.", false)
 			next, request := prepareActivityTest(t, p, "remapped-session", "root-thread", "", "/root", nil)
 			output, err := next.TransformJSON(rootResponse)
-			if err != nil || !bytes.Contains(output, []byte("since the last update")) || !bytes.Contains(output, []byte("[`/root/alpha/nested`] Late runtime progress.")) {
+			if err != nil || bytes.Contains(output, []byte("since the last update")) || !bytes.Contains(output, []byte("[`/root/alpha/nested`] Late runtime progress.")) {
 				t.Fatal(string(output), err)
 			}
 			var response struct{ Output []map[string]json.RawMessage }

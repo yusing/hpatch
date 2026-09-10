@@ -174,7 +174,7 @@ func TestSubagentPatchFilesHaveSeparateCommentaries(t *testing.T) {
 				var replayInput []any
 				for index, message := range response.Output[1:] {
 					got := commentaryText(t, message)
-					expected := "In `/root/worker`\n\n" + toolActivityNested(want[index])
+					expected := "[`/root/worker`] " + want[index]
 					if got != expected {
 						t.Fatalf("file %d: got %q, want %q", index, got, expected)
 					}

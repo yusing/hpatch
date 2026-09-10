@@ -165,14 +165,7 @@ func (a *subagentActivity) drain(root string, started time.Time, budget int) []m
 		}
 		text := event.text
 		author := "[" + commentaryCode(a.threads[event.thread].name) + "] "
-		if event.kind == "tool" || event.kind == "file" {
-			text = "In " + commentaryCode(a.threads[event.thread].name) + "\n\n" + toolActivityNested(strings.TrimPrefix(event.text, author))
-		}
-		if event.observed.Before(started) {
-			text = "Subagent activity since the last update:\n" + text
-		}
-		// Labels can make an admitted event permanently too large. Omit it
-		// rather than letting it block later activity until expiry.
+		// Omit oversized events rather than blocking later activity until expiry.
 		if len(text) > maxCommentaryPublicationBytes {
 			continue
 		}
@@ -183,16 +176,18 @@ func (a *subagentActivity) drain(root string, started time.Time, budget int) []m
 		}
 		// Group ready calls by author without waiting for more activity.
 		if event.kind == "tool" {
+			grouped := "In " + commentaryCode(a.threads[event.thread].name) + "\n\n" + toolActivityNested(strings.TrimPrefix(event.text, author))
 			for index+1 < len(a.events) {
 				next := a.events[index+1]
 				if next.thread != event.thread || next.kind != "tool" || next.observed.Before(started) != event.observed.Before(started) {
 					break
 				}
-				combined := text + "\n\n" + toolActivityNested(strings.TrimPrefix(next.text, author))
+				combined := grouped + "\n\n" + toolActivityNested(strings.TrimPrefix(next.text, author))
 				if len(combined) > budget || len(combined) > maxCommentaryPublicationBytes {
 					break
 				}
 				text = combined
+				grouped = combined
 				index++
 			}
 		}

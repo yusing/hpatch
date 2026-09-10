@@ -29,7 +29,7 @@ func TestSubagentActivityAncestryReplayAndOrder(t *testing.T) {
 	if len(messages) != 2 || !strings.Contains(commentaryText(t, messages[0]), "Reply received") || !strings.Contains(commentaryText(t, messages[1]), "Checking.") {
 		t.Fatal(messages)
 	}
-	if strings.Count(commentaryText(t, messages[1]), "[`/root/alpha/nested`]") != 1 || !strings.Contains(commentaryText(t, messages[1]), "since the last update") {
+	if commentaryText(t, messages[1]) != "[`/root/alpha/nested`] Checking." {
 		t.Fatal(messages)
 	}
 	if len(a.drain("root-a", time.Now(), maxCommentaryPublicationBytes)) != 0 {
@@ -119,7 +119,7 @@ func TestActivityBudgetPreservesNoticeOrderAndReplayAfterExpiry(t *testing.T) {
 	}
 }
 
-func TestDeferredOversizedActivityDoesNotBlockLaterNotice(t *testing.T) {
+func TestDeferredBoundarySizedActivityPreservesLaterNotice(t *testing.T) {
 	a := newSubagentActivity()
 	a.observe("r", "", "/root", false)
 	a.observe("c", "r", "/root/c", true)
@@ -129,11 +129,15 @@ func TestDeferredOversizedActivityDoesNotBlockLaterNotice(t *testing.T) {
 		t.Fatal("boundary-sized notice was not admitted")
 	}
 	messages := a.drain("r", time.Now(), maxCommentaryPublicationBytes)
-	if len(messages) != 1 || !strings.Contains(commentaryText(t, messages[0]), "later notice") {
-		t.Fatal("unrenderable deferred notice blocked later activity", messages)
+	if len(messages) != 1 || len(commentaryText(t, messages[0])) != maxCommentaryPublicationBytes {
+		t.Fatal("boundary-sized deferred notice was not delivered")
+	}
+	messages = a.drain("r", time.Now(), maxCommentaryPublicationBytes)
+	if len(messages) != 1 || commentaryText(t, messages[0]) != "[`/root/c`] later notice" {
+		t.Fatal("later notice was not preserved")
 	}
 	if len(a.events) != 0 {
-		t.Fatal("permanently unrenderable notice retained")
+		t.Fatal("delivered notices retained")
 	}
 }
 
@@ -198,8 +202,8 @@ func TestToolActivityGroupsSamePathWithoutWaiting(t *testing.T) {
 		t.Fatal("grouped messages entered replay")
 	}
 	a.collect("c", "single", "tool", "Read `single`")
-	if got := a.drain("r", time.Time{}, maxCommentaryPublicationBytes); len(got) != 1 {
-		t.Fatal("single call held waiting for a group")
+	if got := a.drain("r", time.Time{}, maxCommentaryPublicationBytes); len(got) != 1 || commentaryText(t, got[0]) != "[`/root/c`] Read `single`" {
+		t.Fatal("single call wrapped or held waiting for a group")
 	}
 }
 
@@ -224,12 +228,12 @@ func TestToolActivityGroupingBoundariesAndBudget(t *testing.T) {
 	for _, name := range []string{"first", "second"} {
 		a.collect("c", name, "tool", "Read "+commentaryCode(name))
 	}
-	if got := a.drain("r", time.Time{}, len("In `/root/c`\n\n- Read `first`")); len(got) != 1 ||
-		commentaryText(t, got[0]) != "In `/root/c`\n\n- Read `first`" {
+	if got := a.drain("r", time.Time{}, len("[`/root/c`] Read `first`")); len(got) != 1 ||
+		commentaryText(t, got[0]) != "[`/root/c`] Read `first`" {
 		t.Fatal("grouping blocked a deliverable first item")
 	}
 	if got := a.drain("r", time.Time{}, maxCommentaryPublicationBytes); len(got) != 1 ||
-		commentaryText(t, got[0]) != "In `/root/c`\n\n- Read `second`" {
+		commentaryText(t, got[0]) != "[`/root/c`] Read `second`" {
 		t.Fatal("budget lost the remaining item")
 	}
 }
@@ -261,6 +265,9 @@ func TestToolActivityGroupingKeepsDeferredKindsDistinct(t *testing.T) {
 	messages := a.drain("r", started, maxCommentaryPublicationBytes)
 	if len(messages) != 2 {
 		t.Fatalf("action/deferred boundary lost: %d", len(messages))
+	}
+	if got := commentaryText(t, messages[0]); got != "[`/root/c`] Read `old`" {
+		t.Fatalf("deferred single-item formatting: %q", got)
 	}
 }
 
