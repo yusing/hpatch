@@ -45,6 +45,13 @@ session start, post-compaction, subagent start, and subagent post-compaction ins
 an inherited side conversation refreshes the marked section already in its prompt. Neither
 `make install`, `make uninstall`, nor the router creates, changes, or removes an instruction file.
 
+On eligible turns, the router also removes developer-input `<collaboration_mode>` blocks,
+including their nested `request_user_input` availability guidance, and standalone
+`<request_user_input>` blocks. Other blocks and content parts are preserved. A content part
+emptied by removal is omitted; a developer message emptied by removal is omitted entirely,
+not forwarded as an empty instruction frame. This applies regardless of whether base guidance
+arrives in `instructions` or developer input. User and assistant messages are not filtered.
+
 The capture evidence in `REQ-METRICS-001` records the actual instruction carrier, matched rewrite
 strategy, selected model workflow, and whether a custom instruction file was configured. Prompt
 shape matching tries both stock shapes independently of workflow selection, including an
