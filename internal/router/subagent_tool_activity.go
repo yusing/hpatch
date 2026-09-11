@@ -2,6 +2,7 @@ package router
 
 import (
 	"encoding/json"
+	"maps"
 	"strconv"
 	"strings"
 )
@@ -37,6 +38,15 @@ func (t *mekugiResponseTransform) collectSubagentToolCall(item map[string]json.R
 		history = &retained
 	} else if retained, exists := t.visible[callID]; exists {
 		history = &retained
+	}
+	// Recovery changes execution, not the provider's retained call identity.
+	// Use the translated owner for presentation only after translation succeeded.
+	if history != nil && history.toolName == "shell" && history.pluginID == builtinToolsPluginID &&
+		!history.replayCarrier && jsonString(history.upstreamItem, "name") == t.codeModeToolName {
+		item = maps.Clone(item)
+		item["name"] = mustMarshalJSON("shell")
+		delete(item, "namespace")
+		name = "shell"
 	}
 	var displays []string
 	if display, ok := t.shellActivityDisplay(item, name); ok {

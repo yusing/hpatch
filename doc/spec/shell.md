@@ -295,6 +295,16 @@ Acceptance:
     are not evaluated in the submitted program or substituted for its output.
     Native-only
     requests and other misplaced JavaScript/TypeScript use the rejection behavior above.
+    Conversely, a Code Mode `exec` call containing invalid JavaScript with a parseable,
+    column-one shell header is recovered through the built-in shell pipeline before dispatch.
+    Headers include interpreter selectors, `#!params=`, and `#!cmd=`.
+    Valid JavaScript, including hashbang programs, keeps Code Mode semantics. Bare commands,
+    malformed headers, and calls without the built-in shell available are not recovered.
+    Shell validation, params, templates, batching, stored-source resolution, and host execution
+    permissions remain unchanged; rejected translations execute only their normal diagnostic.
+    Successful translation adds `exec-shell-recovered` guidance and displays the selected
+    interpreter rather than JavaScript. Replay restores the exact original `exec` call while
+    retaining its translated carrier. Recovery never retries an already dispatched program.
 17. Retain, read, edit, and rerun preserve the script body and original model-visible call.
     Unsafe thread IDs reject before runtime creation; unsafe artifact IDs cannot redirect
     retention, reads, edits, expiry, or cleanup. A retained script cannot read or overwrite

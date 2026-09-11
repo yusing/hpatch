@@ -5,12 +5,39 @@ import (
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
 	treeSitterTypeScript "github.com/tree-sitter/tree-sitter-typescript/bindings/go"
+	"github.com/yusing/mekugi/internal/shellsyntax"
 	"mvdan.cc/sh/v3/syntax"
 )
 
 const shellTypeScriptDiagnostic = "shell: [shell-typescript-misuse] Rejected before execution: the Bash body is invalid Bash but valid TypeScript/JavaScript. Use functions.exec for Code Mode helpers such as tools, ALL_TOOLS, and text when available; call collaboration tools directly. For an ordinary script, select an explicit interpreter with a shebang such as #!node or #!bun. No script or command template was executed."
 
 const shellCodeModeRecoveryWarning = "shell: [shell-code-mode-recovered] Recovered Code Mode JavaScript submitted through functions.shell. Submit shell commands directly to functions.shell, without tools.exec_command or Promise wrappers. Use functions.exec only for other Code Mode helpers."
+
+const execShellRecoveryWarning = "exec: [exec-shell-recovered] Recovered an interpreter script submitted through functions.exec. Use functions.shell for shell directives and interpreter scripts."
+
+// A valid JavaScript program keeps Code Mode semantics, including its hashbang.
+// Only an explicit, parseable shell header opts invalid JavaScript into shell
+// translation. Bare commands and malformed headers are never guessed.
+func execShellRecovery(input string) bool {
+	if !strings.HasPrefix(input, "#!") {
+		return false
+	}
+	parser := sitter.NewParser()
+	defer parser.Close()
+	if parser.SetLanguage(codeModeJavaScriptLanguage) != nil {
+		return false
+	}
+	tree := parser.Parse([]byte(input), nil)
+	if tree == nil {
+		return false
+	}
+	defer tree.Close()
+	if !tree.RootNode().HasError() {
+		return false
+	}
+	_, err := shellsyntax.Split(input)
+	return err == nil
+}
 
 // Recovery requires JavaScript syntax and a reference to the Code Mode runtime,
 // not text that merely resembles a call. Explicit shell headers, directives,

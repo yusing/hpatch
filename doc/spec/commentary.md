@@ -85,6 +85,8 @@ provenance; they never replace child answers or add follow-up, message, wait, or
 Complete subagent tool calls are also forwarded as user-only activity, never as executable
 root calls. Known tools use operation labels rather than raw transport arguments. Shell calls
 and transparent, statically recognized Code Mode shell wrappers share a `Run` display.
+An `exec` call recovered through the built-in shell pipeline uses the shell display only
+after recovery is recorded, without changing its original replay identity.
 Nonempty `Run` previews use fenced code blocks even for single-line commands, tagged with
 the selected interpreter language: default/Bash uses `bash`, Python/Python3 uses `python`,
 and Node/Bun/Deno uses `javascript`. Common executable aliases normalize to renderer language
