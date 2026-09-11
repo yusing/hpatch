@@ -288,6 +288,13 @@ when the value omits a terminator. Explicit terminators are authoritative. An em
 target-bearing `type` value removes owned terminators. `add` inserts byte-exact values and
 does not synthesize newlines.
 
+Successful reports may include `advisory` lines describing newline ownership and
+decoded value endings against the immutable baseline. `preserves-ending`,
+`deletes`, `removes-ending`, `blank-before`/`blank-after`, and `joins-left` count
+affected spans. These are inspection aids, not errors: check whether the boundary
+matches your intent. They describe authored splices before neighboring edits or
+formatting; the engine does not silently adjust whitespace.
+
 Overlapping replacements or deletions and insertions strictly inside them reject. Boundary
 insertions are valid. Multiple insertions at the same boundary render in script order.
 

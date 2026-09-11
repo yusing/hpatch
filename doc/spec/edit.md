@@ -30,6 +30,11 @@ The engine orders registered immutable-baseline edits once and renders one final
 value per file. It never reads pending mutated content while resolving a later target.
 Content movement requires emitting the destination content; `mv` moves whole files only.
 
+Successful host reports expose advisory boundary evidence under `REQ-OUTPUT-001`,
+including empty-value deletion, inherited terminators, and adjacent blank
+separators. These observations never adjust whitespace or turn a valid edit into
+a rejection.
+
 Acceptance:
 
 1. Replacement, deletion, insertion before a line or text destination, and EOF append

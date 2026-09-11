@@ -22,6 +22,7 @@ type reportedEdit struct {
 	file      *fileState
 	command   int
 	operation string
+	advisory  string
 	target    targetSpec
 	spans     []renderedSpan
 }
@@ -41,6 +42,11 @@ func (w *workspace) finalStateReport(changes []change) (string, []TargetAlias) {
 		last.writeSummary(&report)
 	}
 	w.writeFileSummary(&report, changes)
+	for _, edit := range w.reportedEdits {
+		if edit.advisory != "" {
+			fmt.Fprintf(&report, "advisory %d %s %s: %s\n", edit.command, edit.operation, escapeReportControls(edit.file.path), edit.advisory)
+		}
+	}
 	activeReferences := false
 	if len(w.reportedEdits) != 0 {
 		activeReferences = w.writeFinalReferences(&report)
@@ -58,7 +64,7 @@ func (w *workspace) lastReportedEdit() *reportedEdit {
 	return w.reportedEdits[len(w.reportedEdits)-1]
 }
 
-func (e *editor) reportedEdit(origin editOrigin) *reportedEdit {
+func (e *editor) reportedEdit(origin editOrigin, command instruction) *reportedEdit {
 	var spans []renderedSpan
 	for _, edit := range e.edits {
 		if edit.command == origin.command {
@@ -68,7 +74,7 @@ func (e *editor) reportedEdit(origin editOrigin) *reportedEdit {
 	if len(spans) == 0 {
 		return nil
 	}
-	return &reportedEdit{command: origin.command, operation: origin.operation, target: origin.targetSpec, spans: spans}
+	return &reportedEdit{command: origin.command, operation: origin.operation, target: origin.targetSpec, spans: spans, advisory: e.boundaryAdvisory(origin, command)}
 }
 
 func (w *workspace) targetAliases() []TargetAlias {

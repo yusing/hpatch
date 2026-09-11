@@ -73,6 +73,7 @@ restored carrier. Basic `Apply` does not return the report. Its line forms are:
 in PATH
 last OP PATH COUNT ranges RANGE[, RANGE[, RANGE]] [ +N more]
 files add=A update=U move=M delete=D
+advisory COMMAND OP PATH: baseline-boundary owned=ENDING value=ENDING ...
 refs COMMAND OP PATH
 LINE:HASH TEXT
 ```
@@ -85,6 +86,42 @@ ranges. Extra ranges are summarized by `+N more`. `RANGE` is a half-open
 `START_LINE:START_COLUMN-END_LINE:END_COLUMN` pair in one-based Unicode coordinates; a
 complete-line range includes its final terminator when present. The `files` line counts
 net original-to-final actions.
+
+Host reports may insert one bounded advisory line per effective command between
+the `files` summary and reference blocks:
+
+```text
+advisory COMMAND OP PATH: baseline-boundary owned=LF value=empty mode=<<PATCH- deletes=1 removes-ending=1
+```
+
+These lines describe each command's authored splice against the immutable baseline,
+before other commands or language formatting affect adjacent content. They are
+inspection aids, not errors or claims about user intent, and never change bytes,
+validation, aliases, or application. Failed or cancelled host results publish no
+success report and therefore no boundary advisories.
+
+`owned` names the removed target's final terminator (`LF`, `CRLF`, `CR`, or `none`);
+insertions own no target bytes. `value` names the decoded value's final terminator,
+or `none` for nonempty unterminated text and `empty` for a deletion value. Multiline
+values also show their exact `mode`. An empty initializer is not a deletion.
+
+Nonzero counts summarize effective spans in that command:
+- `preserves-ending`: a nonempty whole-row/range value inherits its owned final
+  terminator;
+- `deletes`: an empty replacement removes target bytes;
+- `removes-ending`: a replacement removes the target's final terminator without
+  preserving or supplying one;
+- `blank-before` / `blank-after`: a terminating side meets a blank, possibly
+  space/tab-only line on the other side of the splice;
+- `joins-left`: an EOF insertion continues a nonterminated baseline line without
+  a leading terminator.
+
+A split CRLF is one terminator, not a blank line. Counts do not infer that an
+existing separator is accidental. Inline edits with none of these observations
+emit no advisory; effective multiline edits always expose their ownership and
+value ending. No-op mutations emit none. Counts aggregate multiple matches into
+one line, and advisory paths follow pending moves with the same escaping as the
+rest of the report.
 
 One `refs` block follows for every effective content-mutating command on every surviving
 edited file. `COMMAND` is the command's positive one-based nonblank script index, `OP` is
