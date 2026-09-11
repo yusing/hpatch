@@ -578,7 +578,7 @@ func copySSETransformed(writer io.Writer, reader io.Reader, transformer response
 		pending, err := flushResponseSSE(transformer)
 		resultErr = errors.Join(resultErr, err)
 		for _, payload := range pending {
-			_, err := writeSSEEvent(writer, []string{"data: " + string(payload) + "\n"}, "\n", nil, nil)
+			_, err := writeSSEEvent(writer, responseSSELines(payload, "\n"), "\n", nil, nil)
 			if err != nil {
 				resultErr = errors.Join(resultErr, err)
 				return
@@ -693,10 +693,7 @@ func writeSSEEvent(writer io.Writer, lines []string, separator string, transform
 			if separator == "\r\n" {
 				lineEnding = "\r\n"
 			}
-			eventLines = []string{"data: " + string(eventPayload) + lineEnding}
-			if transformedEnvelope.Type != "" {
-				eventLines = append([]string{"event: " + transformedEnvelope.Type + lineEnding}, eventLines...)
-			}
+			eventLines = responseSSELines(eventPayload, lineEnding)
 			if index < len(visible)-1 && eventSeparator == "" {
 				eventSeparator = lineEnding
 			}
@@ -742,6 +739,23 @@ func recordObservedUsage(payload []byte, streamEvent bool, observe func(tokenCou
 	observe(counts)
 }
 
+// Synthesized frames need the same event name and data framing as live SSE,
+// including when buffered answer events are released after an interrupted stream.
+func responseSSELines(payload []byte, ending string) []string {
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal(payload, &envelope)
+	var lines []string
+	if envelope.Type != "" {
+		lines = append(lines, "event: "+envelope.Type+ending)
+	}
+	for line := range bytes.SplitSeq(payload, []byte("\n")) {
+		lines = append(lines, "data: "+string(line)+ending)
+	}
+	return lines
+}
+
 func encodeSSEEventPayload(lines []string, payload []byte) string {
 	dataIndexes := []int{}
 	for index, line := range lines {
@@ -767,9 +781,23 @@ func encodeSSEEventPayload(lines []string, payload []byte) string {
 	for index, line := range lines {
 		if index == firstData {
 			_, ending := trimSSELineEnding(line)
-			result.WriteString("data: ")
-			result.Write(payload)
+			// Each physical payload line needs its own data field. Preserve an
+			// unterminated final line, but separate any preceding payload lines.
+			first := true
+			for part := range bytes.SplitSeq(payload, []byte("\n")) {
+				if !first {
+					if ending == "" {
+						result.WriteByte('\n')
+					} else {
+						result.WriteString(ending)
+					}
+				}
+				first = false
+				result.WriteString("data: ")
+				result.Write(part)
+			}
 			result.WriteString(ending)
+
 			continue
 		}
 		if !dataSet[index] {

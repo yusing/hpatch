@@ -206,12 +206,20 @@ func TestFinalAnswerStreamFlushesWithoutUsage(t *testing.T) {
 	}
 }
 
-func TestFinalAnswerStreamEligibilityUsesCompletedItems(t *testing.T) {
+func TestTokenCommentaryAnswerCompatibility(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		item map[string]any
 		want bool
 	}{
+		{"text", map[string]any{"type": "message", "role": "assistant", "phase": "final_answer",
+			"content": []any{map[string]any{"type": "output_text", "text": "Answer"}}}, true},
+		{"legacy", map[string]any{"type": "message", "role": "assistant",
+			"content": []any{map[string]any{"type": "output_text", "text": "Answer"}}}, true},
+		{"null_phase", map[string]any{"type": "message", "role": "assistant", "phase": nil,
+			"content": []any{map[string]any{"type": "output_text", "text": "Answer"}}}, true},
+		{"empty_phase", map[string]any{"type": "message", "role": "assistant", "phase": "",
+			"content": []any{map[string]any{"type": "output_text", "text": "Answer"}}}, false},
 		{"refusal", map[string]any{"type": "message", "role": "assistant", "phase": "final_answer",
 			"content": []any{map[string]any{"type": "refusal", "refusal": "Cannot do that."}}}, false},
 		{"mixed_refusal", map[string]any{"type": "message", "role": "assistant", "phase": "final_answer",
@@ -226,17 +234,51 @@ func TestFinalAnswerStreamEligibilityUsesCompletedItems(t *testing.T) {
 			"content": []any{map[string]any{"type": "output_text", "text": "Still working"}}}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			transform, _, _ := newSubagentCommentaryTestTransform(t, nil)
-			item := mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": tc.item})
-			if _, err := transform.TransformSSE(item); err != nil {
-				t.Fatal(err)
+			for _, stream := range []bool{false, true} {
+				t.Run(map[bool]string{false: "json", true: "sse"}[stream], func(t *testing.T) {
+					transform, _, _ := newSubagentCommentaryTestTransform(t, nil)
+					terminal := finalAnswerTestTerminal(t, "completed", true)
+					var output []byte
+					if stream {
+						item := mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": tc.item})
+						if _, err := transform.TransformSSE(item); err != nil {
+							t.Fatal(err)
+						}
+						observeTestResponseUsage(t, transform, terminal, true)
+						events, err := transform.TransformSSE(terminal)
+						if err != nil {
+							t.Fatal(err)
+						}
+						output = bytes.Join(events, nil)
+					} else {
+						var envelope struct {
+							Response map[string]json.RawMessage `json:"response"`
+						}
+						if err := json.Unmarshal(terminal, &envelope); err != nil {
+							t.Fatal(err)
+						}
+						envelope.Response["output"] = mustTestJSON(t, []any{tc.item})
+						response := mustTestJSON(t, envelope.Response)
+						observeTestResponseUsage(t, transform, response, false)
+						var err error
+						output, err = transform.TransformJSON(response)
+						if err != nil {
+							t.Fatal(err)
+						}
+						var visible struct {
+							Output []json.RawMessage `json:"output"`
+						}
+						if err := json.Unmarshal(output, &visible); err != nil ||
+							len(visible.Output) == 0 || !bytes.Equal(visible.Output[len(visible.Output)-1], mustTestJSON(t, tc.item)) {
+							t.Fatalf("provider answer changed: %s", output)
+						}
+					}
+					if bytes.Contains(output, []byte("Tokens:")) != tc.want {
+						t.Fatalf("usage eligibility: %s", output)
+					}
+				})
 			}
-			terminal := finalAnswerTestTerminal(t, "completed", true)
-			observeTestResponseUsage(t, transform, terminal, true)
-			events, err := transform.TransformSSE(terminal)
-			if err != nil || bytes.Contains(bytes.Join(events, nil), []byte("Tokens:")) != tc.want {
-				t.Fatalf("usage eligibility: %q, %v", events, err)
-			}
+
 		})
 	}
 }

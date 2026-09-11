@@ -9,8 +9,13 @@ import (
 
 func TestTokenCommentaryRequiresCompletedSubstantiveAnswer(t *testing.T) {
 	message := func(phase, text string) map[string]any {
-		return map[string]any{"type": "message", "role": "assistant", "status": "completed", "phase": phase,
+		item := map[string]any{"type": "message", "role": "assistant", "status": "completed",
 			"content": []any{map[string]any{"type": "output_text", "text": text}}}
+		if phase != "" {
+			item["phase"] = phase
+		}
+		return item
+
 	}
 	for _, tc := range []struct {
 		name, status, event string

@@ -42,7 +42,7 @@ func (s *finalAnswerStream) observe(payload []byte) ([][]byte, bool) {
 	}
 	itemEvent := event.Type == "response.output_item.added" || event.Type == "response.output_item.done"
 	if event.Type == "response.output_item.done" {
-		s.substantive = s.substantive || isStreamedSubstantiveAnswer(event.Item)
+		s.substantive = s.substantive || isSubstantiveAnswer(event.Item)
 		s.blocked = s.blocked || blocksTokenUsage(event.Item)
 	}
 	answer := false
@@ -87,34 +87,6 @@ func (s *finalAnswerStream) flush() [][]byte {
 	s.indexes = nil
 	s.bytes = 0
 	return events
-}
-
-// Source: codex-rs/protocol/src/models.rs ContentItem and MessagePhase.
-// Codex drops messages with unsupported content (notably refusal parts).
-// Never make usage the only consumable assistant item in such a response.
-func isStreamedSubstantiveAnswer(item map[string]json.RawMessage) bool {
-	if !isSubstantiveAnswer(item) {
-		return false
-	}
-	if raw, present := item["phase"]; present {
-		var phase *string
-		if json.Unmarshal(raw, &phase) != nil || phase != nil && *phase != "final_answer" {
-			return false
-		}
-	}
-	var content []struct {
-		Type string  `json:"type"`
-		Text *string `json:"text"`
-	}
-	if json.Unmarshal(item["content"], &content) != nil {
-		return false
-	}
-	for _, part := range content {
-		if part.Type != "output_text" || part.Text == nil {
-			return false
-		}
-	}
-	return true
 }
 
 // FlushSSE releases provider events unchanged on EOF or transport/transform

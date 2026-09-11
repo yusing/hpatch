@@ -197,10 +197,12 @@ overflow suppresses reporting for the affected thread rather than showing a part
 For root and subagent streams, final-answer item events are buffered until the terminal.
 A successful completion emits usage as `response.output_item.done`, then the unchanged buffered
 answer events, then the terminal event. Eligibility comes from streamed completed items, even
-when the terminal `response.output` is empty. Streaming notices require a Codex-consumable text
-answer; unsupported content such as refusal parts passes through without a token notice.
+when the terminal `response.output` is empty. JSON and streaming notices require a Codex-consumable
+text answer; unsupported content such as refusal parts passes through without a token notice.
 The terminal output snapshot is not augmented with usage. Tool calls and progress commentary continue streaming normally. Missing usage, failed or
 incomplete completion, and upstream interruption flush the buffered answer without a token notice.
+Buffered answer releases retain the event type as the SSE event name and prefix every physical
+payload line with `data:`, including when EOF or a transport/transform error triggers the release.
 Buffering is capped at 64 MiB per response; exceeding that budget flushes the answer and disables
 usage commentary for that response without rejecting provider output.
 Usage commentary cannot become the terminal substantive result.

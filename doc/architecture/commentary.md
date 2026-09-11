@@ -122,6 +122,8 @@ and terminal, because Codex selects the last completed assistant item as the chi
 Missing usage and failed completion release the answer without a notice. The transport drains
 buffered events on EOF or failure, including through composed transforms. The 64 MiB response
 buffer limit disables auxiliary usage and releases output rather than rejecting a large answer.
+JSON and SSE share the same Codex-compatible text-answer eligibility check. The transport renders
+buffered releases with named SSE frames and one data field per payload line, including failure drains.
 The provider usage object remains authoritative; the streaming terminal output is not augmented
 with usage, and the projection does not participate in model-origin output accounting. It remains
 present in transport byte and token totals. `internal/commentaryid` owns the reserved operation/runtime and subagent/usage

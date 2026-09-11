@@ -154,6 +154,9 @@ func isFinalAnswerMessage(item map[string]json.RawMessage) bool {
 		(phase == "" || phase == "final_answer")
 }
 
+// Source: codex-rs/protocol/src/models.rs ContentItem and MessagePhase.
+// Codex drops messages with unsupported content (notably refusal parts).
+// JSON and SSE must not make usage the only consumable assistant item.
 func isSubstantiveAnswer(item map[string]json.RawMessage) bool {
 	if !isFinalAnswerMessage(item) {
 		return false
@@ -161,17 +164,28 @@ func isSubstantiveAnswer(item map[string]json.RawMessage) bool {
 	if status := jsonString(item, "status"); status != "" && status != "completed" {
 		return false
 	}
-	var content []map[string]json.RawMessage
+	if raw, present := item["phase"]; present {
+		var phase *string
+		if json.Unmarshal(raw, &phase) != nil || phase != nil && *phase != "final_answer" {
+			return false
+		}
+	}
+	var content []struct {
+		Type string  `json:"type"`
+		Text *string `json:"text"`
+	}
 	if json.Unmarshal(item["content"], &content) != nil {
 		return false
 	}
+	substantive := false
 	for _, part := range content {
-		if jsonString(part, "type") == "output_text" && strings.TrimSpace(jsonString(part, "text")) != "" ||
-			jsonString(part, "type") == "refusal" && strings.TrimSpace(jsonString(part, "refusal")) != "" {
-			return true
+		if part.Type != "output_text" || part.Text == nil {
+			return false
 		}
+		substantive = substantive || strings.TrimSpace(*part.Text) != ""
 	}
-	return false
+	return substantive
+
 }
 
 // Client dispatches and unfinished hosted calls are not final-answer turns.
