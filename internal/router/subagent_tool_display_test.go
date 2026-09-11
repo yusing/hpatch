@@ -12,7 +12,7 @@ func subagentToolActivityText(item map[string]json.RawMessage, name string) stri
 }
 
 func subagentToolActivityTextWithHistory(item map[string]json.RawMessage, name string, history *mekugiHistory) string {
-	return strings.Join(subagentToolActivityTexts(item, name, history), "\n\n")
+	return strings.Join(subagentToolActivityTexts(item, name, history, nil), "\n\n")
 }
 
 func TestSubagentToolDisplay(t *testing.T) {
@@ -69,6 +69,40 @@ func TestSubagentToolDisplay(t *testing.T) {
 		})
 	}
 }
+func TestSubagentMCPToolDisplay(t *testing.T) {
+	name := "mcp__openaiDeveloperDocs__search_openai_docs"
+	arguments := `{"query":"Codex subagents model catalog switching threads","limit":5}`
+	want := "MCP `openaiDeveloperDocs.search_openai_docs`\n"
+	item := map[string]json.RawMessage{"name": mustMarshalJSON(name), "arguments": mustMarshalJSON(arguments)}
+	if got := subagentToolActivityText(item, "functions."+name); got != want+commentaryCode(arguments) {
+		t.Fatalf("native MCP display = %q", got)
+	}
+	for _, source := range []string{
+		`const r = await tools.` + name + `({query:"Codex subagents model catalog switching threads",limit:5}); text(r);`,
+		`text(await tools.` + name + `({query:"Codex subagents model catalog switching threads",limit:5}));`,
+	} {
+		item := map[string]json.RawMessage{"name": mustMarshalJSON("exec"), "input": mustMarshalJSON(source)}
+		got := subagentToolActivityText(item, "functions.exec")
+		if got != want+commentaryCode(`{"limit":5,"query":"Codex subagents model catalog switching threads"}`) {
+			t.Fatalf("wrapped MCP display = %q", got)
+		}
+		if jsonString(item, "input") != source {
+			t.Fatal("display changed executable input")
+		}
+	}
+	for _, source := range []string{
+		`const r = await tools.` + name + `({query:query}); text(r);`,
+		`const r = await tools.` + name + `({query:"test"}); text(r); other();`,
+		`await tools.mcp__server__({});`,
+		`await tools.mcp____tool({});`,
+	} {
+		item := map[string]json.RawMessage{"name": mustMarshalJSON("exec"), "input": mustMarshalJSON(source)}
+		if got := subagentToolActivityText(item, "exec"); got != toolActivityJavaScript(source) {
+			t.Fatalf("nontransparent MCP display = %q", got)
+		}
+	}
+}
+
 func TestSubagentCodeModeOutputProjection(t *testing.T) {
 	command := "python3 - <<'PY'\nimport pathlib, json\nprint('done')\nPY"
 	for _, projection := range []string{
@@ -425,5 +459,101 @@ func TestSubagentEditDisplayUnrecognizedPatch(t *testing.T) {
 		if got := subagentToolActivityText(item, "apply_patch"); got != want {
 			t.Fatalf("got %q, want %q", got, want)
 		}
+	}
+}
+
+func TestSubagentAdditionalBuiltinDisplays(t *testing.T) {
+	for _, tc := range []struct{ name, label string }{
+		{"list_mcp_resources", "List MCP resources"},
+		{"list_mcp_resource_templates", "List MCP resource templates"},
+		{"read_mcp_resource", "Read MCP resource"},
+		{"clock__curr_time", "Read current time"},
+		{"clock__sleep", "Sleep"},
+		{"get_context_remaining", "Check remaining context"},
+		{"new_context", "Start new context"},
+		{"create_goal", "Create goal"}, {"get_goal", "Read goal"}, {"update_goal", "Update goal"},
+		{"web__run", "Browse web"}, {"image_gen__imagegen", "Generate image"},
+		{"wait", "Wait for execution"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := `{"value":"full detail"}`
+			want := tc.label + "\n" + commentaryCode(args)
+			item := map[string]json.RawMessage{"name": mustMarshalJSON(tc.name), "arguments": mustMarshalJSON(args)}
+			if got := subagentToolActivityText(item, tc.name); got != want {
+				t.Fatalf("native = %q", got)
+			}
+			source := "const r = await tools." + tc.name + "(" + args + "); text(r);"
+			item = map[string]json.RawMessage{"name": mustMarshalJSON("exec"), "input": mustMarshalJSON(source)}
+			if got := subagentToolActivityText(item, "exec"); got != want {
+				t.Fatalf("wrapper = %q", got)
+			}
+		})
+	}
+	for _, tc := range []struct{ namespace, name, want string }{
+		{"mcp__docs", "search", "MCP `docs.search`"},
+		{"mcp__docs__v2", "search", "MCP `docs__v2.search`"},
+		{"clock", "curr_time", "Read current time"},
+		{"web", "run", "Browse web"},
+		{"image_gen", "imagegen", "Generate image"},
+	} {
+		item := map[string]json.RawMessage{"namespace": mustMarshalJSON(tc.namespace), "name": mustMarshalJSON(tc.name)}
+		if got := subagentToolActivityText(item, tc.namespace+"."+tc.name); got != tc.want {
+			t.Fatalf("namespaced = %q", got)
+		}
+	}
+	source := `const r = await tools.image_gen__imagegen({prompt:"A bird"}); generatedImage(r);`
+	item := map[string]json.RawMessage{"name": mustMarshalJSON("exec"), "input": mustMarshalJSON(source)}
+	if got := subagentToolActivityText(item, "exec"); got != "Generate image\n`{\"prompt\":\"A bird\"}`" {
+		t.Fatal(got)
+	}
+}
+
+func TestSubagentStaticMultiCallDisplays(t *testing.T) {
+	for _, source := range []string{
+		`text(await tools.list_mcp_resources({})); text(await tools.clock__curr_time({}));`,
+		`const r = await tools.list_mcp_resources({}); text(r); const clock = await tools.clock__curr_time({}); text(clock);`,
+		`text(await Promise.all([tools.list_mcp_resources({}), tools.clock__curr_time({})]));`,
+		`const results = await Promise.allSettled([tools.list_mcp_resources({}), tools.clock__curr_time({})]); text(results);`,
+	} {
+		item := map[string]json.RawMessage{"name": mustMarshalJSON("exec"), "input": mustMarshalJSON(source)}
+		want := "List MCP resources\n`{}`\n\nRead current time\n`{}`"
+		if got := subagentToolActivityText(item, "exec"); got != want {
+			t.Fatalf("%s: %q", source, got)
+		}
+		if _, ok := toolActivityUnwrapExec(source, true); ok {
+			t.Fatal("batch became session evidence")
+		}
+		if jsonString(item, "input") != source {
+			t.Fatal("source changed")
+		}
+	}
+	for _, source := range []string{
+		`await tools.list_mcp_resources({}); other();`,
+		`if (flag) await tools.list_mcp_resources({});`,
+		`text(await Promise.all([tools.list_mcp_resources(args), tools.clock__curr_time({})]));`,
+		`text(await Promise.all([tools.list_mcp_resources({}), other()]));`,
+		`const tools = await tools.list_mcp_resources({}); text(tools);`,
+		`const text = await tools.list_mcp_resources({}); text(text);`,
+		`const Promise = await tools.list_mcp_resources({}); text(Promise);`,
+		`await tools.update_plan({});`,
+		`await tools.list_mcp_resources({}); await tools.update_plan({});`,
+	} {
+		item := map[string]json.RawMessage{"name": mustMarshalJSON("exec"), "input": mustMarshalJSON(source)}
+		if got := subagentToolActivityText(item, "exec"); got != toolActivityJavaScript(source) {
+			t.Fatalf("unsafe or excluded %s: %q", source, got)
+		}
+	}
+	item := map[string]json.RawMessage{"name": mustMarshalJSON("update_plan"), "arguments": mustMarshalJSON(`{}`)}
+	if got := subagentToolActivityText(item, "update_plan"); got != "Tool call: `update_plan`\n`{}`" {
+		t.Fatal(got)
+	}
+}
+
+func TestSubagentBatchPatchFilesStaySeparate(t *testing.T) {
+	source := `text(await tools.apply_patch("*** Begin Patch\n*** Add File: a\n+x\n*** Add File: b\n+y\n*** End Patch\n")); text(await tools.clock__curr_time({}));`
+	item := map[string]json.RawMessage{"name": mustMarshalJSON("exec"), "input": mustMarshalJSON(source)}
+	displays := subagentToolActivityTexts(item, "exec", nil, nil)
+	if len(displays) != 3 || displays[0] != "Write `a`\n```diff\n+x\n```" || displays[1] != "Write `b`\n```diff\n+y\n```" || displays[2] != "Read current time\n`{}`" {
+		t.Fatalf("patch file boundaries = %q", displays)
 	}
 }

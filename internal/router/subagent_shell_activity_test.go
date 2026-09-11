@@ -25,6 +25,8 @@ func TestSubagentShellExcerptsJSONAndSSE(t *testing.T) {
 			calls := []map[string]any{
 				{"type": "custom_tool_call", "id": "poll", "call_id": "poll", "name": "exec", "input": `text(await tools.write_stdin({session_id:26369,chars:""}));`},
 				{"type": "custom_tool_call", "id": "stored", "call_id": "stored", "name": "shell", "input": "#!script=@shell/stored"},
+				{"type": "custom_tool_call", "id": "batch-poll", "call_id": "batch-poll", "name": "exec", "input": `text(await tools.write_stdin({session_id:26369,chars:""})); text(await tools.clock__curr_time({}));`},
+				{"type": "custom_tool_call", "id": "batch-stored", "call_id": "batch-stored", "name": "exec", "input": `text(await tools.shell("#!script=@shell/stored")); text(await tools.list_mcp_resources({}));`},
 			}
 			payload := mustMarshalJSON(map[string]any{"status": "completed", "output": calls})
 			if stream {

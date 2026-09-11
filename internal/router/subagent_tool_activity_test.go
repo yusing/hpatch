@@ -21,6 +21,9 @@ func TestSubagentToolActivityJSONAndSSE(t *testing.T) {
 				{"type": "shell_call", "id": "shell", "status": "completed", "action": map[string]any{"commands": []string{"echo a", "  echo b"}}},
 				{"type": "local_shell_call", "id": "exec", "status": "completed", "action": map[string]any{"command": []string{"bash", "-lc", "cat a"}}},
 				{"type": "web_search_call", "id": "web", "status": "completed", "action": map[string]any{"type": "search", "query": "Go parser"}},
+				{"type": "custom_tool_call", "id": "mcp", "call_id": "mcp", "name": "exec", "input": `const r = await tools.mcp__openaiDeveloperDocs__fetch_openai_doc({url:"https://learn.chatgpt.com/docs/developer-commands",anchor:"#built-in-slash-commands"}); text(r);`},
+				{"type": "function_call", "id": "namespaced-mcp", "call_id": "namespaced-mcp", "namespace": "mcp__docs", "name": "lookup", "arguments": "{}"},
+				{"type": "custom_tool_call", "id": "batch", "call_id": "batch", "name": "exec", "input": `text(await tools.list_mcp_resources({})); text(await tools.clock__curr_time({}));`},
 			}
 			payload := mustTestJSON(t, map[string]any{"status": "completed", "output": calls})
 			if stream {
@@ -55,7 +58,10 @@ func TestSubagentToolActivityJSONAndSSE(t *testing.T) {
 				"\n\n- Tool call: `external`\n  ```\n  first line\n  " + strings.Repeat("界", 300) + "\n  ```" +
 				"\n\n- Tool call: `collaboration.send_message`" +
 				"\n\n- Run\n  ```bash\n  echo a\n    echo b\n  ```" +
-				"\n\n- Read `a`\n\n- Search web\n  `Go parser`"
+				"\n\n- Read `a`\n\n- Search web\n  `Go parser`" +
+				"\n\n- MCP `openaiDeveloperDocs.fetch_openai_doc`\n  `{\"anchor\":\"#built-in-slash-commands\",\"url\":\"https://learn.chatgpt.com/docs/developer-commands\"}`" +
+				"\n\n- MCP `docs.lookup`\n  `{}`" +
+				"\n\n- List MCP resources\n  `{}`\n\n- Read current time\n  `{}`"
 			if got != want {
 				t.Fatalf("grouped display: got %q, want %q", got, want)
 			}

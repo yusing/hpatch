@@ -48,12 +48,7 @@ func (t *mekugiResponseTransform) collectSubagentToolCall(item map[string]json.R
 		delete(item, "namespace")
 		name = "shell"
 	}
-	var displays []string
-	if display, ok := t.shellActivityDisplay(item, name); ok {
-		displays = []string{display}
-	} else {
-		displays = subagentToolActivityTexts(item, name, history)
-	}
+	displays := subagentToolActivityTexts(item, name, history, t.shellActivityDisplay)
 	for index, text := range displays {
 		source, kind := "tool-call\x00"+id, "tool"
 		if len(displays) > 1 {
