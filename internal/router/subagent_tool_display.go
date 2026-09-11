@@ -444,7 +444,20 @@ func toolActivityReadCommand(script string, call *syntax.CallExpr) (string, bool
 		paths, readRange := argv[1:], ""
 		if argv[0] == "hcat" {
 			pathIndex := 1
-			for pathIndex+1 < len(argv) && (argv[pathIndex] == "--max-tokens" || argv[pathIndex] == "--preview-bytes") {
+			seen := make(map[string]bool)
+			for pathIndex < len(argv) && (argv[pathIndex] == "--max-tokens" || argv[pathIndex] == "--preview-bytes") {
+				option := argv[pathIndex]
+				if seen[option] || pathIndex+1 == len(argv) {
+					return "", false
+				}
+				maximum := uint64(15500)
+				if option == "--preview-bytes" {
+					maximum = 65536
+				}
+				if _, valid := toolActivityPositiveDecimal(argv[pathIndex+1], maximum); !valid {
+					return "", false
+				}
+				seen[option] = true
 				pathIndex += 2
 			}
 			if len(argv)-pathIndex != 1 && len(argv)-pathIndex != 2 {
@@ -452,6 +465,12 @@ func toolActivityReadCommand(script string, call *syntax.CallExpr) (string, bool
 			}
 			paths = argv[pathIndex : pathIndex+1]
 			if len(argv)-pathIndex == 2 {
+				first, last, found := strings.Cut(argv[pathIndex+1], ":")
+				start, validStart := toolActivityPositiveDecimal(first, 1<<53-1)
+				end, validEnd := toolActivityPositiveDecimal(last, 1<<53-1)
+				if !found || (!validStart && first != "0") || !validEnd || start > end {
+					return "", false
+				}
 				readRange = " " + argv[pathIndex+1]
 			}
 		}
@@ -485,10 +504,28 @@ func toolActivityReadCommand(script string, call *syntax.CallExpr) (string, bool
 		add("Read", argv[3]+" "+start+":"+end)
 	case "inspect_file":
 		pathIndex := 1
-		for pathIndex+1 < len(argv) && (argv[pathIndex] == "--source" || argv[pathIndex] == "--source-bytes") {
+		seen := make(map[string]bool)
+		for pathIndex < len(argv) && (argv[pathIndex] == "--source" || argv[pathIndex] == "--source-bytes") {
+			option := argv[pathIndex]
+			if seen[option] || pathIndex+1 == len(argv) {
+				return "", false
+			}
+			if option == "--source-bytes" {
+				if _, valid := toolActivityPositiveDecimal(argv[pathIndex+1], 8192); !valid {
+					return "", false
+				}
+			}
+			seen[option] = true
 			pathIndex += 2
 		}
-		if len(argv)-pathIndex != 1 {
+		if len(argv)-pathIndex != 1 || seen["--source-bytes"] && !seen["--source"] {
+			return "", false
+		}
+		if argv[pathIndex] == "" || strings.ContainsRune(argv[pathIndex], '\x00') {
+			return "", false
+		}
+		path := filepath.Clean(argv[pathIndex])
+		if path == "@shell" || strings.HasPrefix(path, "@shell"+string(filepath.Separator)) {
 			return "", false
 		}
 		add("Inspect", argv[pathIndex])
@@ -535,6 +572,15 @@ func toolActivityReadCommand(script string, call *syntax.CallExpr) (string, bool
 	}
 	return strings.Join(lines, "\n\n"), true
 
+}
+
+// Match the private readers' positive, canonical decimal options without executing them.
+func toolActivityPositiveDecimal(value string, maximum uint64) (uint64, bool) {
+	if value == "" || value[0] == '0' || strings.Trim(value, "0123456789") != "" {
+		return 0, false
+	}
+	number, err := strconv.ParseUint(value, 10, 64)
+	return number, err == nil && number <= maximum
 }
 
 // Recognize transparent Code Mode wrappers, not arbitrary programs containing a

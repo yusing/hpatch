@@ -148,6 +148,8 @@ full skill/reference operand. Optional read ranges remain visible for both forms
 Simple listing, search, and structural inspection commands use `List`, `Search`, and `Inspect`
 labels, retaining search flags and operands. Native web/file search, image viewing/generation,
 code execution, input sending, and editing calls use descriptive operation labels.
+Hcat and inspect_file previews validate literal option bounds, duplicates, and operand
+placement before classification; invalid forms retain their source-level `Run` display.
 A native `apply_patch` call unwraps its string or structured patch argument for display.
 A successfully translated `hpatch` or `hpatch_recover` call uses the already-retained translated
 patch for display. Framed patches show one commentary per file with an inline-code path and an operation

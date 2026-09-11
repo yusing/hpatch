@@ -38,6 +38,8 @@ func TestSubagentToolDisplay(t *testing.T) {
 		{"shell", "hcat a.go 1:20", "Read `a.go 1:20`"},
 		{"shell", "hgrep -n -F -e 'some text' a.go", "Search `-n -F -e 'some text' a.go`"},
 		{"shell", "inspect_file --source Main --source-bytes 100 a.go", "Inspect `a.go`"},
+		{"shell", "inspect_file --source-bytes 8192 --source '' a.json", "Inspect `a.json`"},
+		{"shell", "hcat --max-tokens 15500 --preview-bytes 65536 a.go 0:1", "Read `a.go 0:1`"},
 		{"shell", "inspect_file a.go", "Inspect `a.go`"},
 		{"shell", "ls src", "List `src`"},
 		{"shell", `{"command":[]}`, "Run"},
@@ -108,6 +110,35 @@ func TestSubagentMCPToolDisplay(t *testing.T) {
 		if got := subagentToolActivityText(item, "exec"); got != toolActivityJavaScript(source) {
 			t.Fatalf("nontransparent MCP display = %q", got)
 		}
+	}
+}
+
+func TestSubagentToolDisplayInvalidReaderOptions(t *testing.T) {
+	for _, input := range []string{
+		"hcat --max-tokens 0 a.go", "hcat --max-tokens -1 a.go",
+		"hcat --max-tokens 15501 a.go", "hcat --max-tokens 01 a.go",
+		"hcat --max-tokens 1 --max-tokens 2 a.go", "hcat --max-tokens a.go",
+		"hcat --preview-bytes 65537 a.go", "hcat --preview-bytes nope a.go",
+		"hcat --preview-bytes 1 --preview-bytes 2 a.go", "hcat a.go --max-tokens 1",
+		"hcat a.go 2:1", "hcat a.go 1:0", "hcat a.go 01:2", "hcat a.go invalid",
+		"hcat a.go 1:9007199254740992",
+		"inspect_file --source-bytes 100 a.go", "inspect_file --source",
+		"inspect_file --source Main --source Other a.go",
+		"inspect_file --source Main --source-bytes 0 a.go",
+		"inspect_file --source Main --source-bytes 8193 a.go",
+		"inspect_file --source Main --source-bytes +1 a.go",
+		"inspect_file --source Main --source-bytes 01 a.go",
+		"inspect_file --source Main --source-bytes 1 --source-bytes 2 a.go",
+		"inspect_file a.go --source Main",
+		"inspect_file ''", "inspect_file @shell/script", "inspect_file dir/../@shell/script",
+	} {
+		t.Run(input, func(t *testing.T) {
+			item := map[string]json.RawMessage{"name": mustMarshalJSON("shell"), "input": mustMarshalJSON(input)}
+			want := "Run\n```bash\n" + input + "\n```"
+			if got := subagentToolActivityText(item, "shell"); got != want {
+				t.Fatalf("display = %q, want source fallback %q", got, want)
+			}
+		})
 	}
 }
 

@@ -92,7 +92,18 @@ func openAXJournal(path string) (*os.File, error) {
 	if !filepath.IsAbs(path) {
 		return nil, errors.New("AX journal path must be absolute")
 	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0600)
+	flags := os.O_WRONLY | os.O_APPEND | syscall.O_NOFOLLOW | syscall.O_NONBLOCK
+	file, err := os.OpenFile(path, flags|os.O_CREATE|os.O_EXCL, 0600)
+	if errors.Is(err, os.ErrExist) {
+		file, err = os.OpenFile(path, flags, 0)
+	} else if err == nil {
+		// Normalize umask only for a file we created; existing unsafe files
+		// must still be rejected without changing their permissions.
+		if err := file.Chmod(0600); err != nil {
+			file.Close()
+			return nil, err
+		}
+	}
 	if err != nil {
 		return nil, err
 	}

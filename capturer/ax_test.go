@@ -7,12 +7,48 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
+
+func TestAXReadJournalRestrictiveUmask(t *testing.T) {
+	const marker = "MEKUGI_TEST_AX_UMASK_PATH"
+	if path := os.Getenv(marker); path != "" {
+		previous := syscall.Umask(0777)
+		defer syscall.Umask(previous)
+		if err := PrepareAXReadJournal(path); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.Mode().Perm() != 0600 {
+			t.Fatalf("journal mode = %v, %v", info, err)
+		}
+		observation, err := StartAXRead(path, "thread", "hcat")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := observation.Finish(true); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	// Umask is process-wide, so exercise it outside the other package tests.
+	path := filepath.Join(t.TempDir(), "reads.jsonl")
+	command := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestAXReadJournalRestrictiveUmask$")
+	command.Env = append(os.Environ(), marker+"="+path)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("restrictive umask: %v\n%s", err, output)
+	}
+	result, err := ReadAXReads(t.Context(), path, "thread")
+	if err != nil || result.Succeeded != 1 {
+		t.Fatalf("journal = %+v, %v", result, err)
+	}
+}
 
 func TestAXReadJournalExactSizeWithoutFinalNewline(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "reads.jsonl")
@@ -169,6 +205,9 @@ func TestAXReadRejectsUnsafeStorageAndMalformedEvents(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(path); string(data) != "unchanged" {
 		t.Fatal("unsafe target changed")
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0644 {
+		t.Fatalf("unsafe target mode changed: %v, %v", info, err)
 	}
 	for _, data := range []string{"{}\n", "not-json\n", strings.Repeat("x", 5000)} {
 		if err := os.WriteFile(filepath.Join(root, "bad"), []byte(data), 0600); err != nil {

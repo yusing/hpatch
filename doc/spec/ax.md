@@ -22,6 +22,8 @@ failed invocation attempts. These counts are not physical filesystem-open counts
 Other interpreters and external programs' internal reads remain outside coverage.
 
 The journal is optional, private (`0600`), regular, append-only, and limited to 64 MiB.
+New journals receive `0600` even under a restrictive umask; existing files with other
+permissions are rejected without changing their mode.
 Capacity checking and append share a cross-process lock acquired with nonblocking attempts
 and a 200 ms retry budget. Router startup rejects journal aliases of capture or metrics outputs, with or without debug.
 It contains no source paths, scripts, arguments, credentials, or command output.
