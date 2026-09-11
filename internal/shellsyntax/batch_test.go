@@ -2,6 +2,7 @@ package shellsyntax
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -17,7 +18,7 @@ func TestSplit(t *testing.T) {
 		},
 		{
 			name:  "mixed interpreters inherit",
-			input: "#!params={\"yield_time_ms\":1000}\necho hello\n#!python3\nprint('hello')\n",
+			input: "#!batch=NEXT\n#!params={\"yield_time_ms\":1000}\necho hello\nNEXT\n#!python3\nprint('hello')\n",
 			want: []string{
 				"#!params={\"yield_time_ms\":1000}\necho hello\n",
 				"#!python3\n#!params={\"yield_time_ms\":1000}\nprint('hello')\n",
@@ -25,7 +26,7 @@ func TestSplit(t *testing.T) {
 		},
 		{
 			name:  "implicit bash replaces params",
-			input: "#!params={\"workdir\":\"/tmp\",\"tty\":false}\necho one\n#!params={\"yield_time_ms\":2000}\necho two\n#!python3\nprint(3)",
+			input: "#!batch=NEXT\n#!params={\"workdir\":\"/tmp\",\"tty\":false}\necho one\nNEXT\n#!params={\"yield_time_ms\":2000}\necho two\nNEXT\n#!python3\nprint(3)",
 			want: []string{
 				"#!params={\"workdir\":\"/tmp\",\"tty\":false}\necho one\n",
 				"#!params={\"yield_time_ms\":2000}\necho two\n",
@@ -34,7 +35,7 @@ func TestSplit(t *testing.T) {
 		},
 		{
 			name:  "new params after selector",
-			input: "echo one\n#!python3\n#!params={}\nprint(2)\n#!bash\necho three",
+			input: "#!batch=NEXT\necho one\nNEXT\n#!python3\n#!params={}\nprint(2)\nNEXT\n#!bash\necho three",
 			want: []string{
 				"echo one\n",
 				"#!python3\n#!params={}\nprint(2)\n",
@@ -43,7 +44,7 @@ func TestSplit(t *testing.T) {
 		},
 		{
 			name:  "empty params clears inheritance",
-			input: "#!params={\"workdir\":\"/tmp\"}\necho one\n#!params={}\necho two\n#!python3\nprint(3)",
+			input: "#!batch=NEXT\n#!params={\"workdir\":\"/tmp\"}\necho one\nNEXT\n#!params={}\necho two\nNEXT\n#!python3\nprint(3)",
 			want: []string{
 				"#!params={\"workdir\":\"/tmp\"}\necho one\n",
 				"#!params={}\necho two\n",
@@ -52,31 +53,26 @@ func TestSplit(t *testing.T) {
 		},
 		{
 			name:  "template not inherited",
-			input: "#!cmd=producer | {.}\n#!params={}\ncat\n#!python3\r\nprint(2)\r\n",
+			input: "#!batch=NEXT\n#!cmd=producer | {.}\n#!params={}\ncat\nNEXT\n#!python3\r\nprint(2)\r\n",
 			want: []string{
 				"#!cmd=producer | {.}\n#!params={}\ncat\n",
 				"#!python3\r\n#!params={}\nprint(2)\r\n",
 			},
 		},
 		{
-			name:  "indented body data",
-			input: "echo one\n  #!python3\n  #!params={}\necho two",
-			want:  []string{"echo one\n  #!python3\n  #!params={}\necho two"},
-		},
-		{
-			name:  "later command template is body data",
-			input: "echo one\n#!cmd=producer | {.}\necho two",
-			want:  []string{"echo one\n#!cmd=producer | {.}\necho two"},
-		},
-		{
 			name:  "bare CR",
-			input: "#!params={}\recho one\r#!python3\rprint(2)",
+			input: "#!batch=NEXT\r#!params={}\recho one\rNEXT\r#!python3\rprint(2)",
 			want:  []string{"#!params={}\recho one\r", "#!python3\r#!params={}\nprint(2)"},
 		},
 		{
-			name:  "unrelated directive comment",
-			input: "echo one\n#!params-file=example\necho two",
-			want:  []string{"echo one\n#!params-file=example\necho two"},
+			name:  "separator matches exact whole line",
+			input: "#!batch=NEXT\r\necho one\r\n NEXT\r\nNEXT suffix\r\nNEXT \r\nNEXT\r\nprintf two",
+			want:  []string{"echo one\r\n NEXT\r\nNEXT suffix\r\nNEXT \r\n", "printf two"},
+		},
+		{
+			name:  "caller chooses another separator for examples",
+			input: "#!batch=--another--\n#!python3\nexample = '''\nNEXT\n#!batch=NEXT\n#!python3\n#!params={}\n'''\n--another--\nprintf two",
+			want:  []string{"#!python3\nexample = '''\nNEXT\n#!batch=NEXT\n#!python3\n#!params={}\n'''\n", "printf two"},
 		},
 		{
 			name:  "retained reference",
@@ -93,19 +89,51 @@ func TestSplit(t *testing.T) {
 	}
 }
 
+func TestSplitKeepsSingleProgramSource(t *testing.T) {
+	for _, input := range []string{
+		"#!python3\nexample = '''\n#!python3\n#!params={bad}\n#!script=@shell/example\n#!batch=NEXT\nNEXT\n'''\n",
+		"cat <<'EOF'\n#!python3\n#!params={bad}\n#!script=@shell/example\nEOF\n",
+		"#!bash\n#!python3\nprintf one",
+		"echo one\n#!cmd=producer | {.}\necho two",
+		"echo one\n#!params={bad}\necho two",
+		"echo one\n#!\necho two",
+		"echo one\n#!params-file=example\necho two",
+	} {
+		got, err := Split(input)
+		if err != nil || !reflect.DeepEqual(got, []string{input}) {
+			t.Errorf("Split changed single program: %#v, %v", got, err)
+		}
+	}
+}
+
 func TestSplitRejectsInvalidPrograms(t *testing.T) {
 	for _, source := range []string{
-		"#!bash\n#!python3\nprint(2)",
-		"#!params={}\n#!python3\nprint(2)",
-		"echo one\n#!params={bad}\necho two",
-		"echo one\n#!python3\n",
-		"echo one\n#!script=@shell/example",
+		"#!batch=\necho one\nNEXT\necho two",
+		"#!batch= \necho one",
+		"#!batch= NEXT\necho one",
+		"#!batch=NEXT \necho one",
+		"#!batch=N\x00EXT\necho one\nN\x00EXT\necho two",
+		"#!batch=NEXT\necho one",
+		"#!batch=NEXT\nNEXT\necho two",
+		"#!batch=NEXT\necho one\nNEXT",
+		"#!batch=NEXT\necho one\nNEXT\n",
+		"#!batch=NEXT\necho one\nNEXT\nNEXT\necho three",
+		"#!batch=NEXT\necho one\nNEXT\n#!params={bad}\necho two",
+		"#!batch=NEXT\necho one\nNEXT\n#!python3\n",
+		"#!batch=NEXT\necho one\nNEXT\n#!script=@shell/example",
 		"#!params={}\n#!params={}\necho one",
-		"echo one\n#!\necho two",
-		"echo one\n#!python3\nprint('\x00')",
+		"#!batch=NEXT\necho one\nNEXT\n#!\necho two",
+		"#!batch=NEXT\necho one\nNEXT\n#!python3\nprint('\x00')",
 	} {
 		if programs, err := Split(source); err == nil {
 			t.Errorf("Split(%q) = %#v, want rejection", source, programs)
 		}
+	}
+}
+
+func TestSplitHeaderErrorLocation(t *testing.T) {
+	_, err := Split("#!batch=NEXT\necho first\nNEXT\n#!python3\n#!cmd missing\nprint(1)")
+	if err == nil || !strings.Contains(err.Error(), "shell program 2: line 2:") {
+		t.Fatalf("batch header error = %v, want program 2, line 2", err)
 	}
 }

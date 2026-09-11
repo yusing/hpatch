@@ -16,10 +16,10 @@ function parseScript(input) {
   }
   if (parsed.params !== undefined) {
     if (Object.hasOwn(parsed.params, "cmd")) {
-      throw new Error("#!params must not contain cmd; the script body supplies it");
+      throw new Error(`line ${parsed.paramsLine}: #!params must not contain cmd; the script body supplies it`);
     }
     if (Object.hasOwn(parsed.params, "login") && parsed.params.login !== false) {
-      throw new Error("#!params login must be false");
+      throw new Error(`line ${parsed.paramsLine}: #!params login must be false`);
     }
   }
   return {
@@ -233,7 +233,7 @@ export const shellTool = {
   specification: {
     type: "custom",
     name: "shell",
-    description: `Run free-form scripts. The selected interpreter receives the exact script body, and frontend standard input remains available as program data. Prefer batching ready, independent, noninteractive programs; use separate calls for interactive work. Start each later program with a column-one interpreter selector or #!params= (implicit Bash). Each program may supply its own params object; omission inherits the previous object, while a supplied object replaces it. Batches require Code Mode, wait for each program to finish, continue after nonzero exits, and return an ordered results array.`,
+    description: `Run free-form scripts. The selected interpreter receives the exact script body, and frontend standard input remains available as program data. Prefer batching ready, independent, noninteractive programs; use separate calls for interactive work. For a batch, start with #!batch=SEPARATOR and put that exact separator line between at least two nonempty programs. Choose a separator absent from their source, without surrounding whitespace. Single scripts need no batch header; selector-like body lines stay unchanged. Each program may supply its own params object; omission inherits the previous object, while a supplied object replaces it. Batches require Code Mode, wait for each program to finish, continue after nonzero exits, and return an ordered results array.`,
   },
 
   parse(input, context) {

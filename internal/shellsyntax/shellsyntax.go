@@ -14,23 +14,34 @@ type Parsed struct {
 	Body            string         `json:"body,omitempty"`
 	CommandTemplate string         `json:"commandTemplate,omitempty"`
 	Params          map[string]any `json:"params"`
+	ParamsLine      int            `json:"paramsLine,omitempty"`
 	HasParams       bool           `json:"hasParams,omitzero"`
 	ScriptPath      string         `json:"scriptPath,omitempty"`
 	HasScript       bool           `json:"hasScript,omitzero"`
 }
 
+// HeaderError locates a rejected header in the submitted program. Line is
+// one-based and counts CRLF as one line terminator, just like header parsing.
+type HeaderError struct {
+	Line int
+	Err  error
+}
+
+func (e *HeaderError) Error() string { return fmt.Sprintf("line %d: %v", e.Line, e.Err) }
+func (e *HeaderError) Unwrap() error { return e.Err }
+
 // Parse reads the portable shell header. A retained-script path is returned to
 // the host without reading it; filesystem resolution remains host-owned.
 func Parse(input string) (Parsed, error) {
 	if strings.ContainsRune(input, 0) {
-		return Parsed{}, errors.New("script must not contain a NUL byte")
+		return Parsed{}, &HeaderError{Line: physicalLine(input[:strings.IndexByte(input, 0)]), Err: errors.New("script must not contain a NUL byte")}
 	}
 
 	retainedLine, retainedBody := splitFirstLine(input)
 	retainedLine = trimField(retainedLine)
 	if path, ok := strings.CutPrefix(retainedLine, "#!script="); ok {
 		if retainedBody != "" {
-			return Parsed{}, errors.New("#!script must be the sole directive")
+			return Parsed{}, &HeaderError{Line: 2, Err: errors.New("#!script must be the sole directive")}
 		}
 		return Parsed{ScriptPath: path, HasScript: true}, nil
 	}
@@ -42,7 +53,7 @@ func Parse(input string) (Parsed, error) {
 	if strings.HasPrefix(trimmed, "#!") && !isDirectiveCandidate(trimmed) {
 		selector := trimField(strings.TrimPrefix(trimmed, "#!"))
 		if selector == "" {
-			return Parsed{}, errors.New("shebang must select an interpreter")
+			return Parsed{}, &HeaderError{Line: 1, Err: errors.New("shebang must select an interpreter")}
 		}
 		interpreter = splitFields(selector)
 		if interpreter[0] == "env" || interpreter[0] == "/usr/bin/env" {
@@ -51,21 +62,31 @@ func Parse(input string) (Parsed, error) {
 				interpreter = interpreter[1:]
 			}
 			if len(interpreter) == 0 || strings.HasPrefix(interpreter[0], "-") {
-				return Parsed{}, errors.New("env shebang must select an interpreter")
+				return Parsed{}, &HeaderError{Line: 1, Err: errors.New("env shebang must select an interpreter")}
 			}
 		}
 		body = firstBody
 	}
 
-	commandTemplate, params, hasParams, body, err := parseDirectives(body)
+	headerOffset := physicalLine(input[:len(input)-len(body)]) - 1
+	commandTemplate, params, hasParams, paramsLine, body, err := parseDirectives(body)
 	if err != nil {
+		var located *HeaderError
+		if errors.As(err, &located) {
+			located.Line += headerOffset
+		}
 		return Parsed{}, err
+	}
+
+	if hasParams {
+		paramsLine += headerOffset
 	}
 	return Parsed{
 		Interpreter:     interpreter,
 		Body:            body,
 		CommandTemplate: commandTemplate,
 		Params:          params,
+		ParamsLine:      paramsLine,
 		HasParams:       hasParams,
 	}, nil
 }
@@ -78,7 +99,13 @@ func InterpreterIdentity(interpreter string) string {
 }
 
 // parseDirectives extracts #!cmd and #!params directives from shell script header lines.
-func parseDirectives(input string) (commandTemplate string, params map[string]any, hasParams bool, body string, err error) {
+func parseDirectives(input string) (commandTemplate string, params map[string]any, hasParams bool, paramsLine int, body string, err error) {
+	lineNumber := 1
+	defer func() {
+		if err != nil {
+			err = &HeaderError{Line: lineNumber, Err: err}
+		}
+	}()
 	remaining := input
 	seen := make(map[string]struct{}, 2)
 	for remaining != "" {
@@ -87,39 +114,41 @@ func parseDirectives(input string) (commandTemplate string, params map[string]an
 		key, value, ok := parseDirectiveLine(trimmed)
 		if !ok {
 			if malformedDirective(trimmed) || strings.HasPrefix(trimmed, "!") {
-				return "", nil, false, "", errors.New("shell directive must use #!{key}={value}")
+				return "", nil, false, 0, "", errors.New("shell directive must use #!{key}={value}")
 			}
 			break
 		}
 		if key != "cmd" && key != "params" {
-			return "", nil, false, "", fmt.Errorf("unsupported shell directive #!%s", key)
+			return "", nil, false, 0, "", fmt.Errorf("unsupported shell directive #!%s", key)
 		}
 		if _, duplicate := seen[key]; duplicate {
-			return "", nil, false, "", fmt.Errorf("shell directive #!%s must not occur more than once", key)
+			return "", nil, false, 0, "", fmt.Errorf("shell directive #!%s must not occur more than once", key)
 		}
 		seen[key] = struct{}{}
 
 		switch key {
 		case "cmd":
 			if value == "" {
-				return "", nil, false, "", errors.New("command template must not be empty")
+				return "", nil, false, 0, "", errors.New("command template must not be empty")
 			}
 			if strings.Count(value, "{.}") != 1 {
-				return "", nil, false, "", errors.New("command template must contain exactly one {.} placeholder")
+				return "", nil, false, 0, "", errors.New("command template must contain exactly one {.} placeholder")
 			}
 			commandTemplate = value
 		case "params":
 			if err := json.Unmarshal([]byte(value), &params); err != nil {
-				return "", nil, false, "", fmt.Errorf("#!params must contain a JSON object: %w", err)
+				return "", nil, false, 0, "", fmt.Errorf("#!params must contain a JSON object: %w", err)
 			}
 			if params == nil {
-				return "", nil, false, "", errors.New("#!params must contain a JSON object")
+				return "", nil, false, 0, "", errors.New("#!params must contain a JSON object")
 			}
+			paramsLine = lineNumber
 			hasParams = true
 		}
 		remaining = rest
+		lineNumber++
 	}
-	return commandTemplate, params, hasParams, remaining, nil
+	return commandTemplate, params, hasParams, paramsLine, remaining, nil
 }
 
 // parseDirectiveLine parses one shell directive line into its key and value components.
@@ -175,6 +204,22 @@ func malformedDirective(line string) bool {
 		}
 	}
 	return false
+}
+
+func physicalLine(prefix string) int {
+	lineNumber := 1
+	for index := 0; index < len(prefix); index++ {
+		switch prefix[index] {
+		case '\r':
+			if index+1 < len(prefix) && prefix[index+1] == '\n' {
+				index++
+			}
+			lineNumber++
+		case '\n':
+			lineNumber++
+		}
+	}
+	return lineNumber
 }
 
 // splitFirstLine splits input into its first physical line and remaining body.

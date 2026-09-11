@@ -424,15 +424,8 @@ const (
 )
 
 var (
-	shellHeredocPattern                   = regexp.MustCompile(`<<-?`)
-	shellInterpreterCommandWrapperPattern = regexp.MustCompile(
-		`(?i)(?:^|\\[nrt]|[^[:alnum:]_./+-])/?(?:[[:alnum:]_.+-]+/)*(` + shellInterpreterNamePattern + `)` +
-			`((?:[ \t]+-[^ \t\r\n]+)*)[ \t]+(-[[:alpha:]]*[cer]|--(?:command|execute))(?:[^[:alpha:]]|$)`,
-	)
-	shellInterpreterHeredocPattern = regexp.MustCompile(
-		`(?i)(?:^|\\[nrt]|[^[:alnum:]_./+-])/?(?:[[:alnum:]_.+-]+/)*(` + shellInterpreterNamePattern + `)` +
-			`((?:[ \t]+-[^ \t\r\n<]+)*)[ \t]+(-?[ \t]*<<-?)`,
-	)
+	shellInterpreterPattern = regexp.MustCompile(`(?i)^(?:` + shellInterpreterNamePattern + `)$`)
+	shellCommandFlagPattern = regexp.MustCompile(`^-[euilx]*c$`)
 )
 
 type shellWrapperMisuse struct {
@@ -442,57 +435,142 @@ type shellWrapperMisuse struct {
 	wrapper         string
 }
 
-// Match the raw input intentionally: every heredoc and quoted or commented example warns too.
+// Only recognize known source options and known operand-free prefixes. Guessing
+// through an unknown option can mistake its operand for a source option.
+func shellInterpreterFlag(name, flag string) (source, harmless bool) {
+	switch {
+	case strings.HasPrefix(name, "python"), strings.HasPrefix(name, "pypy"):
+		return flag == "-c", flag == "-I" || flag == "-u" || flag == "-B" || flag == "-E" || flag == "-s" || flag == "-S"
+	case name == "node" || name == "nodejs" || name == "bun":
+		return flag == "-e" || flag == "--eval", flag == "--input-type=module" || flag == "--input-type=commonjs" || flag == "--trace-warnings"
+	case name == "bash" || name == "sh" || name == "dash" || name == "zsh" ||
+		name == "ksh" || name == "mksh" || name == "yash":
+		return shellCommandFlagPattern.MatchString(flag), flag == "-e" || flag == "-u" || flag == "-x" || flag == "-l" || flag == "-i"
+	case name == "fish":
+		return flag == "-c" || flag == "--command", false
+	case name == "php":
+		return flag == "-r", false
+	case name == "psql":
+		return flag == "-c" || flag == "--command", false
+	case name == "mysql":
+		return flag == "-e" || flag == "--execute", false
+	case name == "perl" || name == "ruby" || name == "r" || name == "rscript" || strings.HasPrefix(name, "lua"):
+		return flag == "-e", false
+	default:
+		return false, false
+	}
+}
+
+// Inspect shell syntax, not raw source: comments, quoted examples, and other
+// interpreters' source are not interpreter invocations.
 func shellInterpreterWrapperMisuses(contribution toolContribution, input string) []shellWrapperMisuse {
 	if contribution.PluginID != builtinToolsPluginID || contribution.Name != "shell" {
+		return nil
+	}
+	parsed, err := shellsyntax.Parse(input)
+	if err != nil || parsed.HasScript {
+		return nil
+	}
+	variant := syntax.LangBash
+	switch shellsyntax.InterpreterIdentity(parsed.Interpreter[0]) {
+	case "bash":
+	case "sh":
+		variant = syntax.LangPOSIX
+	default:
+		return nil
+	}
+	program, err := syntax.NewParser(syntax.Variant(variant)).Parse(strings.NewReader(parsed.Body), "")
+	if err != nil {
 		return nil
 	}
 
 	var misuses []shellWrapperMisuse
 	seenKinds := make(map[string]bool)
-	for _, match := range shellInterpreterCommandWrapperPattern.FindAllStringSubmatch(input, -1) {
-		wrapper := match[3]
-		kind := strings.ToLower(wrapper)
-		interpreterArgs := strings.Fields(match[2])
-		if strings.HasPrefix(wrapper, "-") && !strings.HasPrefix(wrapper, "--") && len(wrapper) > 2 {
-			kind = "-" + strings.ToLower(wrapper[len(wrapper)-1:])
-			interpreterArgs = append(interpreterArgs, "-"+wrapper[1:len(wrapper)-1])
+	syntax.Walk(program, func(node syntax.Node) bool {
+		statement, ok := node.(*syntax.Stmt)
+		if !ok {
+			return true
 		}
-		if seenKinds[kind] {
-			continue
+		call, ok := statement.Cmd.(*syntax.CallExpr)
+		if !ok || len(call.Args) == 0 {
+			return true
 		}
-		seenKinds[kind] = true
-		misuses = append(misuses, shellWrapperMisuse{
-			Kind:            kind,
-			Interpreter:     match[1],
-			InterpreterArgs: interpreterArgs,
-			wrapper:         wrapper,
-		})
-	}
-
-	if match := shellInterpreterHeredocPattern.FindStringSubmatch(input); match != nil {
-		misuse := shellWrapperMisuse{Kind: "heredoc"}
-		if !shellInterpreterCommandWrapperPattern.MatchString(match[0]) {
+		name, literal := shellCatLiteral(call.Args[0])
+		args := call.Args[1:]
+		if shellsyntax.InterpreterIdentity(name) == "env" {
+			// Only a literal assignment prefix is unambiguous. Do not guess
+			// how env options or dynamic words will select a command.
+			for len(args) > 0 {
+				value, static := shellCatLiteral(args[0])
+				if !static || strings.HasPrefix(value, "-") {
+					return true
+				}
+				args = args[1:]
+				if !strings.Contains(value, "=") {
+					name, literal = value, true
+					break
+				}
+			}
+		}
+		name = shellsyntax.InterpreterIdentity(name)
+		if !literal || !shellInterpreterPattern.MatchString(name) {
+			return true
+		}
+		var flags []string
+		stdin := false
+		for _, word := range args {
+			value, static := shellCatLiteral(word)
+			if !static {
+				return true
+			}
+			if value == "-" {
+				stdin = true
+				break
+			}
+			if !strings.HasPrefix(value, "-") || value == "--" || strings.ContainsAny(value, " \t\r\n") {
+				return true
+			}
+			sourceFlag, harmlessFlag := shellInterpreterFlag(name, value)
+			if sourceFlag {
+				kind := value
+				if !strings.HasPrefix(value, "--") && len(value) > 2 {
+					kind = "-" + value[len(value)-1:]
+					flags = append(flags, "-"+value[1:len(value)-1])
+				}
+				if !seenKinds[kind] {
+					seenKinds[kind] = true
+					misuses = append(misuses, shellWrapperMisuse{
+						Kind: kind, Interpreter: name, InterpreterArgs: flags, wrapper: value,
+					})
+				}
+				// A heredoc alongside -c/-e supplies program data, not source.
+				return true
+			}
+			if !harmlessFlag {
+				return true
+			}
+			flags = append(flags, value)
+		}
+		for _, redirect := range statement.Redirs {
+			if (redirect.Op != syntax.Hdoc && redirect.Op != syntax.DashHdoc) ||
+				(redirect.N != nil && redirect.N.Value != "0") || seenKinds["heredoc"] {
+				continue
+			}
 			wrapper := "<<"
-			if strings.HasPrefix(strings.TrimSpace(match[3]), "-") {
+			if stdin {
 				wrapper = "- <<"
 			}
-			misuse.Interpreter = match[1]
-			misuse.InterpreterArgs = strings.Fields(match[2])
-			misuse.wrapper = wrapper
+			seenKinds["heredoc"] = true
+			misuses = append(misuses, shellWrapperMisuse{
+				Kind: "heredoc", Interpreter: name, InterpreterArgs: flags, wrapper: wrapper,
+			})
 		}
-		misuses = append(misuses, misuse)
-	} else if shellHeredocPattern.MatchString(input) {
-		misuses = append(misuses, shellWrapperMisuse{Kind: "heredoc"})
-	}
+		return true
+	})
 	return misuses
 }
 
 func shellInterpreterWrapperWarning(misuse shellWrapperMisuse) string {
-	if misuse.Interpreter == "" {
-		return "functions.shell: warning: heredoc detected; submit the script body directly instead of wrapping it in a heredoc"
-	}
-
 	program := "the program"
 	interpreter := strings.ToLower(misuse.Interpreter)
 	switch {

@@ -119,26 +119,30 @@ With Code Mode available, prefer one batch for ready, independent, noninteractiv
 if you can write each program now without inspecting another's result, submit them together.
 Use separate calls when a result determines the next program or whether it should run.
 
-Execution stays sequential. After a program's body, a column-one interpreter selector or
-`#!params=` starts the next program. A params-only header selects Bash, so repeated
-`#!params=` blocks need no `#!bash`. Put that program's other directives before its body.
-Each program needs a body.
+Start a batch with `#!batch=SEPARATOR`, choosing a nonempty separator line absent
+from every program's source and without surrounding whitespace. Put that exact line
+between programs, with no leading or closing separator. At least two programs need
+nonempty bodies. Each program has its own optional interpreter and directive block;
+a params-only header selects Bash.
 
 
 ```text
+#!batch=NEXT_PROGRAM
 #!params={"yield_time_ms":1000}
 echo hello
+NEXT_PROGRAM
 #!python3
 print("hello")
+NEXT_PROGRAM
 #!params={"yield_time_ms":2000}
 echo goodbye
 ```
 
 Omitted params inherit the previous complete object; an explicit object replaces it, and `{}`
 clears it. Interpreters and command templates never inherit. Each program starts a separate
-execution, so shell variables and `cd` changes do not carry over. Column-one batch markers are
-reserved even inside strings and heredocs; indent literal markers or construct them without a
-literal marker line.
+execution, so shell variables and `cd` changes do not carry over. Without a batch header,
+all body lines stay native source, including selector-like lines in strings and heredocs.
+Within a batch only the chosen separator line is reserved; choose another for literal examples.
 
 The router splits the programs before sending one sequential Code Mode carrier to Codex.
 It awaits native continuations before starting the next program and continues after nonzero

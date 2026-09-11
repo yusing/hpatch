@@ -330,6 +330,11 @@ func (p *mekugiProxy) resolveShellInput(directory, input string) (string, error)
 	seen := make(map[string]bool)
 	var root *os.Root
 	for {
+		// Batch framing belongs to Split after reference resolution, not to
+		// the single-program header parser. This also applies to retained batches.
+		if strings.HasPrefix(input, shellsyntax.BatchHeaderPrefix) {
+			return input, nil
+		}
 		parsed, err := shellsyntax.Parse(input)
 		if err != nil {
 			return "", err

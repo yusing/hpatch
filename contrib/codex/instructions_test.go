@@ -134,7 +134,7 @@ func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 	for _, required := range []string{
 		"Use separate shell calls for interactive programs",
 		"prefer one batch for ready, independent, noninteractive programs",
-		"#!params={\"yield_time_ms\":1000}\necho hello\n#!python3\nprint(\"hello\")",
+		"#!batch=NEXT_PROGRAM\n#!params={\"yield_time_ms\":1000}\necho hello\nNEXT_PROGRAM\n#!python3\nprint(\"hello\")",
 		"Submit free-form programs to `functions.shell`",
 		"Bash: write commands directly, without a shebang.",
 		"a shell heredoc such as `python3 - <<'PY'`",

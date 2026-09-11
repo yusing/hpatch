@@ -24,11 +24,19 @@ func toolActivityScriptReference(script string) string {
 // Keep the excerpt to one line and 120 characters, including the ellipsis.
 func toolActivityCommandExcerpt(script string) string {
 	script, _ = toolActivityUnwrapShell(script, "bash")
+	morePrograms := false
+	if strings.HasPrefix(script, shellsyntax.BatchHeaderPrefix) {
+		if programs, err := shellsyntax.Split(script); err == nil {
+			script = programs[0]
+			morePrograms = len(programs) > 1
+		}
+	}
 	if parsed, err := shellsyntax.Parse(script); err == nil && !parsed.HasScript {
 		script = parsed.Body
 	}
 	script = strings.TrimSpace(script)
 	line, _, more := strings.Cut(script, "\n")
+	more = more || morePrograms
 	line = strings.TrimSpace(line)
 	runes := []rune(line)
 	if len(runes) > 120 || more && len(runes) >= 120 {

@@ -265,20 +265,25 @@ remain ordinary shell execution.
 With Code Mode available, a call can batch noninteractive programs in order:
 
 ```text
+#!batch=NEXT_PROGRAM
 #!params={"yield_time_ms":1000}
 echo hello
+NEXT_PROGRAM
 #!python3
 print("hello")
+NEXT_PROGRAM
 #!params={"yield_time_ms":2000}
 echo goodbye
 ```
 
-A column-one interpreter selector or `#!params=` after a body starts the next
-program. A params-only header selects Bash. Omitted params inherit the previous
+Choose a separator line absent from the programs, then name it in the first-line
+`#!batch=` header. Exact matches separate two or more nonempty programs. Ordinary
+single-script calls need no batch header, and selector-like lines inside source
+strings or heredocs remain unchanged.
+
+A params-only program header selects Bash. Omitted params inherit the previous
 object; a supplied object replaces it, and `{}` clears it. Interpreters,
-command templates, and shell state do not carry over. These marker lines are
-reserved even inside strings and heredocs; indent literal markers or construct
-them without a literal marker line.
+command templates, and shell state do not carry over.
 
 Programs run sequentially, including waiting for long-running sessions, and
 continue after nonzero exits. The ordered `results` array contains each

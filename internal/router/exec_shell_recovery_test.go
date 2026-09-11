@@ -20,7 +20,7 @@ func TestExecShellRecoveryDetection(t *testing.T) {
 		{"Bash selector", "#!/bin/bash\nprintf '%s' hello\n", true},
 		{"Python selector", "#!python3\nfrom pathlib import Path\nprint(Path.cwd())\n", true},
 		{"template", "#!cmd=printf input | {.}\ncat -\n", true},
-		{"batch", "#!params={}\necho first\n#!python3\nprint('second')\n", true},
+		{"batch", "#!batch=NEXT\n#!params={}\necho first\nNEXT\n#!python3\nprint('second')\n", true},
 		{"valid JavaScript", "text(await tools.clock__curr_time({}));", false},
 		{"valid hashbang JavaScript", "#!node\ntext('hello');", false},
 		{"valid JavaScript with params hashbang", "#!params={}\ntext('hello');", false},
@@ -64,8 +64,8 @@ func TestExecShellRecoveryBatchRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	source := "#!params=" + string(mustMarshalJSON(map[string]any{"workdir": directory})) +
-		"\nprintf before; exit 7\n#!python3\nfrom pathlib import Path\nPath('order').write_text('python')\nprint('middle')\n" +
+	source := "#!batch=NEXT\n#!params=" + string(mustMarshalJSON(map[string]any{"workdir": directory})) +
+		"\nprintf before; exit 7\nNEXT\n#!python3\nfrom pathlib import Path\nPath('order').write_text('python')\nprint('middle')\nNEXT\n" +
 		"#!params=" + string(mustMarshalJSON(map[string]any{"workdir": directory, "yield_time_ms": 1000})) +
 		"\n#!cmd=printf template | {.}\nread value; printf '%s:' \"$value\"; cat order\n"
 	item := newResponsesItem(map[string]json.RawMessage{

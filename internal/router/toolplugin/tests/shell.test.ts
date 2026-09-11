@@ -21,6 +21,9 @@ test("description stays call-local", () => {
     "use separate calls for interactive work",
     "omission inherits the previous object",
     "a supplied object replaces it",
+    "#!batch=SEPARATOR",
+    "put that exact separator line between at least two nonempty programs",
+    "Single scripts need no batch header",
     "Batches require Code Mode",
     "continue after nonzero exits",
   ]) {
@@ -203,6 +206,13 @@ describe("installable shell plugin", () => {
       "!unknown value\nprintf ok",
     ]) {
       expect(() => tool.parse(input)).toThrow();
+    }
+  });
+
+  test("locates params policy rejections in the authored header", () => {
+    for (const params of ['{"login":true}', '{"cmd":"override"}']) {
+      expect(() => tool.parse(`#!python3\r\n#!cmd={.}\r\n#!params=${params}\r\nprint(1)`))
+        .toThrow("line 3: #!params");
     }
   });
 

@@ -110,6 +110,8 @@ shown as `Still Running` with a short excerpt of the actual command, matching na
 `write_stdin` polls. Stored shell references display `Running stored script` with the
 resolved command excerpt, not transport directives or reference IDs. These excerpts
 use the first source line, at most 120 characters including an ellipsis when shortened.
+For an explicit batch, they use the first program's body and an ellipsis for the remaining
+programs, rather than exposing the batch header as the command.
 Polls correlate only with visible call/result pairs that include execution metadata in the
 same request; output-only Code Mode projections are not session evidence. Missing command
 history or unavailable stored source is labelled `command unavailable`, never guessed.

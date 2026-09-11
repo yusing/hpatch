@@ -9,13 +9,20 @@ through the canonical exec carrier from `REQ-PLUGIN-001`. The repository `make i
 regenerates that bundle and installs `mekugi` plus the fixed `shell` helper. It changes no Codex configuration,
 instruction file, or configured shell declaration.
 
-Before translating a built-in shell input, the router splits it into programs. After a program
-body begins, a column-one interpreter selector or params directive starts a new program.
-The canonical `#!params=` and tolerated params spellings are boundaries; a params-only header
-selects default Bash. Each program has its own leading directive block. Duplicate params within
-one block still reject. Later `#!cmd=` lines remain body data rather than boundaries.
-Column-one boundary markers are reserved even inside language strings and heredocs; indented
-markers remain body data. Splitting preserves every other body byte and line terminator.
+A single-program input keeps every source line after its leading header block unchanged,
+including selector-like and directive-like lines in strings, comments, and heredocs.
+
+To submit a batch, start the input with `#!batch=SEPARATOR`. The caller chooses a nonempty
+separator line absent from every program's source, with no surrounding whitespace or NUL.
+Only exact whole-line matches of that separator divide programs. The batch header and
+separator lines, including their terminators, are removed; every other byte is preserved.
+At least two programs with nonempty bodies are required. Leading, trailing, or consecutive
+separators reject empty programs. Choosing another separator lets programs contain literal
+batch examples without rewriting their contents.
+
+Each program has its own optional interpreter selector and leading directive block.
+A params-only header selects default Bash. Duplicate params within one block still reject.
+Interpreter selectors and params directives never act as batch boundaries themselves.
 
 Omitted params inherit the preceding complete object. A supplied object replaces that object,
 including `{}` clearing inherited fields. Interpreters and command templates do not inherit.
@@ -82,12 +89,16 @@ tool tolerates `# !params JSON` and `#!params JSON` as alternate spellings and a
 params validation. A duplicate directive, malformed JSON, non-object JSON, unsupported
 leading directive, params object containing `cmd`, or unsafe `login` value rejects.
 
+Header parsing and params-policy errors identify the one-based line within the submitted program. CRLF
+counts as one terminator. Batch rejection also identifies the one-based program number;
+no valid prefix runs when a later header is invalid.
+
 The tool removes recognized directive lines and their complete line terminators from the body.
 The router replaces `{.}` with the canonical independently quoted shell-helper command and argv.
 The command template then runs through the normal exec carrier shell. Without an interpreter
 shebang, the nested worker selects `bash`. Without an interpreter shebang or command template, an eligible simple external
 Bash command remains direct, including when exec parameters are supplied; every other body uses
-the worker command as the complete outer command. After the first body line, directive-like lines remain ordinary body data except for the reserved batch boundaries above.
+the worker command as the complete outer command. After the first body line, directive-like lines remain ordinary body data. Only the explicitly chosen batch separator is reserved within an opted-in batch.
 
 When the worker carrier is selected, the executor starts the fixed helper once with the normalized
 interpreter fields and exact body.
@@ -260,7 +271,10 @@ Acceptance:
     without calling the continuation operation or starting the worker again. No router session
     record or plugin-defined continuation surface is created.
 16. For one built-in shell input, the router emits one warning for every distinct detected
-    interpreter-wrapper or heredoc kind rather than stopping after the first. Warning insertion
+    interpreter-wrapper kind rather than stopping after the first. Detection parses only Bash
+    or POSIX shell bodies and examines static interpreter invocations. Comments, quoted
+    examples, other interpreters' bodies, and heredocs supplying ordinary command data do
+    not warn. Unparseable or dynamically selected invocations are not guessed. Warning insertion
     preserves the exact submitted command, carrier result, replay behavior, and metric classification.
     For default or explicitly selected Bash, the router parses the normalized body as Bash first.
     Valid Bash always retains shell semantics. A body that fails Bash parsing but parses as
@@ -322,11 +336,17 @@ Acceptance:
     assignments. Thread-scoped commentary discovery preserves script output and exit status,
     and completion of one worker leaves concurrent workers' commentary available.
 
-21. One input containing a params-prefixed Bash body, a Python selector and body with omitted
+21. One `#!batch=NEXT` input containing three programs separated by exact `NEXT` lines,
+    with a params-prefixed Bash body, a Python selector and body with omitted
     params, and another params-prefixed Bash body yields one Code Mode carrier with three ordered
     executions. Python inherits the first params object; the third program uses only its newly
-    supplied object. Multiple implicit Bash programs require no `#!bash`. Per-program bodies
+    supplied object. Bash programs separated by the chosen line require no `#!bash`. Per-program bodies
     preserve CR, LF, CRLF, whitespace, and absent final terminators.
+    Without the batch header, Python multiline strings and shell heredocs containing literal
+    selector, params, script, or batch headers remain one byte-preserved program. In an
+    explicit batch, a caller-chosen separator allows those same contents unchanged; partial
+    matches and indented separator-like lines remain data. Empty separators, absent boundaries,
+    and empty programs reject before execution.
 22. A yielded program reaches terminal state before the next starts. A nonzero exit remains
     visible in its result and does not prevent later programs. Complete native result fields and
     output remain associated with their program. Host exceptions preserve the completed prefix

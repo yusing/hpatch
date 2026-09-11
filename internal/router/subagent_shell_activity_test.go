@@ -125,3 +125,17 @@ func TestShellActivityExcerptBoundsAndReferences(t *testing.T) {
 		}
 	}
 }
+
+func TestShellBatchActivityExcerpt(t *testing.T) {
+	const source = "#!batch=NEXT\n#!params={}\nprintf one\nNEXT\n#!python3\nprint(2)"
+	if got := toolActivityCommandExcerpt(source); got != "printf one…" {
+		t.Fatalf("batch excerpt exposes framing instead of source: %q", got)
+	}
+	transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
+	if _, ok := proxy.retainShell(transform.shellDirectory, "batch-excerpt", source); !ok {
+		t.Fatal("retain batch")
+	}
+	if got := transform.shellActivityExcerpt("#!script=@shell/batch-excerpt"); got != "printf one…" {
+		t.Fatalf("retained batch excerpt = %q", got)
+	}
+}

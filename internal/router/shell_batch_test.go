@@ -20,8 +20,8 @@ func TestShellBatchExecutionAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	source := "#!params=" + string(mustMarshalJSON(map[string]any{"workdir": directory})) +
-		"\nprintf before; exit 7\n#!python3\nfrom pathlib import Path\nPath('order').write_text('python')\nprint('middle')\n" +
+	source := "#!batch=NEXT\n#!params=" + string(mustMarshalJSON(map[string]any{"workdir": directory})) +
+		"\nprintf before; exit 7\nNEXT\n#!python3\nfrom pathlib import Path\nPath('order').write_text('python')\nprint('middle')\nNEXT\n" +
 		"#!params=" + string(mustMarshalJSON(map[string]any{"workdir": directory, "yield_time_ms": 1000})) +
 		"\ncat order; cat > out <<'EOF'\nliteral\nEOF\n"
 	upstream := map[string]json.RawMessage{
@@ -95,8 +95,8 @@ func TestShellBatchParamsAndContinuation(t *testing.T) {
 	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	transform, _, _, _ := newMekugiTestTransformWithProxy(t, proxy)
 	contribution, _ := proxy.registry.contribution("shell")
-	source := "#!params={\"workdir\":\"/tmp\",\"yield_time_ms\":1000,\"max_output_tokens\":123}\necho one\n" +
-		"#!python3\nprint(2)\n#!params={\"yield_time_ms\":2000}\necho three"
+	source := "#!batch=NEXT\n#!params={\"workdir\":\"/tmp\",\"yield_time_ms\":1000,\"max_output_tokens\":123}\necho one\nNEXT\n" +
+		"#!python3\nprint(2)\nNEXT\n#!params={\"yield_time_ms\":2000}\necho three"
 	history, err := transform.translateRegisteredTool(contribution, "batch-params", source, nil)
 	if err != nil || history.translationError != "" {
 		t.Fatalf("translate = %+v, %v", history, err)
@@ -150,12 +150,16 @@ func TestShellBatchRejectsBeforeExecution(t *testing.T) {
 		name, source, diagnostic string
 		native                   bool
 	}{
-		{"bad later JSON", "echo first\n#!params={bad}\necho second", "JSON object", false},
-		{"unsafe later params", "echo first\n#!params={\"login\":true}\necho second", "login", false},
-		{"cmd param", "echo first\n#!params={\"cmd\":\"override\"}\necho second", "must not contain cmd", false},
-		{"misplaced Code Mode", "echo first\n#!bash\nconst r = await tools.exec_command({cmd: 'echo second'}); text(r);", "shell-typescript-misuse", false},
-		{"empty later program", "echo first\n#!python3\n", "must have a body", false},
-		{"native batch", "echo first\n#!python3\nprint(2)", "require Code Mode", true},
+		{"missing separator", "#!batch=NEXT\necho first", "at least two programs", false},
+		{"empty separator", "#!batch=\necho first", "separator must be nonempty", false},
+		{"trailing separator", "#!batch=NEXT\necho first\nNEXT\n", "shell program 2: line 1: batch programs must have a body", false},
+		{"bad later directive", "#!batch=NEXT\necho first\nNEXT\n#!python3\n#!cmd missing\nprint(1)", "shell program 2: line 2:", false},
+		{"bad later JSON", "#!batch=NEXT\necho first\nNEXT\n#!params={bad}\necho second", "JSON object", false},
+		{"unsafe later params", "#!batch=NEXT\necho first\nNEXT\n#!params={\"login\":true}\necho second", "shell program 2: line 1: #!params login", false},
+		{"cmd param", "#!batch=NEXT\necho first\nNEXT\n#!params={\"cmd\":\"override\"}\necho second", "shell program 2: line 1: #!params must not contain cmd", false},
+		{"misplaced Code Mode", "#!batch=NEXT\necho first\nNEXT\n#!bash\nconst r = await tools.exec_command({cmd: 'echo second'}); text(r);", "shell-typescript-misuse", false},
+		{"empty later program", "#!batch=NEXT\necho first\nNEXT\n#!python3\n", "must have a body", false},
+		{"native batch", "#!batch=NEXT\necho first\nNEXT\n#!python3\nprint(2)", "require Code Mode", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			transform, _, _, _ := newMekugiTestTransformWithProxy(t, proxy)
@@ -179,7 +183,7 @@ func TestShellBatchPreservesPartialResultsOnHostFailure(t *testing.T) {
 	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	transform, _, _, _ := newMekugiTestTransformWithProxy(t, proxy)
 	contribution, _ := proxy.registry.contribution("shell")
-	history, err := transform.translateRegisteredTool(contribution, "host-failure", "echo one\n#!params={}\necho two\n#!params={}\necho three", nil)
+	history, err := transform.translateRegisteredTool(contribution, "host-failure", "#!batch=NEXT\necho one\nNEXT\n#!params={}\necho two\nNEXT\n#!params={}\necho three", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +233,7 @@ const tools = {
 
 func TestShellBatchJSONAndStreamingKeepOneCarrier(t *testing.T) {
 	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
-	source := "#!params={\"yield_time_ms\":1000}\necho one\n#!python3\nprint(2)"
+	source := "#!batch=NEXT\n#!params={\"yield_time_ms\":1000}\necho one\nNEXT\n#!python3\nprint(2)"
 	item := map[string]any{"id": "batch-item", "call_id": "batch-stream", "type": "custom_tool_call", "name": "shell", "input": source, "status": "completed"}
 	for _, streaming := range []bool{false, true} {
 		transform, _, _, _ := newMekugiTestTransformWithProxy(t, proxy)
@@ -277,5 +281,50 @@ func TestShellBatchJSONAndStreamingKeepOneCarrier(t *testing.T) {
 			strings.Count(visible.String(), "event: response.output_item.done") != 1 {
 			t.Fatalf("extra client-side calls: %s", visible.String())
 		}
+	}
+}
+
+func TestShellNativeSourceMarkersExecuteUnchanged(t *testing.T) {
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+	directory := t.TempDir()
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "shell"), []byte("#!/bin/sh\ninterpreter=$1\nshift\nexec \"$interpreter\" -c \"$1\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	contribution, _ := proxy.registry.contribution("shell")
+	const markers = "#!python3\n#!params={bad}\n#!script=@shell/example\n#!batch=NEXT\nNEXT\n"
+	python := "#!python3\nprint('''" + markers + "''', end='')"
+	bash := "cat <<'SOURCE'\n" + markers + "SOURCE\n"
+	for _, test := range []struct {
+		name, input string
+		batch       bool
+	}{
+		{"python", python, false},
+		{"bash heredoc", bash, false},
+		{"explicit batch", "#!batch=--program--\n" + python + "\n--program--\n" + bash, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			transform, _, _, _ := newMekugiTestTransformWithProxy(t, proxy)
+			transform.directory = directory
+			history, err := transform.translateRegisteredTool(contribution, "native-source-"+strings.ReplaceAll(test.name, " ", "-"), test.input, nil)
+			if err != nil || history.translationError != "" {
+				t.Fatalf("translation = %+v, %v", history, err)
+			}
+			var result struct {
+				Output  string `json:"output"`
+				Results []struct {
+					Output string `json:"output"`
+				} `json:"results"`
+			}
+			runShellCatJavaScript(t, proxy.registry.NodeExecutable, directory, history.carrierInput(), &result, "")
+			if !test.batch {
+				if result.Output != markers || len(result.Results) != 0 {
+					t.Fatalf("single source changed or split: %+v", result)
+				}
+			} else if len(result.Results) != 2 || result.Results[0].Output != markers || result.Results[1].Output != markers {
+				t.Fatalf("batch source changed: %+v", result)
+			}
+		})
 	}
 }
