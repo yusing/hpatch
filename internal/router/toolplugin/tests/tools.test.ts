@@ -220,6 +220,81 @@ describe("verified-row output", () => {
   });
 });
 
+describe("reader budgets and previews", () => {
+  test("shares strict budgets and explicit previews without changing row identities", async () => {
+    const directory = await temporaryDirectory("reader-preview-");
+    process.chdir(directory);
+    const content = `needle 🙂${" x".repeat(20_000)}`;
+    await writeFile("long.txt", `${content}\nneedle second\n`, "utf8");
+    const tools = [
+      {tool: createHCatTool("test", ""), args: ["long.txt"]},
+      {tool: createHGrepTool("test", ""), args: ["-F", "needle", "long.txt"]},
+    ];
+    for (const {tool, args} of tools) {
+      const result = await tool.execute(["--max-tokens", "200", "--preview-bytes", "9", ...args], executionContext);
+      expect(result.exitCode).toBe(0);
+      expect(countGPT5Tokens(result.stdout ?? "")).toBeLessThanOrEqual(200);
+      const rows = result.stdout!.trimEnd().split("\n").map((line) => JSON.parse(line));
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toMatchObject({
+        row: `1:${hashLine(content)}`,
+        preview: "needle ",
+        source_bytes: Buffer.byteLength(content),
+        omitted_bytes: Buffer.byteLength(content) - 7,
+      });
+      expect(rows[1].row).toBe(`2:${hashLine("needle second")}`);
+      const limited = await tool.execute(["--max-tokens", "1", ...args], executionContext);
+      expect(limited.exitCode).toBe(1);
+      expect(limited.stdout).toBe("");
+      expect(limited.stderr).toContain("output incomplete: 1-token limit reached");
+      for (const invalid of [
+        ["--max-tokens", "0"], ["--max-tokens", "15501"], ["--preview-bytes", "65537"],
+        ["--preview-bytes", "2", "--preview-bytes", "3"], ["--max-tokens", "1e3"],
+      ]) {
+        const rejected = await tool.execute([...invalid, ...args], executionContext);
+        expect(rejected.exitCode).toBe(1);
+        expect(rejected.stderr).toContain("requires one integer");
+      }
+    }
+  });
+
+  test("keeps admitted rows within a strict caller budget", async () => {
+    const directory = await temporaryDirectory("reader-budget-");
+    process.chdir(directory);
+    await writeFile("rows.txt", "needle first\nneedle second\n", "utf8");
+    for (const {tool, args} of [
+      {tool: createHCatTool("test", ""), args: ["rows.txt"]},
+      {tool: createHGrepTool("test", ""), args: ["-F", "needle", "rows.txt"]},
+    ]) {
+      const full = await tool.execute(args, executionContext);
+      const first = full.stdout!.split("\n")[0] + "\n";
+      const budget = countGPT5Tokens(first);
+      const limited = await tool.execute(["--max-tokens", String(budget), ...args], executionContext);
+      expect(limited.stdout).toBe(first);
+      expect(limited.exitCode).toBe(1);
+      expect(countGPT5Tokens(limited.stdout!)).toBeLessThanOrEqual(budget);
+    }
+  });
+
+  test("retains bounded hcat storage and reports the preview source bound", async () => {
+    const directory = await temporaryDirectory("reader-preview-bound-");
+    process.chdir(directory);
+    await writeFile("huge.txt", "a".repeat(2_000_000), "utf8");
+    const result = await createHCatTool("test", "").execute(["--preview-bytes", "32", "huge.txt"], executionContext);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("row 1 exceeds the 1984000-byte inspection bound");
+  });
+
+  test("parses hcat reader options before a quoted path", async () => {
+    const tool = createHCatTool("test", "");
+    expect(await tool.parse('--preview-bytes 12 --max-tokens 100 "path with spaces" 0:2',
+      {resolvePath: (value: string) => `/root/${value}`})).toEqual([
+      "--preview-bytes", "12", "--max-tokens", "100", "/root/path with spaces", "1:2",
+    ]);
+  });
+});
+
 describe("hcat built-in plugin", () => {
   test("keeps the private description call-local", () => {
     const description = plugin.tools[0].specification.description.replace(/\s+/g, " ");

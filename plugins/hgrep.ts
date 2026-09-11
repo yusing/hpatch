@@ -1,15 +1,18 @@
 import {spawn} from "node:child_process";
 
 import type {Tool} from "../internal/router/toolplugin/plugin.d.ts";
-import {formatVerifiedRow} from "mekugi:core/v1";
 import {
   decodeUTF8,
   errorText,
   createExecutorTool,
   stripOptionalFinalNewline,
-  VERIFIED_ROW_LIMIT_DIAGNOSTIC,
+  formatReaderRow,
+  readerOptions,
+  readerLimitDiagnostic,
   VerifiedRowOutput,
 } from "./common.ts";
+
+import type {ReaderOptions} from "./common.ts";
 
 const MAX_STDERR_BYTES = 64 * 1024;
 
@@ -404,7 +407,7 @@ type ComparedOutput = {
 /**
  * runRipgrep executes ripgrep with verified-row output and token-budget enforcement.
  */
-async function runRipgrep(argumentsValue: string[]): Promise<ComparedOutput> {
+async function runRipgrep(argumentsValue: string[], options: ReaderOptions): Promise<ComparedOutput> {
   const child = spawn("rg", ["--json", "--no-config", ...argumentsValue], {
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -414,7 +417,7 @@ async function runRipgrep(argumentsValue: string[]): Promise<ComparedOutput> {
   });
   const stderrPromise = collectStderr(child.stderr);
 
-  const output = new VerifiedRowOutput();
+  const output = new VerifiedRowOutput(options.maxTokens);
   let pending: Buffer[] = [];
   let pendingBytes = 0;
   const seen = new Set<string>();
@@ -446,8 +449,7 @@ async function runRipgrep(argumentsValue: string[]): Promise<ComparedOutput> {
       return true;
     }
     seen.add(key);
-    const prefix = `${JSON.stringify(path)}:`;
-    const row = `${prefix}${formatVerifiedRow(lineNumber, line)}`;
+    const row = formatReaderRow(lineNumber, line, options, path);
     return output.append(row);
   };
   const takePending = (): Buffer => {
@@ -516,9 +518,12 @@ export function createHGrepTool(description: string, grammar: string): Tool<stri
       return splitArguments(input);
     },
     async execute(argv) {
+      let options: ReaderOptions;
       let normalized: NormalizedArguments;
       try {
-        normalized = normalizeArguments(argv);
+        const parsed = readerOptions(argv);
+        options = parsed.options;
+        normalized = normalizeArguments(parsed.rest);
       } catch (error) {
         return {stderr: `hgrep: ${errorText(error)}\n`, exitCode: 1};
       }
@@ -526,9 +531,9 @@ export function createHGrepTool(description: string, grammar: string): Tool<stri
         ? ""
         : `hgrep: warning: ignoring ripgrep options ${normalized.warnings.join(", ")}; output remains verified rows\n`;
       try {
-        const result = await runRipgrep(normalized.arguments);
+        const result = await runRipgrep(normalized.arguments, options);
         const limitDiagnostic = result.incomplete
-          ? `hgrep: ${VERIFIED_ROW_LIMIT_DIAGNOSTIC}`
+          ? `hgrep: ${readerLimitDiagnostic(options)}`
           : "";
         const stderr = `${warning}${limitDiagnostic}`;
         return {

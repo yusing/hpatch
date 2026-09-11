@@ -28,6 +28,7 @@ func TestSubagentToolDisplay(t *testing.T) {
 		{"shell", "  echo first\n  echo second\n", "Run\n```bash\n  echo first\n  echo second\n```"},
 		{"shell", "cat /skills/writing-readme/SKILL.md", "Skill Read `writing-readme`"},
 		{"shell", "cat a\ncat b", "Read `a`\n\nRead `b`"},
+		{"shell", "hcat --preview-bytes 80 --max-tokens 100 a.go 1:20", "Read `a.go 1:20`"},
 		{"shell", "hcat a.go 1:20", "Read `a.go 1:20`"},
 		{"shell", "hgrep -n -F -e 'some text' a.go", "Search `-n -F -e 'some text' a.go`"},
 		{"shell", "inspect_file a.go", "Inspect `a.go`"},

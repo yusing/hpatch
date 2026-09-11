@@ -307,6 +307,14 @@ programs**, not as standalone utilities in your terminal:
 | `hsymbol` | Look up definitions and references | `gopls` for Go; TypeScript 7 as `tsc` for JS, TS, and JSON; `pyright-langserver` for Python |
 | `inspect_file` | Inspect structure without full source bodies | None |
 
+For long lines, both verified readers offer an explicit bounded preview:
+`hcat --max-tokens 2000 --preview-bytes 160 source.ts` or
+`hgrep --max-tokens 2000 --preview-bytes 160 -F needle source.ts`.
+Preview records include the complete row's verified identity, a UTF-8 prefix,
+and omitted-byte counts. Without preview mode, rows remain exact. A caller's
+token ceiling is strict; omitted records are reported as incomplete, not silently
+cut. See the [reader contract](doc/spec/read.md) for ranges and bounds.
+
 Retained programs use thread-local `@shell/` references and expire after one
 hour by default. They are not workspace files and are removed on router
 shutdown. See the [shell reference](doc/spec/shell.md) for retention, editing,

@@ -356,6 +356,16 @@ Do not follow target-bearing hgrep output with hcat unless nonmatching context o
 requested bounds is needed. If hgrep reports an incomplete token-limited result, retain the
 emitted rows and narrow the patterns, paths, context, or file selection.
 
+Both readers accept leading `--max-tokens N` (1–15500) for a strict stdout token
+ceiling and `--preview-bytes N` (1–65536) for long-line inspection. For example,
+`hgrep --max-tokens 2000 --preview-bytes 160 -F needle source.ts`.
+Preview mode emits JSON with `row`, `preview`, `source_bytes`, `omitted_bytes`,
+and, for hgrep, `path`. The row identity hashes the complete source; the preview
+is only a UTF-8 prefix, not an exact full line. Retain the row identity, but obtain
+missing content before authoring a literal edit. Whole-record budget omissions
+still report incomplete results. Hcat source rows over 1,984,000 bytes require a
+byte-window reader instead.
+
 For Go, JavaScript, TypeScript, JSON, and Python, use
 `hsymbol refs PATH LINE:HASH SYMBOL [N]` when an exact symbol must be renamed, audited, or changed
 at every reference. Use `hsymbol def PATH LINE:HASH SYMBOL [N]` when the next edit is the symbol's

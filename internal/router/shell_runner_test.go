@@ -154,6 +154,11 @@ func TestShellRunnerReadsRetainedHCatArtifact(t *testing.T) {
 		"hcat @shell/call-id 2:2",
 		nil,
 	)
+	preview, previewErr, previewExit := runShellWorkerTest(t, registry, "/bin/sh", nil,
+		"hcat --max-tokens 100 --preview-bytes 3 @shell/call-id 2:2", nil)
+	if previewExit != 0 || previewErr != "" || preview != "{\"row\":\"2:ca67\",\"preview\":\"ret\",\"source_bytes\":8,\"omitted_bytes\":5}\n" {
+		t.Fatalf("retained preview: stdout=%q stderr=%q exit=%d", preview, previewErr, previewExit)
+	}
 	if exitCode != 0 || stdout != "2:ca67 retained\n" || stderr != "" {
 		t.Fatalf("exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 	}

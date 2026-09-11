@@ -425,12 +425,16 @@ func toolActivityReadCommand(script string, call *syntax.CallExpr) (string, bool
 		}
 		paths, readRange := argv[1:], ""
 		if argv[0] == "hcat" {
-			if len(argv) != 2 && len(argv) != 3 {
+			pathIndex := 1
+			for pathIndex+1 < len(argv) && (argv[pathIndex] == "--max-tokens" || argv[pathIndex] == "--preview-bytes") {
+				pathIndex += 2
+			}
+			if len(argv)-pathIndex != 1 && len(argv)-pathIndex != 2 {
 				return "", false
 			}
-			paths = argv[1:2]
-			if len(argv) == 3 {
-				readRange = " " + argv[2]
+			paths = argv[pathIndex : pathIndex+1]
+			if len(argv)-pathIndex == 2 {
+				readRange = " " + argv[pathIndex+1]
 			}
 		}
 		for _, path := range paths {

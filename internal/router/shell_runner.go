@@ -95,7 +95,15 @@ func executeShellTool(
 			arguments := command[1:]
 			input, _ := handler.Stdin.(*os.File)
 			var retained *os.File
-			if contribution.Name == "hcat" && len(arguments) > 0 && strings.HasPrefix(arguments[0], shellArtifactPrefix) {
+			// Only locate the path here. The private reader still validates
+			// option values before reading the retained descriptor.
+			pathIndex := 0
+			if contribution.Name == "hcat" {
+				for pathIndex+1 < len(arguments) && (arguments[pathIndex] == "--max-tokens" || arguments[pathIndex] == "--preview-bytes") {
+					pathIndex += 2
+				}
+			}
+			if contribution.Name == "hcat" && pathIndex < len(arguments) && strings.HasPrefix(arguments[pathIndex], shellArtifactPrefix) {
 				runtimeDirectory := handler.Env.Get(shellruntime.RuntimeDirectoryEnvironment).String()
 				if runtimeDirectory == "" {
 					runtimeDirectory = os.TempDir()
@@ -104,7 +112,7 @@ func executeShellTool(
 				retained, openErr = openRetainedShellFile(
 					runtimeDirectory,
 					handler.Env.Get(shellruntime.ThreadIDEnvironment).String(),
-					arguments[0],
+					arguments[pathIndex],
 				)
 				if openErr != nil {
 					_, _ = fmt.Fprintf(handler.Stderr, "hcat: %v\n", openErr)
@@ -112,7 +120,7 @@ func executeShellTool(
 				}
 				defer retained.Close()
 				arguments = slices.Clone(arguments)
-				arguments[0] = "/dev/fd/3"
+				arguments[pathIndex] = "/dev/fd/3"
 				input = retained
 			}
 			execution, executeErr := toolplugin.Execute(

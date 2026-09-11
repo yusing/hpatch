@@ -4,7 +4,6 @@ import {open} from "node:fs/promises";
 import type {Tool} from "../internal/router/toolplugin/plugin.d.ts";
 import {
   decodeQuotedOperand,
-  formatVerifiedRow,
   parsePositiveInteger,
 } from "mekugi:core/v1";
 
@@ -14,10 +13,14 @@ import {
   createExecutorTool,
   MAX_POSSIBLE_GPT5_TOKEN_BYTES,
   stripOptionalFinalNewline,
-  VERIFIED_ROW_LIMIT_DIAGNOSTIC,
+  formatReaderRow,
+  readerOptions,
+  readerLimitDiagnostic,
   VERIFIED_ROW_MAX_TOKENS,
   VerifiedRowOutput,
 } from "./common.ts";
+
+import type {ReaderOptions} from "./common.ts";
 
 const READ_BUFFER_BYTES = 32 * 1024;
 
@@ -100,6 +103,7 @@ function parseReadSpec(input: string): ReadSpec {
 type ComparedOutput = {
   current: string;
   incomplete: boolean;
+  limitReason?: string;
   warning?: string;
 };
 
@@ -107,7 +111,7 @@ type ComparedOutput = {
 /**
  * readHashLines reads verified-row output from a file with token-budget enforcement.
  */
-async function readHashLines(spec: ReadSpec): Promise<ComparedOutput> {
+async function readHashLines(spec: ReadSpec, options: ReaderOptions): Promise<ComparedOutput> {
   const handle = await open(spec.path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
 
   try {
@@ -121,8 +125,9 @@ async function readHashLines(spec: ReadSpec): Promise<ComparedOutput> {
     let lineOpen = false;
     let pendingCR = false;
     let content = "";
+    let limitReason: string | undefined;
     let contentBytes = 0;
-    const output = new VerifiedRowOutput();
+    const output = new VerifiedRowOutput(options.maxTokens);
 
     const selected = () => wholeFile
       || (lineNumber >= spec.startLine && lineNumber <= spec.endLine);
@@ -136,7 +141,10 @@ async function readHashLines(spec: ReadSpec): Promise<ComparedOutput> {
       }
       contentBytes += byteLength(text);
       if (contentBytes > VERIFIED_ROW_MAX_TOKENS * MAX_POSSIBLE_GPT5_TOKEN_BYTES) {
-        // Such a row must exceed the token ceiling, regardless of tokenization.
+        // Bound candidate storage even when only a preview will be emitted.
+        if (options.previewBytes !== undefined) {
+          limitReason = `row ${lineNumber} exceeds the ${VERIFIED_ROW_MAX_TOKENS * MAX_POSSIBLE_GPT5_TOKEN_BYTES}-byte inspection bound; use a byte-window reader\n`;
+        }
         content = "";
         output.incomplete = true;
         return;
@@ -145,7 +153,7 @@ async function readHashLines(spec: ReadSpec): Promise<ComparedOutput> {
     };
     const finishLine = (): void => {
       if (selected() && !output.incomplete) {
-        const row = formatVerifiedRow(lineNumber, content);
+        const row = formatReaderRow(lineNumber, content, options);
         output.append(row);
       }
       content = "";
@@ -217,7 +225,7 @@ async function readHashLines(spec: ReadSpec): Promise<ComparedOutput> {
     const warning = !wholeFile && missingStartLine <= spec.endLine
       ? `hcat: ${missingStartLine}-${spec.endLine}: [out of range]\n`
       : undefined;
-    return {current: output.current, incomplete: output.incomplete, warning};
+    return {current: output.current, incomplete: output.incomplete, warning, limitReason};
   } finally {
     await handle.close();
   }
@@ -228,11 +236,21 @@ async function readHashLines(spec: ReadSpec): Promise<ComparedOutput> {
  * hcatArguments converts parsed hcat input to the internal argv representation.
  */
 function hcatArguments(input: string): string[] {
+  const prefix: string[] = [];
+  while (input.startsWith("--max-tokens ") || input.startsWith("--preview-bytes ")) {
+    const match = input.match(/^(--(?:max-tokens|preview-bytes)) ([^ ]+)(?: |$)/u);
+    if (match === null) {
+      throw new Error("reader option requires a value");
+    }
+    prefix.push(match[1], match[2]);
+    input = input.slice(match[0].length);
+  }
+  readerOptions(prefix);
   const spec = parseReadSpec(stripOptionalFinalNewline(input));
   if (spec.startLine === 0) {
-    return [spec.path];
+    return [...prefix, spec.path];
   }
-  return [spec.path, `${spec.startLine}:${spec.endLine}`];
+  return [...prefix, spec.path, `${spec.startLine}:${spec.endLine}`];
 }
 
 
@@ -264,19 +282,20 @@ export function createHCatTool(description: string, grammar: string): Tool<strin
     grammar,
     argv(input, context) {
       const argumentsValue = hcatArguments(input);
-      argumentsValue[0] = context.resolvePath(argumentsValue[0]);
+      const {offset} = readerOptions(argumentsValue);
+      argumentsValue[offset] = context.resolvePath(argumentsValue[offset]);
       return argumentsValue;
     },
     async execute(argv) {
       try {
-        const executionArguments = [...argv];
+        const {options, rest: executionArguments} = readerOptions(argv);
         const spec = parseReadSpec(stripOptionalFinalNewline(hcatInput(executionArguments)));
         if (spec.path.startsWith("@shell/")) {
           throw new Error("unresolved @shell path");
         }
-        const result = await readHashLines(spec);
+        const result = await readHashLines(spec, options);
         const limitDiagnostic = result.incomplete
-          ? `hcat: ${VERIFIED_ROW_LIMIT_DIAGNOSTIC}`
+          ? `hcat: ${result.limitReason ?? readerLimitDiagnostic(options)}`
           : "";
         const stderr = `${result.warning ?? ""}${limitDiagnostic}`;
         return {
