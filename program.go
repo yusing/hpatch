@@ -244,7 +244,7 @@ func recognizeTargetVariant(operands string) targetVariant {
 			return targetVariantNone
 		}
 		rest = strings.TrimSpace(rest)
-		if strings.HasPrefix(rest, `"`) || strings.HasPrefix(rest, "<<PATCH") {
+		if strings.HasPrefix(rest, `"`) || strings.HasPrefix(rest, "<<") {
 			return targetVariantTextSingle
 		}
 		return targetVariantTextMultiple
@@ -265,7 +265,7 @@ func recognizeTargetVariant(operands string) targetVariant {
 		return targetVariantLine
 	}
 	rest = strings.TrimSpace(rest)
-	if strings.HasPrefix(rest, `"`) || strings.HasPrefix(rest, "<<PATCH") {
+	if strings.HasPrefix(rest, `"`) || strings.HasPrefix(rest, "<<") {
 		return targetVariantTextSingle
 	}
 	return targetVariantTextMultiple

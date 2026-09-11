@@ -40,8 +40,8 @@ invocation instead of inventing a row hash or rereading the file. Use focused hc
 when none of those forms identifies the target.
 
 Use heredoc values for regular expressions and other multiline or escape-heavy text.
-Choose `<<PATCH` or `<<PATCH-` using the shared final-newline rules. Acquire only an exact
-missing target.
+Choose `<<PATCH` or `<<PATCH-` using the shared final-newline rules, or line-framed
+`<<TEXT`/`<<TEXT-` for protocol examples. Acquire only an exact missing target.
 
 ## Target acquisition
 

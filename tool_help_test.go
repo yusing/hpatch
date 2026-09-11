@@ -140,6 +140,32 @@ func TestMekugi2ToolGrammarHeredocSuffixes(t *testing.T) {
 	}
 }
 
+func TestTextGrammarPayloadLines(t *testing.T) {
+	line := grammarTerminalRegexp(t, "TEXT_BODY_LINE")
+	for _, payload := range []string{"PATCH", "TEXT", "type <<PATCH", "type <<TEXT-", "|", "", `"\`, "世界"} {
+		for _, ending := range []string{"\n", "\r\n"} {
+			if !line.MatchString("|" + payload + ending) {
+				t.Errorf("text body rejects %q", payload+ending)
+			}
+		}
+	}
+	for _, invalid := range []string{"TEXT\n", "rm\n", "\n", "|no terminator", "|bare\r"} {
+		if line.MatchString(invalid) {
+			t.Errorf("text body accepts %q", invalid)
+		}
+	}
+	for _, rule := range []string{
+		`text_mutation: "type" SP target SP TEXT_MARKER NL TEXT_BODY_LINE* "TEXT"`,
+		`| "add" SP add_destination SP TEXT_MARKER NL TEXT_BODY_LINE* "TEXT"`,
+		`text_initializer: "type" SP TEXT_MARKER NL TEXT_BODY_LINE* "TEXT"`,
+		`TEXT_MARKER: "<<TEXT" | "<<TEXT-"`,
+	} {
+		if !strings.Contains(toolGrammar, rule) {
+			t.Errorf("tool grammar omits %q", rule)
+		}
+	}
+}
+
 func TestToolDescriptionIsNonInstructional(t *testing.T) {
 	const want = "Atomic HPATCH/2 edit-script application. Rejection or cancellation leaves the workspace unchanged."
 	if got := ToolDescription(); got != want {

@@ -94,6 +94,21 @@ func TestRecoverScriptPreservesHeredocFraming(t *testing.T) {
 	}
 }
 
+func TestRecoverScriptPreservesTextFraming(t *testing.T) {
+	for _, marker := range []string{"<<TEXT", "<<TEXT-"} {
+		script := "in file.txt\ntype 1:aaaa " + marker + "\r\n|type <<PATCH\n|PATCH\r\n||body\n|TEXT\nTEXT\n"
+		commands := recoveryCommands(script)
+		if len(commands) != 2 || !commands[1].parts.parsed {
+			t.Fatalf("commands = %+v", commands)
+		}
+		got, err := recoverScriptForTest(t.Context(), script, commands[1].handle+` "current"`)
+		want := strings.Replace(script, "1:aaaa", `"current"`, 1)
+		if err != nil || got != want {
+			t.Fatalf("recover = %q, %v; want %q", got, err, want)
+		}
+	}
+}
+
 func TestRecoverScriptRetargetsObservedBatchSize(t *testing.T) {
 	var script strings.Builder
 	var want strings.Builder

@@ -216,6 +216,23 @@ For multiline or escape-heavy values, choose the final-newline behavior explicit
 `<<PATCH` keeps every body terminator; `<<PATCH-` removes exactly the final body terminator.
 Both close with `PATCH` and preserve all other body bytes, including spaces and earlier blank lines.
 
+For protocol examples or other payloads containing delimiter or opener lines, use
+`<<TEXT` (keep final terminator) or `<<TEXT-` (remove one final terminator).
+Prefix every payload line with one `|`, including blank lines; close with unprefixed
+`TEXT`. Only the first bar is removed. Literal `PATCH`, `TEXT`, and nested examples
+are safe payloads without quote or backslash escaping:
+
+```text
+type "old example" <<TEXT-
+|type <<PATCH
+|replacement
+|PATCH
+|type <<TEXT-
+||text
+|TEXT
+TEXT
+```
+
 Use row/range targets with `<<PATCH` for whole-line replacements:
 
 ```text
@@ -246,7 +263,7 @@ indentation correction.
 
 An unindented heredoc body line beginning with `type ` or `add ` and ending with either
 heredoc marker is reserved as a nested opener when the marker is its sole operand or follows
-a space. Close the current frame first; use an inline value or indent literal HPATCH examples.
+a space. Use a line-framed text block for literal HPATCH examples.
 
 Existing-file edits require a target. Targetless `type VALUE` is valid only immediately after
 `new`; create a file with at most one such initializer:

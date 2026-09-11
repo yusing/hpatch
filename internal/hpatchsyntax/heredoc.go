@@ -57,8 +57,9 @@ func FrameCommand(lines []PhysicalLine, headerIndex int, command string) (Comman
 	}
 	frame.Marker = marker
 	if marker != "" {
-		frame.Body, frame.Next, err = decodeHeredoc(lines, headerIndex, "PATCH")
-		if err == nil && marker == "<<PATCH-" && frame.Next > headerIndex+2 {
+		delimiter := strings.TrimSuffix(strings.TrimPrefix(marker, "<<"), "-")
+		frame.Body, frame.Next, err = decodeHeredoc(lines, headerIndex, delimiter)
+		if err == nil && strings.HasSuffix(marker, "-") && frame.Next > headerIndex+2 {
 			// Remove only the final physical body terminator, not trailing
 			// spaces or any preceding blank lines.
 			frame.Body = strings.TrimSuffix(frame.Body, lines[frame.Next-2].Terminator)
@@ -121,11 +122,11 @@ func heredocMarker(command string) (string, error) {
 	}
 	if marker > 0 && command[marker-1] == ' ' {
 		switch command[marker:] {
-		case "<<PATCH", "<<PATCH-":
+		case "<<PATCH", "<<PATCH-", "<<TEXT", "<<TEXT-":
 			return command[marker:], nil
 		}
 	}
-	return "", errors.New("invalid heredoc; HPATCH/2 requires an unquoted <<PATCH or <<PATCH- final operand")
+	return "", errors.New("invalid heredoc; HPATCH/2 requires an unquoted <<PATCH, <<PATCH-, <<TEXT, or <<TEXT- final operand")
 }
 
 func unquotedDoubleLess(text string) int {
@@ -169,6 +170,20 @@ func decodeHeredoc(lines []PhysicalLine, headerIndex int, delimiter string) (str
 				return "", index + 1, errors.New("heredoc body is not UTF-8")
 			}
 			return value, index + 1, nil
+		}
+		// SplitPhysicalLines retains an empty EOF sentinel after a final
+		// newline; it is not an unprefixed payload line.
+		if index == len(lines)-1 && line.Text == "" && line.Terminator == "" {
+			break
+		}
+		if delimiter == "TEXT" {
+			payload, ok := strings.CutPrefix(line.Text, "|")
+			if !ok {
+				// A malformed value owns the remaining input. Never treat
+				// an unframed payload line as an edit command.
+				return "", len(lines), fmt.Errorf("text body line %d requires a leading | or closing TEXT", index+1)
+			}
+			line.Text = payload
 		}
 		if oversized {
 			continue

@@ -32,7 +32,8 @@ final-state rows, confirmed mappings, or exact authored current text as the shar
 allow. Newly authored text is available as a literal target in the next call. Obtain a focused
 read only when the target is still unknown or ambiguous; copy emitted row identities exactly.
 Use heredoc values for multiline or escape-heavy text; choose `<<PATCH` or `<<PATCH-`
-using the shared final-newline rules. Follow the shared rejection contract to repair the reported failure
+using the shared final-newline rules, or line-framed `<<TEXT`/`<<TEXT-` for protocol examples.
+Follow the shared rejection contract to repair the reported failure
 without discarding unaffected edits.
 
 ## Target acquisition
