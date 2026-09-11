@@ -164,6 +164,9 @@ func buildToolRegistry(ctx context.Context, dataDirectory, mekugiDescription str
 		RuntimeRoot:    "runtime",
 		Tools:          slices.Clone(contributions),
 	}
+	if debug, _ := ctx.Value(debugContextKey{}).(*debugOutput); debug != nil {
+		manifest.AXReadOutput = debug.paths[4]
+	}
 	registryID, err := toolRegistryIdentity(manifest, pluginSnapshot.Root)
 	if err != nil {
 		return fail(err)

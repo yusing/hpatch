@@ -1210,7 +1210,8 @@ export function createInspectFileTool(description: string, grammar: string): Too
         const cause = error instanceof InspectFailure
           ? error
           : new InspectFailure("read", `cannot inspect file: ${errorText(error)}`);
-        return {stdout: failure(suppliedPath, cause.code, cause.message), exitCode: 1};
+        return {stdout: failure(suppliedPath, cause.code, cause.message), exitCode: 1,
+          failureClass: cause.code === "usage" ? "invalid_arguments" : cause.code === "not_found" ? "not_found" : "reader_error"};
       }
     },
   });

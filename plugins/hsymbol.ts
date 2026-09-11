@@ -17,6 +17,7 @@ import {
   byteLength,
   collect,
   createExecutorTool,
+  readerFailureClass,
   decodeUTF8,
   errorText,
   isOutsideWorkspace,
@@ -609,6 +610,7 @@ async function executeQuery(query: Query, onResolverStart: () => void): Promise<
     return {
       ...(stderr === "" ? {} : {stderr}),
       exitCode: 1,
+      failureClass: "no_editable_location",
     };
   }
   if (output.incomplete) {
@@ -618,6 +620,7 @@ async function executeQuery(query: Query, onResolverStart: () => void): Promise<
     stdout: output.current,
     ...(stderr === "" ? {} : {stderr}),
     exitCode: output.incomplete ? 1 : 0,
+    ...(output.incomplete ? {failureClass: "output_limit" as const} : {}),
   };
 }
 
@@ -689,10 +692,16 @@ export function createHSymbolTool(description: string, grammar: string): Tool<st
       return parseHSymbolArguments(input);
     },
     async execute(argv) {
+      let query: ReturnType<typeof parseQuery>;
+      try {
+        query = parseQuery(argv);
+      } catch (error) {
+        return {stderr: `hsymbol: ${errorText(error)}\n`, exitCode: 1, failureClass: "invalid_arguments"};
+      }
       let resolverStarted = false;
       let result: ExecutionResult;
       try {
-        result = await executeQuery(parseQuery(argv), () => { resolverStarted = true; });
+        result = await executeQuery(query, () => { resolverStarted = true; });
       } catch (error) {
         let message = error instanceof HSymbolFailure ? error.message : errorText(error);
         const prerequisites: Record<string, string> = {
@@ -700,10 +709,12 @@ export function createHSymbolTool(description: string, grammar: string): Tool<st
           "tsc is unavailable": "expose TypeScript 7 tsc with --lsp support on the executor PATH",
           "pyright-langserver is unavailable": "expose pyright-langserver on the executor PATH",
         };
+        const failureClass = prerequisites[message] !== undefined ? "dependency_unavailable"
+          : error instanceof SourceFailure ? "invalid_source" : readerFailureClass(error, "resolver_error");
         if (prerequisites[message] !== undefined) {
           message += `; ${prerequisites[message]}`;
         }
-        result = {stderr: `hsymbol: ${message}\n`, exitCode: 1};
+        result = {stderr: `hsymbol: ${message}\n`, exitCode: 1, failureClass};
       }
       return resolverStarted ? {...result, terminationReason: "resolver_cleanup"} : result;
     },

@@ -214,6 +214,9 @@ func debugRequest(ctx context.Context) (*debugOutput, string) {
 	if d == nil {
 		return nil, ""
 	}
+	if captureID, _ := capturer.RequestCorrelation(ctx); captureID != "" {
+		return d, captureID
+	}
 	return d, rand.Text()
 }
 

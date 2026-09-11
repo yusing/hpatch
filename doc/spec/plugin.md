@@ -105,6 +105,13 @@ Bash
 and POSIX evaluation dispatch private commands from the resolved worker after shell expansion, so none of the four
 private names creates a snapshot wrapper, stable frontend, or `PATH` dependency.
 
+
+Executors may attach a private `failureClass` only with a nonzero exit status. The
+host accepts only the `ReaderFailureClass` allowlist in `plugin.d.ts`; arbitrary strings,
+objects, nulls, and success/class combinations are rejected without reflecting their
+contents. The shell dispatch boundary consumes this metadata for opt-in AX evidence;
+it does not print it, change command output, or expose it as a transport metric.
+
 An executor returns its current stdout, stderr, and exit status once. The worker returns that result
 to Codex and never performs a second observation-only execution or returns a benchmark baseline.
 An executor may attach `terminationReason: "output_limit"` only to a nonzero result after bounded

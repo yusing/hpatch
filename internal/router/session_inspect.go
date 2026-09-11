@@ -51,9 +51,11 @@ type sessionInspection struct {
 type sessionAXInput struct {
 	ThreadID   string
 	Completion capturer.AXCompletionAccumulator
+	Commands   capturer.AXCommandAccumulator
 }
 
 type sessionAXReport struct {
+	Commands       capturer.AXCommandMetrics    `json:"commands"`
 	Scope          string                       `json:"scope"`
 	ThreadID       string                       `json:"thread_id"`
 	Edits          capturer.AXEditMetrics       `json:"edits"`
@@ -164,7 +166,7 @@ func RunSessionInspection(ctx context.Context, args []string, stdout, stderr io.
 	if withAX {
 		inspected = allCalls
 		result.AX = &sessionAXReport{Scope: "entire supplied rollout; edit metrics require matched replay",
-			ThreadID: observations.ThreadID, Completion: observations.Completion.Result()}
+			ThreadID: observations.ThreadID, Completion: observations.Completion.Result(), Commands: observations.Commands.Result()}
 	}
 	for _, call := range inspected {
 		if err := ctx.Err(); err != nil {
@@ -296,9 +298,21 @@ func readSessionInspection(ctx context.Context, path string, observations *sessi
 			var event struct {
 				Type   string `json:"type"`
 				TurnID string `json:"turn_id"`
+				Item   *struct {
+					Type     string          `json:"type"`
+					ID       string          `json:"id"`
+					ExitCode *int            `json:"exit_code"`
+					Command  json.RawMessage `json:"command"`
+				} `json:"item"`
 			}
 			if json.Unmarshal(envelope.Payload, &event) != nil {
 				return nil, fmt.Errorf("session line %d: invalid event", line)
+			}
+			if (event.Type == "item_started" || event.Type == "item_completed") && event.Item != nil && event.Item.Type == "CommandExecution" {
+				at, _ := time.Parse(time.RFC3339Nano, envelope.Timestamp)
+				if err := observations.Commands.Observe(event.Type, event.Item.ID, inspectionAXCallID(event.Item.Command), at, event.Item.ExitCode); err != nil {
+					return nil, err
+				}
 			}
 			switch event.Type {
 			case "task_started", "turn_started", "task_complete", "turn_complete":

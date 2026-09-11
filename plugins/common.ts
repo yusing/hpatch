@@ -1,7 +1,7 @@
 import {formatVerifiedRow, hashLine} from "mekugi:core/v1";
 import path from "node:path";
 import {countTokens as countGPT5TokensWithModel} from "gpt-tokenizer/model/gpt-5";
-import type {ExecutionContext, ExecutionResult, Tool, TranslationContext} from "../internal/router/toolplugin/plugin.d.ts";
+import type {ExecutionContext, ExecutionResult, ReaderFailureClass, Tool, TranslationContext} from "../internal/router/toolplugin/plugin.d.ts";
 
 const VERIFIED_ROW_SOFT_TOKENS = 15_000;
 export const VERIFIED_ROW_MAX_TOKENS = 15_500;
@@ -173,4 +173,16 @@ export async function collect(stream: AsyncIterable<Uint8Array>): Promise<Uint8A
     }
   }
   return Buffer.concat(chunks, length);
+}
+
+// Classify structured filesystem errors; never inspect or retain diagnostic text.
+export function readerFailureClass(error: unknown, fallback: ReaderFailureClass = "reader_error"): ReaderFailureClass {
+  if (error instanceof Error && "code" in error) {
+    switch (error.code) {
+      case "ENOENT": case "ENOTDIR": return "not_found";
+      case "EACCES": case "EPERM": return "permission_denied";
+      case "EISDIR": return "not_regular";
+    }
+  }
+  return fallback;
 }

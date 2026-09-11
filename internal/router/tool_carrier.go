@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/yusing/mekugi/capturer"
 	"github.com/yusing/mekugi/internal/shellsyntax"
 
 	"mvdan.cc/sh/v3/expand"
@@ -262,8 +263,9 @@ func (registry *toolRegistry) execCarrierPayload(
 	template string,
 	params map[string]json.RawMessage,
 	resultMetadata map[string]json.RawMessage,
+	callIDs ...string,
 ) (string, error) {
-	command, err := registry.execCarrierCommand(contribution, sourceInput, arguments, template)
+	command, err := registry.execCarrierCommand(contribution, sourceInput, arguments, template, callIDs...)
 	if err != nil {
 		return "", err
 	}
@@ -290,6 +292,7 @@ func (registry *toolRegistry) execCarrierCommand(
 	sourceInput string,
 	arguments []string,
 	template string,
+	callIDs ...string,
 ) (string, error) {
 	if registry == nil {
 		return "", errors.New("tool registry is unavailable")
@@ -301,6 +304,9 @@ func (registry *toolRegistry) execCarrierCommand(
 		}
 	}
 	command := workerCommand(contribution.Name, arguments)
+	if builtinShell && len(callIDs) != 0 && capturer.ValidAXIdentity(callIDs[0]) {
+		command = capturer.AXCallIDEnvironment + "=" + shellQuoteArgument(callIDs[0]) + " " + command
+	}
 	if builtinShell && template == "" {
 		// Parse only directives, not an authored interpreter selector. Exec
 		// parameters affect the outer carrier, not eligibility for a direct call.
@@ -309,6 +315,9 @@ func (registry *toolRegistry) execCarrierCommand(
 			parsed.Body == arguments[len(arguments)-1] {
 			if direct, ok := registry.directBashExecCommand(arguments); ok {
 				command = direct
+				if len(callIDs) != 0 && capturer.ValidAXIdentity(callIDs[0]) {
+					command = capturer.AXCallIDEnvironment + "=" + shellQuoteArgument(callIDs[0]) + " " + command
+				}
 			}
 		}
 	}
