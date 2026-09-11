@@ -27,7 +27,8 @@ write_metrics() {
 	local cache_rate
 	cache_rate=$(awk -v cached="$cached" -v input="$input" 'BEGIN { print cached/input }')
 	cat >"$path" <<JSON
-{"schema":"mekugi.capture.metrics.v4","mode":"$mode","model_protocol":"native","requests":{"logical":1,"provider_attempts":1,"completed":1,"failed":0},"usage":{"input_tokens":$input,"cached_input_tokens":$cached,"uncached_input_tokens":$((input-cached)),"output_tokens":$output,"reasoning_tokens":$reasoning,"provider_attempts":1},"cache":{"cold_or_new_uncached_input_tokens":$((input-cached)),"provider_cache_rate":$cache_rate,"eligible_prefix_tokens":0,"eligible_prefix_cached_tokens":0,"eligible_prefix_miss_tokens":0,"eligible_prefix_cache_rate":null},"transport":{"client_requests":{"bytes":100,"tokens":25},"provider_attempt_requests":{"bytes":80,"tokens":20},"provider_responses":{"bytes":90,"tokens":22},"client_responses":{"bytes":120,"tokens":30}},"semantic":{"provider_attempt_outputs":{"bytes":70,"tokens":17},"client_outputs":{"bytes":90,"tokens":25}},"protocol":{"input_payload_tokens_saved":0,"input_payload_bytes_saved":0,"output_text_tokens_saved":0,"output_payload_tokens_expansion":8,"output_payload_bytes_expansion":20},"provider_tools":{"hpatch":{"calls":1,"input_bytes":10,"input_tokens":3,"item_bytes":30,"item_tokens":8}},"delivered_tools":{"exec":{"calls":1,"input_bytes":30,"input_tokens":9,"item_bytes":50,"item_tokens":14}},"mekugi":{"calls":1,"corrections":0,"successful":1,"rejected":0,"unmatched":0,"provider_input_tokens":3,"delivered_input_tokens":9,"carrier_input_tokens_expansion":6},"exchanges":[{"sequence":1,"thread_id":"$thread","model":"model","provider_attempts":[{"attempt":1,"model":"model","status":"completed","response_complete":true,"usage":{"input_tokens":$input,"cached_input_tokens":$cached,"uncached_input_tokens":$((input-cached)),"output_tokens":$output,"reasoning_tokens":$reasoning,"provider_attempts":1},"request":{"bytes":80,"tokens":20},"native_request":{"bytes":80,"tokens":20},"response":{"bytes":90,"tokens":22},"final_output":{"bytes":70,"tokens":17},"final_text":{"bytes":70,"tokens":17},"tools":[{"call_id":"call-1","name":"hpatch","input_bytes":10,"input_tokens":3,"item_bytes":30,"item_tokens":8}]}],"status":"completed","usage":{"input_tokens":$input,"cached_input_tokens":$cached,"uncached_input_tokens":$((input-cached)),"output_tokens":$output,"reasoning_tokens":$reasoning,"provider_attempts":1},"client_request":{"bytes":100,"tokens":25},"client_response":{"bytes":120,"tokens":30},"client_final_output":{"bytes":90,"tokens":25},"client_final_text":{"bytes":70,"tokens":17},"delivered_tools":[{"call_id":"call-1","name":"exec","input_bytes":30,"input_tokens":9,"item_bytes":50,"item_tokens":14,"kind":"apply_patch"}]}],"capture":{"records":2,"capture_errors":0,"incomplete_records":0,"missing_provider_records":0,"provider_attempt_gaps":0,"write_errors":0,"skipped_requests":0,"dropped_exchange_details":0}}
+{"schema":"mekugi.capture.metrics.v4","mode":"$mode","model_protocol":"native","requests":{"logical":1,"provider_attempts":1,"completed":1,"failed":0},"usage":{"input_tokens":$input,"cached_input_tokens":$cached,"uncached_input_tokens":$((input-cached)),"output_tokens":$output,"reasoning_tokens":$reasoning,"provider_attempts":1},"cache":{"cold_or_new_uncached_input_tokens":$((input-cached)),"provider_cache_rate":$cache_rate,"eligible_prefix_tokens":0,"eligible_prefix_cached_tokens":0,"eligible_prefix_miss_tokens":0,"eligible_prefix_cache_rate":null},"transport":{"client_control_requests":{"bytes":0,"tokens":0},"client_requests":{"bytes":100,"tokens":25},"provider_attempt_requests":{"bytes":80,"tokens":20},"provider_control_requests":{"bytes":0,"tokens":0},"provider_control_responses":{"bytes":0,"tokens":0},"provider_responses":{"bytes":90,"tokens":22},"client_control_responses":{"bytes":0,"tokens":0},"client_responses":{"bytes":120,"tokens":30}}
+,"semantic":{"provider_attempt_outputs":{"bytes":70,"tokens":17},"client_outputs":{"bytes":90,"tokens":25}},"protocol":{"input_payload_tokens_saved":0,"input_payload_bytes_saved":0,"output_text_tokens_saved":0,"output_payload_tokens_expansion":8,"output_payload_bytes_expansion":20},"provider_tools":{"hpatch":{"calls":1,"input_bytes":10,"input_tokens":3,"item_bytes":30,"item_tokens":8}},"delivered_tools":{"exec":{"calls":1,"input_bytes":30,"input_tokens":9,"item_bytes":50,"item_tokens":14}},"mekugi":{"calls":1,"corrections":0,"successful":1,"rejected":0,"unmatched":0,"provider_input_tokens":3,"delivered_input_tokens":9,"carrier_input_tokens_expansion":6},"exchanges":[{"sequence":1,"thread_id":"$thread","model":"model","provider_attempts":[{"attempt":1,"model":"model","status":"completed","response_complete":true,"usage":{"input_tokens":$input,"cached_input_tokens":$cached,"uncached_input_tokens":$((input-cached)),"output_tokens":$output,"reasoning_tokens":$reasoning,"provider_attempts":1},"request":{"bytes":80,"tokens":20},"native_request":{"bytes":80,"tokens":20},"response":{"bytes":90,"tokens":22},"final_output":{"bytes":70,"tokens":17},"final_text":{"bytes":70,"tokens":17},"tools":[{"call_id":"call-1","name":"hpatch","input_bytes":10,"input_tokens":3,"item_bytes":30,"item_tokens":8}]}],"status":"completed","usage":{"input_tokens":$input,"cached_input_tokens":$cached,"uncached_input_tokens":$((input-cached)),"output_tokens":$output,"reasoning_tokens":$reasoning,"provider_attempts":1},"client_request":{"bytes":100,"tokens":25},"client_response":{"bytes":120,"tokens":30},"client_final_output":{"bytes":90,"tokens":25},"client_final_text":{"bytes":70,"tokens":17},"delivered_tools":[{"call_id":"call-1","name":"exec","input_bytes":30,"input_tokens":9,"item_bytes":50,"item_tokens":14,"kind":"apply_patch"}]}],"capture":{"records":2,"capture_errors":0,"incomplete_records":0,"missing_provider_records":0,"provider_attempt_gaps":0,"write_errors":0,"skipped_requests":0,"dropped_exchange_details":0}}
 JSON
 }
 
@@ -37,6 +38,126 @@ write_metrics "$fixture/control-metrics.json" thread-control 100 40 20 5 passthr
 write_metrics "$fixture/mekugi-metrics.json" thread-mekugi 80 50 12 3 mekugi
 
 bash "$benchmark_root/report.sh" "$fixture" >/dev/null
+control_capture="$fixture/control-traffic.jsonl"
+control_metrics="$fixture/control-traffic-metrics.json"
+cp "$fixture/captures/mekugi.jsonl" "$control_capture"
+printf '%s\n' '{"schema_version":6,"boundary":"codex_control","control_direction":"request","capture_id":"control-id","mode":"mekugi","model_protocol":"native","response_complete":true,"request":{"bytes":11,"tokens":3}}' >>"$control_capture"
+jq '.capture.records += 1 | .transport.client_control_requests = {bytes: 11, tokens: 3}' \
+    "$fixture/mekugi-metrics.json" >"$control_metrics"
+python3 "$benchmark_root/analyze_capture.py" "$control_metrics" "$control_capture" "$fixture/results.jsonl" mekugi >/dev/null
+jq '.transport.client_control_requests.bytes += 1' "$control_metrics" >"$fixture/bad-control-traffic.json"
+if python3 "$benchmark_root/analyze_capture.py" "$fixture/bad-control-traffic.json" \
+    "$control_capture" "$fixture/results.jsonl" mekugi >/dev/null 2>&1; then
+    printf 'capture validator accepted unreconciled control traffic\n' >&2
+    exit 1
+fi
+prewarm_capture="$fixture/prewarm-capture.jsonl"
+jq -c 'if .boundary == "codex" then .provider_expected = false else . end' \
+    "$fixture/captures/mekugi.jsonl" >"$prewarm_capture"
+provider_free_capture="$fixture/provider-free-prewarm-capture.jsonl"
+provider_free_metrics="$fixture/provider-free-prewarm-metrics.json"
+provider_free_results="$fixture/provider-free-prewarm-results.jsonl"
+missing_provider_expectation_capture="$fixture/missing-provider-expectation-capture.jsonl"
+jq -c 'select(.boundary != "provider") | .provider_expected = false' \
+    "$fixture/captures/mekugi.jsonl" >"$provider_free_capture"
+jq '.requests.provider_attempts = 0 |
+    .usage = {
+        input_tokens: 0, cached_input_tokens: 0, uncached_input_tokens: 0,
+        output_tokens: 0, reasoning_tokens: 0, provider_attempts: 0
+    } |
+    .cache = {
+        cold_or_new_uncached_input_tokens: 0, provider_cache_rate: null,
+        eligible_prefix_tokens: 0, eligible_prefix_cached_tokens: 0,
+        eligible_prefix_miss_tokens: 0, eligible_prefix_cache_rate: null
+    } |
+    .transport.provider_attempt_requests = {bytes: 0, tokens: 0} |
+    .transport.provider_responses = {bytes: 0, tokens: 0} |
+    .semantic.provider_attempt_outputs = {bytes: 0, tokens: 0} |
+    .protocol = {
+        input_payload_tokens_saved: 0, input_payload_bytes_saved: 0,
+        output_text_tokens_saved: 0, output_payload_tokens_expansion: 0,
+        output_payload_bytes_expansion: 0
+    } |
+    .provider_tools = {} |
+    .mekugi = {
+        calls: 0, corrections: 0, successful: 0, rejected: 0, unmatched: 0,
+        provider_input_tokens: 0, delivered_input_tokens: 0,
+        carrier_input_tokens_expansion: 0
+    } |
+    .exchanges[0].provider_attempts = [] |
+    del(.exchanges[0].usage) |
+    .capture.records = 1' \
+    "$fixture/mekugi-metrics.json" >"$provider_free_metrics"
+jq -c 'select(.arm == "mekugi") |
+    .agent.usage = {
+        input_tokens: 0, cached_input_tokens: 0, output_tokens: 0,
+        reasoning_output_tokens: 0
+    }' "$fixture/results.jsonl" >"$provider_free_results"
+python3 "$benchmark_root/analyze_capture.py" \
+    "$provider_free_metrics" "$provider_free_capture" "$provider_free_results" mekugi >/dev/null
+jq -c 'select(.boundary != "provider")' \
+    "$fixture/captures/mekugi.jsonl" >"$missing_provider_expectation_capture"
+PYTHONPATH="$benchmark_root" python3 - \
+    "$fixture/mekugi-metrics.json" \
+    "$prewarm_capture" \
+    "$fixture/results.jsonl" \
+    "$provider_free_metrics" \
+    "$provider_free_capture" \
+    "$missing_provider_expectation_capture" <<'PY'
+
+from pathlib import Path
+import sys
+
+from analyze_capture import load_json, validate_raw_capture, validate_results
+
+metrics = load_json(Path(sys.argv[1]))
+excluded = validate_raw_capture(Path(sys.argv[2]), metrics)
+if excluded != {1}:
+    raise SystemExit(f"prewarm exclusion = {excluded}")
+provider_free_metrics = load_json(Path(sys.argv[4]))
+provider_free_excluded = validate_raw_capture(Path(sys.argv[5]), provider_free_metrics)
+if provider_free_excluded != {1}:
+    raise SystemExit(f"provider-free prewarm exclusion = {provider_free_excluded}")
+try:
+    validate_raw_capture(Path(sys.argv[6]), provider_free_metrics)
+except ValueError:
+    pass
+else:
+    raise SystemExit("capture validator accepted a missing provider without an explicit exception")
+
+
+ordinary = {
+    "sequence": 2,
+    "thread_id": "thread-mekugi",
+    "provider_attempts": [{"model": "model"}],
+    "usage": {
+        "input_tokens": 80,
+        "cached_input_tokens": 50,
+        "output_tokens": 12,
+        "reasoning_tokens": 3,
+    },
+}
+prewarm = {
+    "sequence": 1,
+    "thread_id": "thread-mekugi",
+    "provider_attempts": [{"model": "model"}],
+    "usage": {
+        "input_tokens": 10,
+        "cached_input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+    },
+}
+metrics = {"exchanges": [prewarm, ordinary]}
+results = Path(sys.argv[3])
+validate_results(metrics, results, "mekugi", {}, {1})
+try:
+    validate_results(metrics, results, "mekugi", {})
+except ValueError:
+    pass
+else:
+    raise SystemExit("result validation counted provider prewarm usage as Codex turn usage")
+PY
 grep -Fq '| Control | 1/1 |' "$fixture/summary.md"
 grep -Fq '| Mekugi | 1/1 |' "$fixture/summary.md"
 grep -Fq 'input **-20** (-20.00%)' "$fixture/summary.md"

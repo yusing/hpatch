@@ -173,12 +173,16 @@ Compose defines task-scoped `control-agent` and `mekugi-agent` containers. Each
 runs `mekugi codex` with one random loopback listener and fixed provider egress.
 The image requires Linux iptables and util-linux. Only the trusted launcher has
 NET_ADMIN and SYS_ADMIN. Docker’s default AppArmor profile is disabled to permit
-the trusted launcher’s private mount setup. Before inference, Codex enters private
-mount/PID namespaces with no capabilities or supplementary groups and no privilege elevation.
-Its fixed primary group is allowed TCP access only to its own listener; IPv4 and
-IPv6 external traffic are rejected. Trusted capture/config/runtime mounts and the
-image filesystem are read-only to the executor. A fail-closed probe verifies the
-restrictions before launching the real Codex binary.
+the trusted launcher’s private mount setup. Before inference, it rebinds the mounted Codex
+credential through an ephemeral readable copy, then starts Codex with its internal command
+sandbox and approval flow disabled. The benchmark container is the execution boundary:
+Codex runs in private mount/PID namespaces with no capabilities or supplementary groups and
+no privilege elevation. Its fixed, non-root primary group matches the writable candidate workspace
+and is allowed TCP access only to its own listener; IPv4 and IPv6 external traffic are rejected.
+Trusted capture/config/runtime mounts and the image filesystem are read-only to the executor.
+Preloaded dependencies remain readable but read-only. A fail-closed probe verifies credential and
+dependency access, candidate writability, and the restrictions before launching the real Codex
+binary.
 
 Each attempt writes its own sanitized `capture.jsonl` and final `metrics.json`.
 The benchmark-only `mekugi-merge-captures` command validates each pair and uses the

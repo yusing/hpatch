@@ -77,11 +77,15 @@ than warming a cache artificially; provider cache hits remain provider-owned.
 
 The runner MUST pass `--capture-output` and `--metrics-output` to each session wrapper
 and retain per-attempt exports. Only the trusted wrapper has provider egress. The
-Codex executor MUST have a fixed primary group, no capabilities, no supplementary
-groups, no privilege elevation, private mount/PID namespaces, and read-only trusted
-capture/runtime/configuration mounts. IPv4/IPv6 firewall rules MUST permit only its
-assigned loopback listener and reject other destinations. Qualification MUST reject
-an ineffective restriction before inference. Separate arm networks remain isolated.
+Codex MUST be launched with its explicit no-approval, no-sandbox execution option because the
+benchmark container owns the complete execution boundary. The executor MUST have a fixed, non-root
+primary group matching its writable workspace, no capabilities, no supplementary groups, no
+privilege elevation, private mount/PID namespaces, readable read-only dependency material, and
+read-only trusted capture/runtime/configuration mounts. IPv4/IPv6 firewall rules
+destinations. The launcher MUST make the mounted Codex credential readable after capability removal
+without writing it into retained artifacts. Qualification MUST reject unreadable credentials or
+dependency material, an unwritable workspace, or an ineffective restriction before inference.
+Separate arm networks remain isolated.
 
 The capturer-owned merger MUST verify each complete session snapshot against its
 raw records before creating combined arm exports. It MUST retain originals and

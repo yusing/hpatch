@@ -288,7 +288,10 @@ An explicit `generate:false` prewarm may complete locally without a provider
 attempt. Capture derives this exception from the observed request and persists
 `provider_expected:false` on the sanitized client record, so live and offline
 aggregation do not report a missing provider. An absent field still means a
-provider is expected. Any actual prewarm provider traffic remains measured.
+provider is expected. Any actual prewarm provider traffic remains measured in provider usage and
+transport totals. Because Codex turn usage excludes prewarm, benchmark reconciliation with the
+Codex result MUST exclude only logical exchanges whose sanitized client record explicitly retains
+`provider_expected:false`.
 
 Application-level control messages, including `response.steer` and
 `response.steer.*`, are measured separately from logical response exchanges.

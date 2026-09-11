@@ -6,11 +6,17 @@ set -euo pipefail
 port=${MEKUGI_BASE_URL#http://127.0.0.1:}
 port=${port%/v1}
 [[ $port =~ ^[0-9]+$ ]] || { echo 'benchmark: invalid private listener' >&2; exit 1; }
-# Socket ownership is the agent's immutable primary group. The router keeps
-# group 0; Codex and all tool descendants have group 65534 and no capabilities.
-iptables -w -A OUTPUT -m owner --gid-owner 65534 -p tcp -d 127.0.0.1 --dport "$port" -j ACCEPT
-iptables -w -A OUTPUT -m owner --gid-owner 65534 -j REJECT
-ip6tables -w -A OUTPUT -m owner --gid-owner 65534 -j REJECT
+executor_gid=$(stat -c %g .)
+[[ $executor_gid =~ ^[1-9][0-9]*$ ]] || {
+ echo 'benchmark: workspace must have a non-root group' >&2
+ exit 1
+}
+export MEKUGI_EXECUTOR_GID=$executor_gid
+# Socket ownership is the executor's immutable workspace group. The router keeps
+# group 0; Codex and all tool descendants use this non-root group with no capabilities.
+iptables -w -A OUTPUT -m owner --gid-owner "$executor_gid" -p tcp -d 127.0.0.1 --dport "$port" -j ACCEPT
+iptables -w -A OUTPUT -m owner --gid-owner "$executor_gid" -j REJECT
+ip6tables -w -A OUTPUT -m owner --gid-owner "$executor_gid" -j REJECT
 # A private PID namespace hides the egress-capable parent. Private read-only
 # mounts keep the executor from modifying trusted capture and runtime artifacts.
 exec unshare --mount --pid --fork --mount-proc --kill-child=KILL \

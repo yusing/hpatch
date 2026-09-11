@@ -172,6 +172,7 @@ initialize_run() {
 	fi
 	run_dir=$(mktemp -d "$results_root/.staging-XXXXXX")
 	dependency_cache=$(mktemp -d "$results_root/.dependency-cache-XXXXXX")
+	chmod 0750 "$dependency_cache"
 	dependency_workspace=
 
 	results="$run_dir/results.jsonl"

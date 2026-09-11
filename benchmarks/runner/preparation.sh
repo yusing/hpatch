@@ -170,6 +170,7 @@ snapshot() {
 	GIT_AUTHOR_DATE=2000-01-01T00:00:00Z \
 		GIT_COMMITTER_DATE=2000-01-01T00:00:00Z \
 	git -C "$destination" commit --quiet --allow-empty -m "benchmark baseline" || return 1
+	chmod -R g+w "$destination" || return 1
 }
 
 link_task_dependencies() {

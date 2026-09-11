@@ -21,7 +21,14 @@ cleanup_probe() {
 }
 trap cleanup_probe EXIT
 mkdir -p "$fixture"/{instructions,mekugi-config,agent-issue-reports,cache,artifacts/probe,runtime,candidate}
+chmod 0770 "$fixture/candidate"
+install -d -m 0770 "$fixture/codex-home"
+install -d -m 0770 "$fixture/candidate/.git"
+install -m 0660 /dev/null "$fixture/candidate/.git/config"
+install -m 0755 "$benchmark_root/isolated-codex.sh" "$fixture/isolated-codex.sh"
+install -m 0755 "$benchmark_root/agent-mounts.sh" "$fixture/agent-mounts.sh"
 : >"$fixture/auth.json"
+chmod 0600 "$fixture/auth.json"
 printf 'host-only\n' >"$fixture/host-marker"
 # Current launch scripts plus the real router and real Codex --version exercise
 # read-only root startup, replay creation, listener health and executor restrictions.
@@ -29,8 +36,14 @@ printf 'host-only\n' >"$fixture/host-marker"
     --env MEKUGI_RUNTIME_DIR=/runtime --volume "$fixture/runtime:/runtime" \
     --env BENCH_ARTIFACT_DIR=/artifacts --volume "$fixture/artifacts/probe:/artifacts" \
     --env MEKUGI_BENCH_MODE=mekugi --env MEKUGI_BENCH_PROTOCOL=native \
+    --env CODEX_HOME=/benchmark-codex-home \
+    --volume "$fixture/codex-home:/benchmark-codex-home" \
+    --volume "$fixture/auth.json:/benchmark-codex-home/auth.json:ro" \
     --volume "$benchmark_root/session-entry.sh:/usr/local/bin/mekugi-benchmark-session:ro" \
     --volume "$benchmark_root/agent-check.py:/usr/local/libexec/mekugi-agent-check.py:ro" \
+    --volume "$fixture/isolated-codex.sh:/usr/local/bin/codex:ro" \
+    --volume "$fixture/candidate:$fixture/candidate" --workdir "$fixture/candidate" \
+    --volume "$fixture/agent-mounts.sh:/usr/local/libexec/mekugi-agent-mounts:ro" \
     mekugi-agent bash /usr/local/bin/mekugi-benchmark-session --version >"$fixture/startup.stdout" 2>"$fixture/startup.stderr" || {
         cat "$fixture/startup.stderr" >&2; exit 1;
     }

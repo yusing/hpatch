@@ -24,13 +24,18 @@ both boundaries in-process and writes the arm's sanitized JSONL. The benchmark n
 capturer proxy or service and never needs three servers for one router.
 
 Each attempt's container owns one session wrapper and one Codex process. Separate
-arm networks and an immutable executor primary group keep network access distinct:
-ipv4/ipv6 OUTPUT rules allow Codex only its assigned loopback port. The trusted
-launcher retains firewall/mount setup capabilities; Codex runs in private mount/PID
-namespaces with all capabilities removed and privilege elevation disabled. Trusted
-runtime, capture, and configuration mounts are read-only to Codex. Qualification
-fails before inference if group changes, external access, capabilities, or writable
-trusted mounts are possible.
+arm networks and an immutable, non-root executor primary group keep network access distinct:
+ipv4/ipv6 OUTPUT rules allow Codex only its assigned loopback port. The executor group matches
+the writable candidate workspace, while the trusted router retains group 0. The trusted launcher
+retains firewall/mount setup capabilities; Codex runs in private mount/PID namespaces with all
+capabilities removed and privilege elevation disabled. The launcher rebinds the mounted Codex
+credential through an ephemeral, root-owned copy before dropping capabilities; the copy never
+enters retained artifacts. Codex's own command sandbox and approval flow are explicitly bypassed
+because this outer boundary already owns execution isolation. Preloaded dependency material is
+readable but read-only; trusted runtime, capture, and configuration mounts are read-only to Codex.
+Qualification fails before inference if the credential, dependency material, or candidate workspace
+is unusable or if group changes, external access, capabilities, or writable trusted mounts are
+possible.
 
 The session's `--capture-output` and `--metrics-output` artifacts survive shutdown.
 The benchmark-only merger validates each session against its raw records and uses

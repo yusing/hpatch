@@ -18,6 +18,7 @@ agent_timeout=10 grader_timeout=10 grader_name=hidden
 hidden_sources=(hidden.sh) hidden_paths=(hidden.sh)
 task_contract_sha256=fixture
 mkdir -p "$task" "$run_dir/work" "$instruction_dir" "$fixture/transport"
+export BENCH_ARGUMENT_CAPTURE="$fixture/codex-arguments"
 printf 'task\n' >"$task/prompt.md"
 printf 'exit 1\n' >"$task/hidden.sh"
 verify_task_contract() { :; }
@@ -28,6 +29,15 @@ grade() { printf 'grader must not execute\n' >>"$fixture/grader-executed"; retur
 cp "$benchmark_root/capture_tree.py" "$fixture/transport/"
 cat >"$fixture/transport/codex-compose.sh" <<'AGENT'
 #!/bin/sh
+bypass=false
+for argument do
+    case $argument in
+        --dangerously-bypass-approvals-and-sandbox) bypass=true ;;
+        *approval_policy*|*sandbox_mode*) exit 97 ;;
+    esac
+done
+"$bypass" || exit 98
+printf 'valid\n' >>"$BENCH_ARGUMENT_CAPTURE"
 printf 'exit 0\n' >hidden.sh
 printf '{"type":"turn.completed","usage":{}}\n'
 AGENT
@@ -38,6 +48,7 @@ if run_block 1; then
     exit 1
 fi
 [[ ! -e $fixture/grader-executed ]]
+[[ $(wc -l <"$BENCH_ARGUMENT_CAPTURE") -eq 2 ]]
 for arm in control mekugi; do
     result="$run_dir/artifacts/fixture/fixture-$arm-r001/result.json"
     jq -e '.task_pass == false and .graders[0].exit_code == 125' "$result" >/dev/null

@@ -87,7 +87,7 @@ run_agent() {
 		codex_home="$artifact_dir/codex-home"
 		child_events="$artifact_dir/child-events.jsonl"
 		child_proof="$artifact_dir/child-proof.json"
-		mkdir -m 0700 "$codex_home" || return 1
+		mkdir -m 0770 "$codex_home" || return 1
 	fi
 	snapshot "$base_commit" "$repository" || return 1
 	link_task_dependencies "$repository" || return 1
@@ -121,10 +121,9 @@ run_agent() {
 			-c 'supports_websockets=true' \
 			--model "$root_model" \
 			-c "model_reasoning_effort=\"$root_reasoning_effort\"" \
-			-c 'approval_policy="never"' \
-			-c 'sandbox_mode="danger-full-access"' \
 			"${codex_feature_args[@]}" \
 			exec \
+			--dangerously-bypass-approvals-and-sandbox \
 			--json \
 			--color never \
 			-C "$repository" \

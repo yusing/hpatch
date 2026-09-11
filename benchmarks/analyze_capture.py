@@ -21,6 +21,21 @@ EXPECTED_ARM_CONFIG = {
     "ctp": ("mekugi", "ctp2"),
     "mekugi-mentor": ("mekugi", "native"),
 }
+INFERENCE_TRANSPORT_KEYS = (
+    "client_requests",
+    "provider_attempt_requests",
+    "provider_responses",
+    "client_responses",
+)
+CONTROL_TRANSPORT_FIELDS = {
+    ("codex_control", "request"): ("client_control_requests", "request"),
+    ("provider_control", "request"): ("provider_control_requests", "request"),
+    ("provider_control", "response"): ("provider_control_responses", "response"),
+    ("codex_control", "response"): ("client_control_responses", "response"),
+}
+CONTROL_TRANSPORT_KEYS = tuple(field for field, _ in CONTROL_TRANSPORT_FIELDS.values())
+TRANSPORT_KEYS = INFERENCE_TRANSPORT_KEYS + CONTROL_TRANSPORT_KEYS
+
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -233,17 +248,23 @@ def validate_provider_evidence(value, measured_usage):
         raise ValueError("missing provider telemetry represented as a count")
 
 
-def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> None:
+def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> set[int]:
     records = load_jsonl(path)
     if not records:
         raise ValueError("capture is empty")
     groups: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(
         lambda: {"codex": [], "provider": []}
     )
+    control_transport = {key: empty_payload() for key in CONTROL_TRANSPORT_KEYS}
     for record in records:
         boundary = record.get("boundary")
         capture_id = record.get("capture_id")
-        if record.get("schema_version") != 6 or boundary not in {"codex", "provider"}:
+        if record.get("schema_version") != 6 or boundary not in {
+            "codex",
+            "provider",
+            "codex_control",
+            "provider_control",
+        }:
             raise ValueError("capture has an unsupported schema or boundary")
         if record.get("mode") != metrics.get("mode") or record.get("model_protocol") != metrics.get("model_protocol"):
             raise ValueError("raw capture mode or protocol differs from the metrics snapshot")
@@ -251,6 +272,13 @@ def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> None:
             raise ValueError("capture record is missing its correlation identity")
         if record.get("capture_error") or record.get("response_complete") is not True:
             raise ValueError("capture contains a failed or incomplete record")
+        if boundary in {"codex_control", "provider_control"}:
+            transport_field = CONTROL_TRANSPORT_FIELDS.get((boundary, record.get("control_direction")))
+            if transport_field is None:
+                raise ValueError("capture has an invalid control direction")
+            total, payload_field = transport_field
+            add_payload(control_transport[total], record.get(payload_field))
+            continue
         groups[capture_id][boundary].append(record)
 
     exchanges = metrics.get("exchanges")
@@ -263,11 +291,17 @@ def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> None:
             raise ValueError("metrics have a missing or duplicate request sequence")
         exchanges_by_sequence[sequence] = exchange
 
+    result_usage_excluded: set[int] = set()
     matched_sequences: set[int] = set()
     for group in groups.values():
-        if len(group["codex"]) != 1 or not group["provider"]:
+        if len(group["codex"]) != 1:
             raise ValueError("client and provider capture boundaries do not reconcile")
         front = group["codex"][0]
+        provider_expected = front.get("provider_expected")
+        if provider_expected is not None and provider_expected is not False:
+            raise ValueError("raw provider expectation is invalid")
+        if not group["provider"] and provider_expected is not False:
+            raise ValueError("client and provider capture boundaries do not reconcile")
         providers = sorted(group["provider"], key=lambda item: item.get("provider_attempt", 0))
         if [item.get("provider_attempt") for item in providers] != list(range(1, len(providers) + 1)):
             raise ValueError("provider attempts are missing or duplicated")
@@ -279,6 +313,8 @@ def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> None:
         exchange = exchanges_by_sequence.get(front_sequence)
         if exchange is None or exchange.get("thread_id") != front.get("thread_id"):
             raise ValueError("raw capture does not reconcile a metrics exchange")
+        if provider_expected is False:
+            result_usage_excluded.add(front_sequence)
         matched_sequences.add(front_sequence)
         attempts = exchange.get("provider_attempts")
         if not isinstance(attempts, list) or len(attempts) != len(providers):
@@ -320,6 +356,12 @@ def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> None:
     if matched_sequences != set(exchanges_by_sequence):
         raise ValueError("metrics exchanges differ from raw capture groups")
 
+    published_transport = metrics.get("transport")
+    if not isinstance(published_transport, dict) or set(published_transport) != set(TRANSPORT_KEYS):
+        raise ValueError("metrics have an unsupported transport shape")
+    if any(payload(published_transport.get(key)) != control_transport[key] for key in CONTROL_TRANSPORT_KEYS):
+        raise ValueError("raw control transport differs from the metrics snapshot")
+
     health = metrics.get("capture")
     if not isinstance(health, dict):
         raise ValueError("metrics are missing capture health")
@@ -336,6 +378,7 @@ def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> None:
     )
     if any(health.get(key) != 0 for key in error_keys):
         raise ValueError("capturer health reports incomplete evidence")
+    return result_usage_excluded
 
 
 def validate_snapshot(metrics: dict[str, Any], arm: str, config: dict[str, Any]) -> None:
@@ -384,12 +427,7 @@ def validate_calculations(metrics: dict[str, Any], exchanges: list[dict[str, Any
     requests = {"logical": len(ordered), "provider_attempts": 0, "completed": 0, "failed": 0}
     calculated_usage = empty_usage()
     usage_attempts = 0
-    transport = {
-        "client_requests": empty_payload(),
-        "provider_attempt_requests": empty_payload(),
-        "provider_responses": empty_payload(),
-        "client_responses": empty_payload(),
-    }
+    transport = {key: empty_payload() for key in INFERENCE_TRANSPORT_KEYS}
     semantic = {
         "provider_attempt_outputs": empty_payload(),
         "client_outputs": empty_payload(),
@@ -531,7 +569,13 @@ def validate_calculations(metrics: dict[str, Any], exchanges: list[dict[str, Any
     if usage(published_usage) != calculated_usage:
         raise ValueError("aggregate usage does not reconcile exchanges")
     validate_published_usage(published_usage, calculated_usage, usage_attempts)
-    if metrics.get("transport") != transport or metrics.get("semantic") != semantic:
+    published_transport = metrics.get("transport")
+    if not isinstance(published_transport, dict) or set(published_transport) != set(TRANSPORT_KEYS):
+        raise ValueError("metrics have an unsupported transport shape")
+    if (
+        any(payload(published_transport.get(key)) != transport[key] for key in INFERENCE_TRANSPORT_KEYS)
+        or metrics.get("semantic") != semantic
+    ):
         raise ValueError("payload totals do not reconcile exchanges")
     if metrics.get("protocol") != protocol:
         raise ValueError("protocol savings do not reconcile final provider attempts")
@@ -579,7 +623,14 @@ def required_text(value: object, description: str) -> str:
     return value
 
 
-def validate_results(metrics: dict[str, Any], results_path: Path, arm: str, config: dict[str, Any]) -> int:
+def validate_results(
+    metrics: dict[str, Any],
+    results_path: Path,
+    arm: str,
+    config: dict[str, Any],
+    result_usage_excluded: set[int] | None = None,
+) -> int:
+    result_usage_excluded = result_usage_excluded or set()
     expected: dict[str, dict[str, int]] = {}
     allowed_models: dict[str, set[str]] = {}
     mentor_threads: dict[str, str] = {}
@@ -642,7 +693,7 @@ def validate_results(metrics: dict[str, Any], results_path: Path, arm: str, conf
             actual_models[thread].add(model)
         if thread in observed:
             seen.add(thread)
-            if exchange.get("usage") is not None:
+            if exchange.get("usage") is not None and exchange.get("sequence") not in result_usage_excluded:
                 add(observed[thread], usage(exchange["usage"]))
     for thread, expected_usage in expected.items():
         if thread not in seen:
@@ -670,8 +721,8 @@ def main() -> int:
         config = load_json(config_path) if config_path.exists() else {}
         metrics = load_json(args.metrics)
         validate_snapshot(metrics, args.arm, config)
-        validate_raw_capture(args.capture, metrics)
-        runs = validate_results(metrics, args.results, args.arm, config)
+        result_usage_excluded = validate_raw_capture(args.capture, metrics)
+        runs = validate_results(metrics, args.results, args.arm, config, result_usage_excluded)
     except (OSError, ValueError, json.JSONDecodeError) as error:
         parser.error(str(error))
     json.dump(
