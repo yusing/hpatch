@@ -236,6 +236,13 @@ func TestGrokParallelToolLifecycle(t *testing.T) {
 					done[field] != item[field] || done["item_id"] != item["id"] || done["call_id"] != item["call_id"] {
 					t.Fatalf("invalid lifecycle: %v", events[i*3:i*3+3])
 				}
+				if field == "arguments" {
+					if done["name"] != item["name"] {
+						t.Fatalf("function completion name = %v, want %v", done["name"], item["name"])
+					}
+				} else if _, exists := done["name"]; exists {
+					t.Fatalf("custom completion unexpectedly includes name: %v", done)
+				}
 				for _, event := range events[i*3 : i*3+3] {
 					if event["output_index"] != i+1 {
 						t.Fatalf("output index = %v", event["output_index"])

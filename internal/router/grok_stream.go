@@ -259,7 +259,11 @@ func (tr *grokTranslation) readGrokStream(reader io.Reader, emit func(map[string
 		if err := emit(map[string]any{"type": "response.output_item.added", "output_index": index, "item": added}); err != nil {
 			return nil, err
 		}
-		if err := emit(map[string]any{"type": doneType, "output_index": index, "item_id": item["id"], "call_id": item["call_id"], field: item[field]}); err != nil {
+		doneEvent := map[string]any{"type": doneType, "output_index": index, "item_id": item["id"], "call_id": item["call_id"], field: item[field]}
+		if item["type"] == "function_call" {
+			doneEvent["name"] = item["name"]
+		}
+		if err := emit(doneEvent); err != nil {
 			return nil, err
 		}
 		if err := emit(map[string]any{"type": "response.output_item.done", "output_index": index, "item": item}); err != nil {
