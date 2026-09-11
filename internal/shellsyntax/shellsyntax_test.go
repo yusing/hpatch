@@ -1,6 +1,10 @@
 package shellsyntax
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
 
 func TestParse(t *testing.T) {
 	parsed, err := Parse("#!/usr/bin/env -S python3 -u\r\n#!params={\"tty\":true}\r\n#!cmd=wrap {.}\r\nprint('ok')\r\n")
@@ -8,7 +12,7 @@ func TestParse(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(parsed.Interpreter) != 2 || parsed.Interpreter[0] != "python3" || parsed.Interpreter[1] != "-u" ||
-		parsed.CommandTemplate != "wrap {.}" || !parsed.HasParams || parsed.Body != "print('ok')\r\n" {
+		parsed.CommandTemplate != "wrap {.}" || !parsed.HasParams || parsed.ParamsLine != 2 || parsed.Body != "print('ok')\r\n" {
 		t.Fatalf("Parse = %+v", parsed)
 	}
 
@@ -41,6 +45,26 @@ func TestInterpreterIdentity(t *testing.T) {
 	} {
 		if got := InterpreterIdentity(input); got != want {
 			t.Errorf("InterpreterIdentity(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestHeaderErrorLocations(t *testing.T) {
+	for _, test := range []struct {
+		source string
+		line   int
+	}{
+		{"#!", 1},
+		{"#!/usr/bin/env", 1},
+		{"#!python3\n#!cmd missing\nprint(1)", 2},
+		{"#!python3\r\n#!cmd={.}\r\n#!params={bad}\r\nprint(1)", 3},
+		{"#!params={}\r#!params={}\recho one", 2},
+		{"#!script=@shell/example\necho one", 2},
+		{"#!python3\nprint(1)\n\x00", 3},
+	} {
+		_, err := Parse(test.source)
+		if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("line %d:", test.line)) {
+			t.Errorf("Parse(%q) error = %v, want line %d", test.source, err, test.line)
 		}
 	}
 }

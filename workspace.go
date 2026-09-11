@@ -240,7 +240,7 @@ func (w *workspace) execute(command instruction, commandIndex int) error {
 			return err
 		}
 	}
-	if edit := file.editor.reportedEdit(origin); edit != nil {
+	if edit := file.editor.reportedEdit(origin, command); edit != nil {
 		edit.file = file
 		w.reportedEdits = append(w.reportedEdits, edit)
 	}

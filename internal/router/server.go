@@ -39,6 +39,7 @@ var errUpstreamResponseWithoutTerminal = errors.New("upstream Responses response
 type Session struct {
 	BaseURL           string
 	GrokEnabled       bool
+	AXReadOutput      string
 	FrontendDirectory string
 }
 
@@ -92,6 +93,9 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 	}
 	if *flags.streamIdleTimeout <= 0 {
 		return errors.New("--stream-idle-timeout must be positive")
+	}
+	if err := validateAXOutputAliases(os.Getenv(capturer.AXReadOutputEnvironment), *flags.captureOutput, *flags.metricsOutput); err != nil {
+		return err
 	}
 	debug, err := openDebugOutput(flags)
 	if err != nil {
@@ -258,7 +262,11 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 		serverError <- server.Serve(listener)
 	}()
 	if ready != nil && ctx.Err() == nil {
-		ready(Session{BaseURL: baseURL, FrontendDirectory: frontendDirectory, GrokEnabled: *flags.grokEnabled})
+		session := Session{BaseURL: baseURL, FrontendDirectory: frontendDirectory, GrokEnabled: *flags.grokEnabled}
+		if debug != nil {
+			session.AXReadOutput = debug.paths[4]
+		}
+		ready(session)
 	}
 	select {
 	case err := <-serverError:

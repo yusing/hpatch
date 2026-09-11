@@ -73,3 +73,26 @@ func TestGoSyntaxDiagnosticUsesConciseCommandShape(t *testing.T) {
 		t.Fatalf("diagnostic = %q, want prefix %q", result.Diagnostic, want)
 	}
 }
+
+func TestEditTextBoundedChecksPlannedContent(t *testing.T) {
+	for _, test := range []struct {
+		name, baseline, script, want string
+		limit                        int
+		reject                       bool
+	}{
+		{"exact expanded size", "aa", `type "a" 2 "1234"`, "12341234", 8, false},
+		{"expanded size", "aa", `type "a" 2 "1234"`, "", 7, true},
+		{"owned terminator", "a\n", "type " + row(1, "a") + ` "long"`, "", 4, true},
+		{"baseline", "long", `type "long" ""`, "", 3, true},
+		{"intermediate size", "ab", "add EOF \"long\"\ntype \"ab\" \"\"", "", 4, true},
+		{"empty", "", `add EOF ""`, "", 0, false},
+		{"negative limit", "", `add EOF ""`, "", -1, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := EditTextBounded(t.Context(), test.baseline, test.script, test.limit)
+			if (err != nil) != test.reject || got != test.want {
+				t.Fatalf("bounded edit = %q, %v; want %q, rejection %v", got, err, test.want, test.reject)
+			}
+		})
+	}
+}

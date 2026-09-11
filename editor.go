@@ -447,6 +447,27 @@ func orderedBaselineEdits(source []baselineEdit) []baselineEdit {
 	return edits
 }
 
+// contentFits checks byte size without concatenating replacement strings.
+// Recorded destructive spans are disjoint, so their total cannot exceed the
+// baseline. Subtract first to avoid overflow and allow same-command shrinkage.
+func (e *editor) contentFits(limit int) bool {
+	retained := len(e.baseline)
+	for _, edit := range e.edits {
+		retained -= edit.end - edit.start
+	}
+	if retained > limit {
+		return false
+	}
+	remaining := limit - retained
+	for _, edit := range e.edits {
+		if len(edit.replacement) > remaining {
+			return false
+		}
+		remaining -= len(edit.replacement)
+	}
+	return true
+}
+
 // content returns the editor's current rendered content.
 func (e *editor) content() string {
 	if e.finalContent != nil {

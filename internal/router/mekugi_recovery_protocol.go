@@ -13,7 +13,7 @@ import (
 	"github.com/yusing/mekugi/internal/hpatchsyntax"
 )
 
-const mekugiRecoveryDescription = `Target correction for the latest rejected HPATCH/2 script. Invalid recovery leaves the retained script and workspace unchanged.`
+const mekugiRecoveryDescription = `Correction of the latest rejected HPATCH/2 script. Invalid correction leaves the retained script and workspace unchanged.`
 
 //go:embed mekugi_recovery_grammar.lark
 var mekugiRecoveryGrammar string
@@ -49,6 +49,10 @@ type recoveryEdit struct {
 }
 
 func recoveryCommands(script string) []recoveryCommandReference {
+	// Bind handles to the entire immutable script as well as their frame.
+	// Text corrections can change a preceding path without changing a
+	// mutation's bytes; a handle from that older context must not retarget it.
+	scope := sha256.Sum256([]byte(script))
 	lines := hpatchsyntax.SplitPhysicalLines(script)
 	offsets := make([]int, len(lines)+1)
 	for index, line := range lines {
@@ -66,7 +70,7 @@ func recoveryCommands(script string) []recoveryCommandReference {
 		index = max(frame.Next, index)
 		source := script[offsets[header]:offsets[index]]
 		commands = append(commands, recoveryCommandReference{
-			handle: fmt.Sprintf("C%d:%s", len(commands)+1, recoveryHash(source)),
+			handle: fmt.Sprintf("C%d:%s", len(commands)+1, recoveryHash(string(scope[:])+source)),
 			index:  len(commands) + 1,
 			header: header,
 			end:    index,
@@ -153,6 +157,20 @@ func recoverScriptDetailed(ctx context.Context, rejectedScript, payload string) 
 	if err := ctx.Err(); err != nil {
 		return recoveredScript{}, err
 	}
+	fields := strings.Fields(payload)
+	if len(fields) != 0 && (fields[0] == "type" || fields[0] == "add") {
+		rebuilt, err := mekugi.EditTextBounded(ctx, rejectedScript, payload, maxMekugiScriptBytes)
+		if err != nil {
+			return recoveredScript{}, err
+		}
+		if rebuilt == rejectedScript {
+			return recoveredScript{}, fmt.Errorf("correction must change the retained script")
+		}
+		if strings.TrimSpace(rebuilt) == "" {
+			return recoveredScript{}, fmt.Errorf("correction must leave a nonempty script")
+		}
+		return recoveredScript{script: rebuilt, delta: "Updated retained-script text with ordinary HPATCH mutations."}, nil
+	}
 	commands := recoveryCommands(rejectedScript)
 	operations, err := parseRecoveryPayload(commands, payload)
 	if err != nil {
@@ -167,7 +185,7 @@ func recoverScriptDetailed(ctx context.Context, rejectedScript, payload string) 
 		editScript.WriteString(edit.script)
 		editScript.WriteByte('\n')
 	}
-	rebuilt, err := mekugi.EditText(ctx, rejectedScript, editScript.String())
+	rebuilt, err := mekugi.EditTextBounded(ctx, rejectedScript, editScript.String(), maxMekugiScriptBytes)
 	if err != nil {
 		return recoveredScript{}, err
 	}
@@ -236,7 +254,7 @@ func resolveRecoveryCommand(
 		return nil, fmt.Errorf("invalid command handle %q", handle)
 	}
 	indexText, hash, ok := strings.Cut(handle[1:], ":")
-	if !ok || len(hash) != 4 || !recoveryLowerHex(hash) || !recoveryPositiveDecimal(indexText) {
+	if !ok || len(hash) != sha256.Size*2 || !recoveryLowerHex(hash) || !recoveryPositiveDecimal(indexText) {
 		return nil, fmt.Errorf("invalid command handle %q", handle)
 	}
 	index, err := strconv.Atoi(indexText)
@@ -350,7 +368,7 @@ func recoveryToken(value string) (string, string) {
 
 func recoveryHash(value string) string {
 	sum := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(sum[:2])
+	return hex.EncodeToString(sum[:])
 }
 
 func recoveryTerminatorSuffix(value string) string {

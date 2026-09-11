@@ -49,6 +49,7 @@ describe("shared core v1", () => {
       .toEqual({
         interpreter: ["python3", "-u"],
         body: "print(1)",
+        paramsLine: 2,
         params: {login: true},
       });
     expect(interpreterIdentity("C:\\Tools\\Node.EXE")).toBe("node");

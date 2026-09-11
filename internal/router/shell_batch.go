@@ -53,18 +53,24 @@ func (t *mekugiResponseTransform) prepareShellBatch(contribution toolContributio
 // Each result preserves one program's terminal native fields and ordered output,
 // including nonzero exits. Host errors propagate after publishing the completed
 // prefix and current partial output; no remaining program runs in that case.
-func renderShellBatch(programs []string, metadata map[string]json.RawMessage) string {
+func renderShellBatch(programs []string, metadata map[string]json.RawMessage, stopOnNonzero bool) string {
 	var program strings.Builder
 	program.WriteString(shellCatSequenceRuntime)
-	program.WriteString("const results = [];\ntry {\n")
+	program.WriteString("const results = [];\nlet stopped_reason = null;\nbatch: try {\n")
 	for _, source := range programs {
 		program.WriteString("output = ''; last = {output: ''};\ntry {\n")
 		program.WriteString(source)
 		program.WriteString("} finally { results.push(Object.assign({}, last, {output})); }\n")
+		if stopOnNonzero {
+			program.WriteString("if (last.exit_code !== undefined && last.exit_code !== null && last.exit_code !== 0) { stopped_reason = 'nonzero_exit'; break batch; }\n")
+		}
 	}
-	program.WriteString("} finally {\ntext(JSON.stringify(Object.assign({results}, ")
+	policy := "continue"
+	if stopOnNonzero {
+		policy = "stop"
+	}
+	fmt.Fprintf(&program, "} catch (error) { stopped_reason = 'host_error'; throw error; } finally {\ntext(JSON.stringify(Object.assign({results, batch: {on_nonzero_exit: %q, program_count: %d, started_programs: results.length, not_started_programs: %d - results.length, stopped_reason}}, ", policy, len(programs), len(programs))
 	program.Write(mustMarshalJSON(metadata))
 	program.WriteString(")));\n}\n")
 	return program.String()
 }
-

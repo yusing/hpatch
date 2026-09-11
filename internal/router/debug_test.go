@@ -22,9 +22,12 @@ func TestDebugSessionArtifacts(t *testing.T) {
 	defer cancel()
 	var paths []string
 	err := RunSession(ctx, []string{"--debug", "--mode", "passthrough"}, nil, func(session Session) {
+		if session.AXReadOutput == "" {
+			t.Error("debug did not enable runtime AX reads")
+		}
 		cancel()
 	}, func(artifacts []string) { paths = artifacts })
-	if err != nil || len(paths) != 4 {
+	if err != nil || len(paths) != 6 {
 		t.Fatalf("debug session: %v, paths %v", err, paths)
 	}
 	for _, path := range paths {
@@ -94,7 +97,7 @@ func TestDebugStartupFailureReportsArtifacts(t *testing.T) {
 	err := RunSession(t.Context(), []string{"--debug", "--mode", "passthrough", "--capture-output", missing}, nil, func(Session) {
 		t.Error("ready despite capture initialization failure")
 	}, func(artifacts []string) { paths = artifacts })
-	if err == nil || len(paths) != 4 {
+	if err == nil || len(paths) != 6 {
 		t.Fatalf("startup failure lost artifact paths: %v", err)
 	}
 }
@@ -107,7 +110,7 @@ func TestDebugCanceledStartupReportsArtifacts(t *testing.T) {
 	err := RunSession(ctx, []string{"--debug", "--mode", "passthrough"}, nil, func(Session) {
 		t.Error("canceled startup reached readiness")
 	}, func(artifacts []string) { paths = artifacts })
-	if err != nil || len(paths) != 4 {
+	if err != nil || len(paths) != 6 {
 		t.Fatalf("canceled startup lost paths: %v, %v", paths, err)
 	}
 }

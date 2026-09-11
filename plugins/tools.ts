@@ -6,20 +6,21 @@ import {createInspectFileTool, inspectFileDescription} from "./inspect_file.ts";
 import {shellTool} from "./shell.mjs";
 
 const verifiedRowLimitDescription = "An incomplete token-limited result retains complete rows, writes stderr, and exits nonzero.";
-const hcatDescription = `Read one UTF-8 file or inclusive logical-line range and emit verified \`LINE:HASH TEXT\` rows. Usage: \`hcat PATH [START:END]\`. ${verifiedRowLimitDescription}`;
+const readerOptionsDescription = "Leading --max-tokens N sets a strict ceiling (1–15500). --preview-bytes N emits explicit JSON prefixes with full-row identities and omitted-byte counts (1–65536).";
+const hcatDescription = `Read one UTF-8 file or inclusive logical-line range and emit verified \`LINE:HASH TEXT\` rows. Usage: \`hcat PATH [START:END]\`. ${readerOptionsDescription} ${verifiedRowLimitDescription}`;
 
 const hcatPath = `(?:"(?:\\\\(?:["\\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\\x00-\\x1F"\\\\]|\\t)*"|[^\\x00-\\x20"]+)`;
 const hcatReadSpec = `${hcatPath}(?: (?:0|[1-9][0-9]*):[1-9][0-9]*)?`;
-const hcatRegex = `\\A${hcatReadSpec}\\z`;
-const inspectFileRegex = `\\A${hcatPath}\\z`;
+const hcatRegex = `\\A(?:(?:--max-tokens|--preview-bytes) [1-9][0-9]* )*${hcatReadSpec}\\z`;
+const inspectFileRegex = `\\A(?:(?:--source ${hcatPath}|--source-bytes [1-9][0-9]*) )*${hcatPath}\\z`;
 
-const hgrepDescription = `Search files with supported ripgrep arguments and emit verified complete rows as \`"PATH":LINE:HASH TEXT\`. ${verifiedRowLimitDescription}`;
+const hgrepDescription = `Search files with supported ripgrep arguments and emit verified complete rows as \`"PATH":LINE:HASH TEXT\`. ${readerOptionsDescription} ${verifiedRowLimitDescription}`;
 
 const hgrepPart = `(?:'[^'\\r\\n]*'|"(?:\\\\[^\\r\\n]|[^"\\\\\\r\\n])*"|(?:\\\\[^\\r\\n]|[^\\s'"\\\\])+)`;
 const hgrepRegex = `\\A[ \\t]*${hgrepPart}+(?:[ \\t]+${hgrepPart}+)*[ \\t]*\\z`;
 
-const hsymbolDescription = `Resolve one verified Go, JavaScript, TypeScript, JSON, or Python symbol and emit complete rows as \`"PATH":LINE:HASH TEXT\`. Usage: \`hsymbol (def|refs) PATH LINE:HASH SYMBOL [N]\`. N selects an exact language-token occurrence. Stale rows, ambiguous selectors, unavailable language servers, and definitions without an editable workspace location fail without stdout rows. ${verifiedRowLimitDescription}`;
-const hsymbolRegex = `\\A(?:def|refs) ${hcatPath} [1-9][0-9]*:[0-9a-f]{4} [^\\x00-\\x20]+(?: [1-9][0-9]*)?\\z`;
+const hsymbolDescription = `Resolve one current or hash-verified Go, JavaScript, TypeScript, JSON, or Python symbol and emit complete rows as \`"PATH":LINE:HASH TEXT\`. Usage: \`hsymbol [--workspace ROOT] (def|refs) PATH (LINE|LINE:HASH) SYMBOL [N]\`. A plain line selects the current snapshot; a hash additionally checks previously read content. ROOT sets resolver scope and relative paths without changing shell state. N selects an exact language-token occurrence. Stale rows, ambiguous selectors, unavailable language servers, and definitions without an editable workspace location fail without stdout rows. ${verifiedRowLimitDescription}`;
+const hsymbolRegex = `\\A(?:--workspace ${hcatPath} )?(?:def|refs) ${hcatPath} [1-9][0-9]*(?::[0-9a-f]{4})? [^\\x00-\\x20]+(?: [1-9][0-9]*)?\\z`;
 
 type BuiltinPlugin = Omit<Plugin, "tools"> & {
   tools: [Tool<string[]>, Tool<string[]>, Tool<string[]>, Tool<string[]>, typeof shellTool];

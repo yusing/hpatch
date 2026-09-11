@@ -142,7 +142,7 @@ func TestShellExpiredThreadsReleaseDescriptors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, retained := proxy.retainShell(directory, "script", "printf ok\n"); !retained {
+			if _, _, retained := proxy.retainShell(directory, "script", "printf ok\n"); !retained {
 				t.Fatal("retention failed")
 			}
 			if got, err := proxy.resolveShellInput(directory, "#!script=@shell/script"); err != nil || got != "printf ok\n" {
@@ -162,7 +162,7 @@ func TestShellStorageLeasesDelayExpiryAndShutdown(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				proxy, directory := newShellStorageTestProxy(t)
-				if _, retained := proxy.retainShell(directory, "script", "printf ok\n"); !retained {
+				if _, _, retained := proxy.retainShell(directory, "script", "printf ok\n"); !retained {
 					t.Fatal("retention failed")
 				}
 				root, release, err := proxy.shellRoot(directory)
@@ -205,7 +205,7 @@ func TestShellStorageLeasesDelayExpiryAndShutdown(t *testing.T) {
 					if _, err := proxy.storeShellRuntime("thread-id"); err != nil {
 						t.Fatalf("launcher could not be refreshed after expiry: %v", err)
 					}
-					if _, retained := proxy.retainShell(directory, "next", "printf next\n"); !retained {
+					if _, _, retained := proxy.retainShell(directory, "next", "printf next\n"); !retained {
 						t.Fatal("retention could not reacquire idle storage")
 					}
 				} else if err := <-closed; err != nil {
@@ -237,7 +237,7 @@ func TestIdleShellStorageRejectsUnexpectedDirectories(t *testing.T) {
 				synctest.Test(t, func(t *testing.T) {
 					proxy, directory := newShellStorageTestProxy(t)
 					if retired {
-						if _, retained := proxy.retainShell(directory, "old", "old script"); !retained {
+						if _, _, retained := proxy.retainShell(directory, "old", "old script"); !retained {
 							t.Fatal("retention failed")
 						}
 						time.Sleep(shellArtifactTTL + time.Second)
@@ -261,7 +261,7 @@ func TestIdleShellStorageRejectsUnexpectedDirectories(t *testing.T) {
 					if err := os.WriteFile(sentinel, []byte("untouched"), 0o600); err != nil {
 						t.Fatal(err)
 					}
-					if _, retained := proxy.retainShell(directory, "script", "printf changed"); retained {
+					if _, _, retained := proxy.retainShell(directory, "script", "printf changed"); retained {
 						t.Fatal("retention acquired unexpected storage")
 					}
 					if _, err := proxy.resolveShellInput(directory, "#!script=@shell/sentinel"); err == nil {
@@ -312,7 +312,7 @@ func (translator expiryCheckingShellTranslator) Apply(ctx context.Context, root 
 func TestRetainedShellApplyHoldsLeaseThroughExpiry(t *testing.T) {
 	translator := &expiryCheckingShellTranslator{inProcessMekugiTranslator: inProcessMekugiTranslator{dataDirectory: t.TempDir()}, t: t}
 	transform, proxy, _, _ := newMekugiTestTransform(t, translator)
-	if _, retained := proxy.retainShell(transform.shellDirectory, "script", "printf ok\n"); !retained {
+	if _, _, retained := proxy.retainShell(transform.shellDirectory, "script", "printf ok\n"); !retained {
 		t.Fatal("retention failed")
 	}
 	translator.expire = func() {
@@ -351,7 +351,7 @@ func TestRetainedShellApplyHoldsLeaseThroughExpiry(t *testing.T) {
 
 func TestShellRetentionRejectsUnsafeCallIDsAndExistingFiles(t *testing.T) {
 	proxy, directory := newShellStorageTestProxy(t)
-	if _, retained := proxy.retainShell(directory, "seed", "private"); !retained {
+	if _, _, retained := proxy.retainShell(directory, "seed", "private"); !retained {
 		t.Fatal("retention failed")
 	}
 	outside := filepath.Join(t.TempDir(), "sentinel")
@@ -362,14 +362,14 @@ func TestShellRetentionRejectsUnsafeCallIDsAndExistingFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"", ".", "..", ".runtime", "../outside", "a/b", `a\b`, "bad\x00id", outside, "linked"} {
-		if ref, retained := proxy.retainShell(directory, id, "overwritten"); retained || ref != "" {
+		if ref, _, retained := proxy.retainShell(directory, id, "overwritten"); retained || ref != "" {
 			t.Fatalf("retained unsafe ID %q as %q", id, ref)
 		}
 	}
-	if _, retained := proxy.retainShell(directory, "normal", "first"); !retained {
+	if _, _, retained := proxy.retainShell(directory, "normal", "first"); !retained {
 		t.Fatal("ordinary retention failed")
 	}
-	if _, retained := proxy.retainShell(directory, "normal", "second"); retained {
+	if _, _, retained := proxy.retainShell(directory, "normal", "second"); retained {
 		t.Fatal("duplicate ID overwrote retained content")
 	}
 	for path, want := range map[string]string{outside: "untouched", filepath.Join(directory, "normal"): "first"} {
@@ -380,7 +380,7 @@ func TestShellRetentionRejectsUnsafeCallIDsAndExistingFiles(t *testing.T) {
 	if err := os.Rename(filepath.Join(directory, "normal"), filepath.Join(directory, "moved")); err != nil {
 		t.Fatal(err)
 	}
-	if _, retained := proxy.retainShell(directory, "normal", "replacement"); retained {
+	if _, _, retained := proxy.retainShell(directory, "normal", "replacement"); retained {
 		t.Fatal("reused an ID while its original expiry callback is pending")
 	}
 	if _, err := os.Readlink(testShellRuntimePath(t, proxy.shellDirectory, "thread-id")); err != nil {
@@ -391,10 +391,10 @@ func TestShellRetentionRejectsUnsafeCallIDsAndExistingFiles(t *testing.T) {
 func TestRetainedShellResolverConfinesReferences(t *testing.T) {
 	proxy, directory := newShellStorageTestProxy(t)
 	const body = "#!python3\nprint('retained')\n"
-	if _, ok := proxy.retainShell(directory, "original", body); !ok {
+	if _, _, ok := proxy.retainShell(directory, "original", body); !ok {
 		t.Fatal("retention failed")
 	}
-	if _, ok := proxy.retainShell(directory, "nested", "#!script=@shell/original"); !ok {
+	if _, _, ok := proxy.retainShell(directory, "nested", "#!script=@shell/original"); !ok {
 		t.Fatal("nested retention failed")
 	}
 	for _, input := range []string{body, "#!script=@shell/original", "#!script=@shell/nested"} {
@@ -410,7 +410,7 @@ func TestRetainedShellResolverConfinesReferences(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(directory, "linked")); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := proxy.retainShell(directory, "cycle", "#!script=@shell/cycle"); !ok {
+	if _, _, ok := proxy.retainShell(directory, "cycle", "#!script=@shell/cycle"); !ok {
 		t.Fatal("cycle fixture retention failed")
 	}
 	for _, reference := range []string{outside, "relative", "@shell/", "@shell/../outside", "@shell/../.runtime", "@shell/.runtime", "@shell/linked", "@shell/cycle", "@shell/missing", `@shell/a\b`} {
@@ -423,7 +423,7 @@ func TestRetainedShellResolverConfinesReferences(t *testing.T) {
 func TestShellRetentionExpiryAndCleanupStayInPinnedStorage(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		proxy, directory := newShellStorageTestProxy(t)
-		if _, ok := proxy.retainShell(directory, "call-id", "retained"); !ok {
+		if _, _, ok := proxy.retainShell(directory, "call-id", "retained"); !ok {
 			t.Fatal("retention failed")
 		}
 		thread := directory
@@ -455,7 +455,7 @@ func TestShellRetentionExpiryAndCleanupStayInPinnedStorage(t *testing.T) {
 
 func TestShellRetentionShutdownPreservesReplacementDirectory(t *testing.T) {
 	proxy, directory := newShellStorageTestProxy(t)
-	if _, ok := proxy.retainShell(directory, "call-id", "private script"); !ok {
+	if _, _, ok := proxy.retainShell(directory, "call-id", "private script"); !ok {
 		t.Fatal("retention failed")
 	}
 	thread := directory
@@ -484,7 +484,7 @@ func TestShellRetentionShutdownPreservesReplacementDirectory(t *testing.T) {
 func TestShellRerunPreservesOriginalHistoryAndRetainsResolvedBody(t *testing.T) {
 	transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 	const body = "#!python3\nprint('retained')\n"
-	if _, ok := proxy.retainShell(transform.shellDirectory, "original", body); !ok {
+	if _, _, ok := proxy.retainShell(transform.shellDirectory, "original", body); !ok {
 		t.Fatal("retention failed")
 	}
 	const input = "#!script=@shell/original"
@@ -508,7 +508,7 @@ func TestShellRerunPreservesOriginalHistoryAndRetainsResolvedBody(t *testing.T) 
 
 func TestRetainedShellEditsCannotReachOutsideScripts(t *testing.T) {
 	transform, proxy, _, _ := newMekugiTestTransform(t, newInProcessMekugiTranslator(t.TempDir()))
-	if _, retained := proxy.retainShell(transform.shellDirectory, "seed", "private"); !retained {
+	if _, _, retained := proxy.retainShell(transform.shellDirectory, "seed", "private"); !retained {
 		t.Fatal("retention failed")
 	}
 	outside := filepath.Join(t.TempDir(), "outside")
@@ -532,6 +532,65 @@ func TestRetainedShellEditsCannotReachOutsideScripts(t *testing.T) {
 	}
 }
 
+func TestRetainedShellScheduledExpiryDoesNotRenewOnRead(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		proxy, directory := newShellStorageTestProxy(t)
+		started := time.Now()
+		reference, expiry, retained := proxy.retainShell(directory, "expiry", "printf ok\n")
+		if !retained || !expiry.Equal(started.Add(shellArtifactTTL)) {
+			t.Fatalf("expiry = %v, retained=%v", expiry, retained)
+		}
+		time.Sleep(shellArtifactTTL / 2)
+		if source, err := proxy.resolveShellInput(directory, "#!script="+reference); err != nil || source != "printf ok\n" {
+			t.Fatalf("read before expiry = %q, %v", source, err)
+		}
+		time.Sleep(shellArtifactTTL / 2)
+		synctest.Wait()
+		if _, err := proxy.resolveShellInput(directory, "#!script="+reference); err == nil {
+			t.Fatal("reading renewed the original expiry")
+		}
+		if _, rejectedExpiry, retained := proxy.retainShell(directory, "..", "invalid"); retained || !rejectedExpiry.IsZero() {
+			t.Fatalf("failed retention exposed an expiry: %v, %v", rejectedExpiry, retained)
+		}
+	})
+}
+
+func TestShellRetentionLifetimeMetadata(t *testing.T) {
+	transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
+	contribution, _ := proxy.registry.contribution("shell")
+	before := time.Now().Add(shellArtifactTTL)
+	history, err := transform.translateRegisteredTool(contribution, "lifetime", "#!python3\nprint('ok')\n", nil)
+	if err != nil || history.translationError != "" {
+		t.Fatalf("translate = %+v, %v", history, err)
+	}
+	after := time.Now().Add(shellArtifactTTL)
+	var result struct {
+		Retained  bool   `json:"retained"`
+		Reference string `json:"script_ref"`
+		Retention struct {
+			Scope    string    `json:"scope"`
+			Durable  bool      `json:"durable"`
+			Expiry   time.Time `json:"scheduled_expiry"`
+			Shutdown bool      `json:"ends_on_router_shutdown"`
+			Renewed  bool      `json:"reads_or_edits_extend_lifetime"`
+		} `json:"retention"`
+		Output string `json:"output"`
+		Future string `json:"future"`
+	}
+	runShellCatJavaScript(t, proxy.registry.NodeExecutable, t.TempDir(), history.carrierInput(), &result,
+		`tools.exec_command = async () => ({output:'ok',exit_code:0,future:'preserved'});`)
+	if !result.Retained || result.Reference != "@shell/lifetime" || result.Retention.Scope != "thread" ||
+		result.Retention.Durable || !result.Retention.Shutdown || result.Retention.Renewed ||
+		result.Retention.Expiry.Before(before) || result.Retention.Expiry.After(after) ||
+		result.Output != "ok" || result.Future != "preserved" {
+		t.Fatalf("lifetime metadata = %+v", result)
+	}
+	replayed, err := transform.translateRegisteredTool(contribution, "lifetime", "#!python3\nprint('ok')\n", nil)
+	if err != nil || replayed.carrierInput() != history.carrierInput() {
+		t.Fatal("replay changed the recorded expiry")
+	}
+}
+
 func TestShellRetentionLifecycle(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "shell")
 	if err := os.Mkdir(directory, 0o700); err != nil {
@@ -548,7 +607,7 @@ func TestShellRetentionLifecycle(t *testing.T) {
 	shellArtifactTTL = 10 * time.Millisecond
 	t.Cleanup(func() { shellArtifactTTL = originalTTL })
 
-	reference, retained := proxy.retainShell(sessionDirectory, "call-id", "printf ok\n")
+	reference, _, retained := proxy.retainShell(sessionDirectory, "call-id", "printf ok\n")
 	if !retained || reference != "@shell/call-id" {
 		t.Fatalf("retention = %q, %v", reference, retained)
 	}
@@ -571,7 +630,7 @@ func TestShellRetentionLifecycle(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 
-	if _, retained := proxy.retainShell(sessionDirectory, "call-next", "printf next\n"); !retained {
+	if _, _, retained := proxy.retainShell(sessionDirectory, "call-next", "printf next\n"); !retained {
 		t.Fatal("second script was not retained")
 	}
 	if err := proxy.Close(); err != nil {
@@ -604,7 +663,7 @@ func TestMekugiAppliesRetainedShellArtifactDirectly(t *testing.T) {
 		t,
 		newInProcessMekugiTranslator(dataDirectory),
 	)
-	reference, retained := proxy.retainShell(transform.shellDirectory, "call-shell", "printf ok\n")
+	reference, _, retained := proxy.retainShell(transform.shellDirectory, "call-shell", "printf ok\n")
 	if !retained {
 		t.Fatal("shell script was not retained")
 	}
@@ -633,7 +692,7 @@ func TestMekugiAppliesRetainedShellArtifactDirectly(t *testing.T) {
 
 func TestMekugiRecoveryAppliesRetainedShellArtifactDirectly(t *testing.T) {
 	transform, proxy, _, _ := newMekugiTestTransform(t, newInProcessMekugiTranslator(t.TempDir()))
-	reference, retained := proxy.retainShell(transform.shellDirectory, "call-shell", "printf ok\n")
+	reference, _, retained := proxy.retainShell(transform.shellDirectory, "call-shell", "printf ok\n")
 	if !retained {
 		t.Fatal("shell script was not retained")
 	}
@@ -671,7 +730,7 @@ func TestInterruptedTerminalWithoutStatusDoesNotApplyUnfinishedShellEdit(t *test
 			transform, proxy, _, _ := newMekugiTestTransform(t, newInProcessMekugiTranslator(t.TempDir()))
 			var output []any
 			for _, id := range []string{"complete", "unfinished"} {
-				reference, retained := proxy.retainShell(transform.shellDirectory, id, "printf ok\n")
+				reference, _, retained := proxy.retainShell(transform.shellDirectory, id, "printf ok\n")
 				if !retained {
 					t.Fatal("shell script was not retained")
 				}

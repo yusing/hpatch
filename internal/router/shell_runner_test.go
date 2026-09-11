@@ -2,6 +2,7 @@ package router
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -133,6 +134,63 @@ func TestShellRunnerEvaluatesPrivateToolsWithoutFrontends(t *testing.T) {
 	}
 }
 
+func TestShellRunnerQueriesCurrentSymbol(t *testing.T) {
+	registry := sharedProxyTestRegistry(t)
+	workspace := t.TempDir()
+	caller := t.TempDir()
+	bin := t.TempDir()
+	source := filepath.Join(workspace, "source.go")
+	if err := os.WriteFile(source, []byte("package p\nfunc Pick() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolver := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' %q\n", source+":2:6-10")
+	if err := os.WriteFile(filepath.Join(bin, "gopls"), []byte(resolver), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Chdir(caller)
+	alias := filepath.Join(caller, "project")
+	if err := os.Symlink(workspace, alias); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, status := runShellWorkerTest(t, registry, "/bin/sh", nil,
+		fmt.Sprintf("hsymbol --workspace %q refs source.go 2 Pick", alias), nil)
+	if status != 0 || !strings.Contains(stdout, fmt.Sprintf("%q:2:", source)) ||
+		!strings.Contains(stdout, "func Pick() {}") || !strings.Contains(stderr, "(current snapshot)") {
+		t.Fatalf("semantic lookup: stdout=%q stderr=%q exit=%d", stdout, stderr, status)
+	}
+}
+
+func TestShellRunnerInspectsSelectedOutsideSource(t *testing.T) {
+	registry := sharedProxyTestRegistry(t)
+	workspace := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "value.json")
+	if err := os.WriteFile(outside, []byte(`{"answer":{"nested":42},"other":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(workspace)
+	stdout, stderr, status := runShellWorkerTest(t, registry, "/bin/sh", nil,
+		fmt.Sprintf("inspect_file --source /answer %q", outside), nil)
+	var result struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Outline []struct {
+				Source struct {
+					Text    string `json:"text"`
+					Omitted int    `json:"omitted_bytes"`
+				} `json:"source"`
+			} `json:"outline"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatal(err)
+	}
+	if status != 0 || stderr != "" || !result.OK || len(result.Data.Outline) != 1 ||
+		result.Data.Outline[0].Source.Text != `{"nested":42}` || result.Data.Outline[0].Source.Omitted != 0 {
+		t.Fatalf("selected inspection: stdout=%s stderr=%q exit=%d", stdout, stderr, status)
+	}
+}
+
 func TestShellRunnerReadsRetainedHCatArtifact(t *testing.T) {
 	registry := sharedProxyTestRegistry(t)
 	runtimeDirectory := t.TempDir()
@@ -154,6 +212,11 @@ func TestShellRunnerReadsRetainedHCatArtifact(t *testing.T) {
 		"hcat @shell/call-id 2:2",
 		nil,
 	)
+	preview, previewErr, previewExit := runShellWorkerTest(t, registry, "/bin/sh", nil,
+		"hcat --max-tokens 100 --preview-bytes 3 @shell/call-id 2:2", nil)
+	if previewExit != 0 || previewErr != "" || preview != "{\"row\":\"2:ca67\",\"preview\":\"ret\",\"source_bytes\":8,\"omitted_bytes\":5}\n" {
+		t.Fatalf("retained preview: stdout=%q stderr=%q exit=%d", preview, previewErr, previewExit)
+	}
 	if exitCode != 0 || stdout != "2:ca67 retained\n" || stderr != "" {
 		t.Fatalf("exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 	}

@@ -17,7 +17,7 @@ model calls to their names are not routed, and no executable frontend is install
 The private `hcat` command accepts exactly one file:
 
 ```text
-hcat PATH [START:END]
+hcat [--max-tokens N] [--preview-bytes N] PATH [START:END]
 ```
 
 The shell owns quoting and argument separation. A path containing whitespace is therefore one
@@ -59,6 +59,33 @@ would exceed 15,500 tokens, is omitted together with every later row. Omission p
 admitted complete rows on stdout, writes an incomplete-result diagnostic to stderr, and returns
 nonzero. It never cuts a row.
 
+Hcat and hgrep accept the same optional leading `--max-tokens N` and
+`--preview-bytes N` pairs, in either order, each at most once. Flags must precede
+the path or ripgrep arguments. Their values are positive decimal integers.
+`--max-tokens` accepts 1 through 15,500 and sets a strict GPT-5 stdout token ceiling:
+there is no whole-row overshoot in this mode. Without it, the default admission
+rule above is unchanged. Missing, repeated, or out-of-range values reject before
+reading source content or starting ripgrep. Outer host output budgets remain independent; callers
+can choose a reader ceiling that fits the enclosing result budget.
+
+`--preview-bytes` accepts 1 through 65,536 and changes each stdout row to a JSON
+record with `row` (the complete source's verified `LINE:HASH`), `preview` (a UTF-8
+prefix no larger than N bytes), `source_bytes`, and `omitted_bytes`. Hgrep also
+includes `path`. This is an explicit inspection format, not exact source-row text.
+The row reference remains usable as a whole-row target; preview text must not be
+treated as a complete literal replacement or match. Hashing still covers every
+source byte, never just the prefix. A prefix may end before N to avoid splitting
+a Unicode character. Preview records themselves count against the same stdout
+token budget. Preview byte omissions are intentional and counted in each record;
+omitting an entire record at the token ceiling is still incomplete and nonzero.
+
+Hcat retains its bounded whole-row candidate storage in preview mode. A source
+row exceeding 1,984,000 UTF-8 bytes cannot be verified by this reader; it is omitted
+with a distinct source-bound diagnostic and nonzero status. Use a byte-window
+reader when such a file needs content inspection. Whole-file UTF-8 validation
+still runs even after stdout admission stops. Retained `@shell/` reads accept the
+same options through the existing thread-private descriptor path.
+
 Acceptance:
 
 1. A whole-file or bounded read emits exact UTF-8 rows. Equal lines at different positions
@@ -74,3 +101,11 @@ Acceptance:
    includes the shell call in editable rejected-script recovery history.
 6. Router startup validates hcat inside the immutable built-in snapshot without installing a
    frontend. Passthrough mode loads and exposes none of these replacement surfaces.
+
+7. Hcat and hgrep enforce a caller's strict token ceiling identically, including
+   complete-record admission, preserved prefixes, and explicit nonzero incompleteness.
+8. Preview records retain exact full-source identities, bounded UTF-8 prefixes,
+   and byte omission counts for long rows. Default exact output is unchanged.
+9. Invalid and duplicate options reject before source content is read. Retained
+   path resolution can precede option validation. Quoted paths, line ranges,
+   and thread-private retained reads work with either leading option order.

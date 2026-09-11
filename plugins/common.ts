@@ -1,3 +1,4 @@
+import {formatVerifiedRow, hashLine} from "mekugi:core/v1";
 import path from "node:path";
 import {countTokens as countGPT5TokensWithModel} from "gpt-tokenizer/model/gpt-5";
 import type {ExecutionContext, ExecutionResult, Tool, TranslationContext} from "../internal/router/toolplugin/plugin.d.ts";
@@ -24,10 +25,68 @@ export function countGPT5Tokens(value: string): number {
   return countGPT5TokensWithModel(value, sourceTokenOptions);
 }
 
+export type ReaderOptions = {maxTokens?: number; previewBytes?: number};
+
+export function readerOptions(argv: string[]): {options: ReaderOptions; rest: string[]; offset: number} {
+  const options: ReaderOptions = {};
+  let offset = 0;
+  while (argv[offset] === "--max-tokens" || argv[offset] === "--preview-bytes") {
+    const name = argv[offset];
+    const key = name === "--max-tokens" ? "maxTokens" : "previewBytes";
+    const maximum = key === "maxTokens" ? VERIFIED_ROW_MAX_TOKENS : 65_536;
+    const raw = argv[offset + 1] ?? "";
+    const value = Number(raw);
+    if (options[key] !== undefined || !/^[1-9][0-9]*$/u.test(raw)
+        || !Number.isSafeInteger(value) || value > maximum) {
+      throw new Error(`${name} requires one integer from 1 to ${maximum} and cannot repeat`);
+    }
+    options[key] = value;
+    offset += 2;
+  }
+  return {options, rest: argv.slice(offset), offset};
+}
+
+export function readerLimitDiagnostic(options: ReaderOptions): string {
+  return options.maxTokens === undefined
+    ? VERIFIED_ROW_LIMIT_DIAGNOSTIC
+    : `output incomplete: ${options.maxTokens}-token limit reached\n`;
+}
+
+export function utf8SourcePrefix(content: string, maxBytes: number): {text: string; source_bytes: number; omitted_bytes: number} {
+  const bytes = Buffer.from(content, "utf8");
+  let end = Math.min(bytes.length, maxBytes);
+  while (end > 0 && end < bytes.length && (bytes[end] & 0xc0) === 0x80) {
+    end -= 1;
+  }
+  return {
+    text: bytes.subarray(0, end).toString("utf8"),
+    source_bytes: bytes.length,
+    omitted_bytes: bytes.length - end,
+  };
+}
+
+// Preview records never impersonate exact source rows. Their identity still
+// hashes the entire logical row through the portable core.
+export function formatReaderRow(line: number, content: string, options: ReaderOptions, path?: string): string {
+  if (options.previewBytes === undefined) {
+    return `${path === undefined ? "" : `${JSON.stringify(path)}:`}${formatVerifiedRow(line, content)}`;
+  }
+  const {text: preview, source_bytes, omitted_bytes} = utf8SourcePrefix(content, options.previewBytes);
+  return `${JSON.stringify({
+    ...(path === undefined ? {} : {path}),
+    row: `${line}:${hashLine(content)}`,
+    preview,
+    source_bytes,
+    omitted_bytes,
+  })}\n`;
+}
+
 export class VerifiedRowOutput {
   current = "";
   incomplete = false;
   #sealed = false;
+
+  constructor(private readonly maxTokens?: number) {}
 
   append(currentRow: string): boolean {
     if (this.#sealed) {
@@ -36,12 +95,12 @@ export class VerifiedRowOutput {
     }
     const candidate = this.current + currentRow;
     const tokens = countGPT5Tokens(candidate);
-    if (tokens > VERIFIED_ROW_MAX_TOKENS) {
+    if (tokens > (this.maxTokens ?? VERIFIED_ROW_MAX_TOKENS)) {
       this.incomplete = true;
       return false;
     }
     this.current = candidate;
-    this.#sealed = tokens > VERIFIED_ROW_SOFT_TOKENS;
+    this.#sealed = this.maxTokens === undefined && tokens > VERIFIED_ROW_SOFT_TOKENS;
     return true;
   }
 }

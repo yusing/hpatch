@@ -64,8 +64,9 @@ command sessions, and patch diff UI. No fork, no config edits, no daemon.
 - **Correct without starting over.**
   - Eligible shell programs can be retained, inspected, edited, and rerun
     instead of emitted again.
-  - When an edit is rejected solely because its target rows are stale, the
-    agent can correct the references without repeating the replacement text.
+  - After an edit is rejected, the agent can repair its retained script without
+    repeating unrelated prepared changes. Stale-target shortcuts remain available;
+    other corrections use ordinary text edits before the complete script is retried.
 
 ### Token saving
 
@@ -191,7 +192,7 @@ request or accepted steering. Grok provider requests remain on HTTP.
 | `--stream-idle-timeout` | `4m` | Limit gaps between provider messages during an active response, or HTTP response bytes |
 | `--capture-output PATH` | Disabled | Append sanitized JSONL metrics |
 | `--metrics-output PATH` | Disabled | Write the final metrics snapshot on shutdown, overwriting the destination |
-| `--debug` | Disabled | Record diagnostics, capture, metrics, and patched instructions; print all artifact paths on exit |
+| `--debug` | Disabled | Record diagnostics, capture, metrics, patched instructions, runtime reads, and an AX report; print all artifact paths on exit |
 
 For a transport-only session:
 
@@ -261,28 +262,41 @@ native execution and session facilities. Eligible literal `cat` heredoc writes
 are converted to patches so they appear in the usual diff UI; other scripts
 remain ordinary shell execution.
 
+Recognized yielded results include a `continuation` notice with the next host call.
+It distinguishes an outer Code Mode cell from a native process session and keeps
+the original output intact. Following that call resumes existing work rather than
+starting the script again.
+
 With Code Mode available, a call can batch noninteractive programs in order:
 
 ```text
+#!batch=NEXT_PROGRAM
 #!params={"yield_time_ms":1000}
 echo hello
+NEXT_PROGRAM
 #!python3
 print("hello")
+NEXT_PROGRAM
 #!params={"yield_time_ms":2000}
 echo goodbye
 ```
 
-A column-one interpreter selector or `#!params=` after a body starts the next
-program. A params-only header selects Bash. Omitted params inherit the previous
+Choose a separator line absent from the programs, then name it in the first-line
+`#!batch=` header. Exact matches separate two or more nonempty programs. Ordinary
+single-script calls need no batch header, and selector-like lines inside source
+strings or heredocs remain unchanged.
+
+A params-only program header selects Bash. Omitted params inherit the previous
 object; a supplied object replaces it, and `{}` clears it. Interpreters,
-command templates, and shell state do not carry over. These marker lines are
-reserved even inside strings and heredocs; indent literal markers or construct
-them without a literal marker line.
+command templates, and shell state do not carry over.
 
 Programs run sequentially, including waiting for long-running sessions, and
-continue after nonzero exits. The ordered `results` array contains each
+continue after nonzero exits by default. Use `#!batch-stop=SEPARATOR` to leave
+later programs unstarted after a nonzero terminal exit, with the same params
+inheritance and all-program validation. The ordered `results` array contains each
 program's output and native result fields. A host error stops the batch while
-preserving completed results and partial output. Native-only clients require
+preserving completed results and partial output. The `batch` summary reports the
+policy, started/unstarted counts, and stop reason. Native-only clients require
 separate calls. Use separate calls for interactive programs too, so their
 prompts and session handles remain available for input.
 
@@ -294,11 +308,33 @@ programs**, not as standalone utilities in your terminal:
 | `hcat` | Read verified source rows | None |
 | `hgrep` | Search text with verified row references | `rg` |
 | `hsymbol` | Look up definitions and references | `gopls` for Go; TypeScript 7 as `tsc` for JS, TS, and JSON; `pyright-langserver` for Python |
-| `inspect_file` | Inspect structure without full source bodies | None |
+| `inspect_file` | Inspect structure, optionally including selected source | None |
 
-Retained programs use thread-local `@shell/` references and expire after one
-hour by default. They are not workspace files and are removed on router
-shutdown. See the [shell reference](doc/spec/shell.md) for retention, editing,
+Semantic lookup can start with a known line number:
+`hsymbol def source.go 42 MyFunction`. Use `LINE:HASH` instead when the query
+must verify a prior read. `hsymbol --workspace /path/to/project refs source.go 42 MyFunction`
+selects a resolver root without changing shell state and returns absolute result
+paths. Semantic results stay confined to that root.
+
+Structural inspection accepts ordinary relative or absolute paths.
+`inspect_file --source MyFunction source.go` returns the matching declaration and
+its verified span; `inspect_file --source /settings config.json` selects a JSON
+value by pointer. Source prefixes are bounded and report omitted bytes. Without
+`--source`, inspection remains outline-only.
+
+For long lines, both verified readers offer an explicit bounded preview:
+`hcat --max-tokens 2000 --preview-bytes 160 source.ts` or
+`hgrep --max-tokens 2000 --preview-bytes 160 -F needle source.ts`.
+Preview records include the complete row's verified identity, a UTF-8 prefix,
+and omitted-byte counts. Without preview mode, rows remain exact. A caller's
+token ceiling is strict; omitted records are reported as incomplete, not silently
+cut. See the [reader contract](doc/spec/read.md) for ranges and bounds.
+
+Retained programs use thread-local `@shell/` references. Their result metadata
+reports the original scheduled expiry and non-durable scope. They expire after
+one hour by default or on router shutdown; reads and edits do not renew them.
+Active operations can delay cleanup. Save source as an ordinary workspace file
+when it needs to survive the thread. See the [shell reference](doc/spec/shell.md) for retention, editing,
 reruns, and interpreter selection.
 
 ## Metrics
@@ -365,6 +401,13 @@ directory. After Codex exits, it prints absolute paths to stderr for:
 - `metrics.json`: the final metrics snapshot.
 - `instructions.jsonl`: exact instruction text, developer messages, and tool declarations
   after request rewriting, with thread and request identifiers.
+
+- `reads.jsonl`: actual private-reader start/finish evidence; `--debug` enables it
+  automatically. An explicit `MEKUGI_AX_OUTPUT` path takes precedence.
+- `ax.json`: an automatic AX report for observed threads, joining their local Codex
+  rollouts to replay and runtime read evidence. No workspace argument is needed.
+  Missing, ambiguous, or incomplete rollout evidence is labeled rather than guessed.
+  Existing defect assessments can be added later with `inspect-session --defects`.
 
 To check whether agents used in-tool commentary, query the printed router log path:
 
@@ -450,6 +493,80 @@ storage, stop all Mekugi wrappers and move the replay directory aside. Conversat
 whose records you remove lose replay restoration; keep the moved directory if you
 may need to restore it later. Do not remove records just because one fork no longer
 shows those calls: a parent or sibling conversation may still need them.
+
+### Inspect a session
+
+Inspect a local Codex rollout without decoding execution carriers or running old
+commands. This is read-only and starts no router. By default, JSON output contains
+logical tool names, call IDs, outcomes, text sizes, and pagination, not private text:
+
+```sh
+mekugi inspect-session --session /path/to/rollout.jsonl
+mekugi inspect-session --session /path/to/rollout.jsonl \
+  --call-id call_example --field script
+```
+
+Use `--field evaluated`, `patch`, `report`, `diagnostic`, `rejections`, or `output`
+to inspect that evidence, or `all` for every text field. These fields may contain
+private source and command output. `--text-bytes` bounds each UTF-8 prefix and
+`omitted_bytes` identifies missing text. `--offset` and `--limit` page through calls;
+`next_offset` identifies the next page. `--replay-dir` selects a moved replay store.
+
+Workspace identity is inferred from the rollout's session and turn metadata, including
+workspace changes. Use `--workspace` only to override missing or incorrect metadata.
+Missing workspace metadata or replay records remain
+explicitly unavailable rather than being reconstructed from carrier code.
+`translated_unconfirmed` means a patch was prepared, not applied. `confirmed`
+requires the matching executor report in the supplied rollout; `applied` records
+router-owned application. Inspection does not establish that a change was correct
+or restore a live session. See the [session inspection contract](doc/spec/session.md).
+
+### Measure editing and reading effort
+
+Use `mekugi --debug codex` to enable **executed private-reader instrumentation** and
+include an AX report in the debug bundle automatically. To record only reads without
+the other debug artifacts, set an absolute journal path before launching Codex. Its parent directory must already exist. The executor inherits the
+setting; an existing journal must be a regular file with mode `0600`:
+
+```sh
+MEKUGI_AX_OUTPUT=/path/to/private/reads.jsonl mekugi codex
+```
+
+The journal records reader name, thread, start/finish, duration, and success, never
+source paths, arguments, or output. It counts actual `hcat`, `hgrep`, `hsymbol`, and
+`inspect_file` invocations, including loops and failures, not commands in skipped
+branches or quoted examples. It does not count external programs' file accesses.
+Evidence-write failures leave command behavior intact and produce an auxiliary
+stderr notice. A start without a finish is incomplete, not successful.
+
+Inspect the rollout and journal together:
+
+```sh
+mekugi inspect-session --session /path/to/rollout.jsonl --ax \
+  --read-log /path/to/private/reads.jsonl
+```
+
+AX measurements cover the entire supplied rollout, regardless of call filtering or
+pagination. They include matched edit retries, emitted bytes, exact line bytes repeated
+from the preceding edit payload, observed turn-completion intervals, and runtime reader
+counts for the rollout's thread. Missing journal/thread evidence is unavailable.
+Repeated bytes are not automatically wasted, and read counts do not say a read was unnecessary.
+
+Defects require explicit assessment, not inference from a rejection or successful
+application. Pass `--defects /path/to/assessments.json` with an array such as:
+
+```json
+[
+  {"call_id": "call_example", "verdict": "defect", "evidence": "failing-test.txt"},
+  {"call_id": "call_other", "verdict": "no_defect", "evidence": "review-result.txt"}
+]
+```
+
+Evidence paths resolve relative to the assessment file. Each must name a nonempty
+regular artifact no larger than 1 MiB. The result includes its SHA-256 fingerprint
+and the supplied verdict, separately from measured counters. Unassessed edits stay
+unassessed; neither a test failure nor a verdict alone proves that an edit caused
+a defect. See the [AX evidence contract](doc/spec/ax.md) for scope and limits.
 
 ### Older installations
 

@@ -18,12 +18,7 @@ func renderFileWritePatch(path, content string) (string, error) {
 	}
 	var patch strings.Builder
 	patch.WriteString("*** Begin Patch\n")
-	if content == "" {
-		fmt.Fprintf(&patch, "*** Add File: %s\n", path)
-	} else {
-		// Each addition row supplies its own LF in the host parser.
-		writeAddition(&patch, path, strings.TrimSuffix(content, "\n"))
-	}
+	writeAddition(&patch, path, content)
 	patch.WriteString("*** End Patch\n")
 	return patch.String(), nil
 }
@@ -54,7 +49,12 @@ func translate(changes []change) (string, error) {
 func writeAddition(patch *strings.Builder, path, content string) {
 	fmt.Fprintf(patch, "*** Add File: %s\n", path)
 	content = normalizeLineEndings(content)
-	for line := range strings.SplitSeq(content, "\n") {
+	if content == "" {
+		return
+	}
+	// The host adds one LF per '+' row. A final terminator is not another
+	// empty source line; remove only that terminator, preserving authored blanks.
+	for line := range strings.SplitSeq(strings.TrimSuffix(content, "\n"), "\n") {
 		patch.WriteByte('+')
 		patch.WriteString(line)
 		patch.WriteByte('\n')

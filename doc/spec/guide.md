@@ -9,7 +9,8 @@ for request model `gpt-6-astra` or IDs beginning `gpt-6-astra-`, and from
 eligible request, including model switches and inherited marked prompts, independently of
 native versus CTP/2 transport. Only the selected workflow is injected; shared tool syntax,
 atomicity, recovery, and commentary-routing rules are unchanged. Both workflow files cover file
-editing, commentary routing, shell submission, edit planning, target reuse, and target acquisition.
+editing, shell submission, edit planning, target reuse, and target acquisition.
+Commentary routing is defined once in the shared source.
 Model-specific phrasing does not alter the shared reference contracts. Guidance includes effective
 use of tool capabilities: batching related edits against immutable baselines, reusing verified
 targets, selecting suitable mutation forms, and leaving formatting to the engine. It does not
@@ -53,67 +54,41 @@ proof that the model followed the guidance or that a later forwarding step succe
 The WebSocket transport must not elide rewritten inherited instructions against a provider
 prefix containing their old values; its cache replacement contract is in `REQ-ROUTER-001`.
 
-The recovery template adjacent to the central source owns dynamic recovery prose. After each
-wholly row-stale evaluator rejection, the router supplies only the current handles and summaries
-for rejected target-bearing commands. Other evaluator rejections direct the model to one complete
-ordinary script. A re-rejected recovery states that prior handles are stale and refreshes the
-listed commands from the latest evaluated script.
+The recovery template adjacent to the central source owns dynamic target-only recovery prose.
+The shared Rejected-script recovery section explains the two payload forms in
+[REQ-CORRECT-001](correct.md): current command handles for wholly row-stale failures,
+or ordinary mutations against retained-script text for other and mixed corrections.
+Dynamic diagnostics supply current handles or bounded script-row context. Re-rejection
+invalidates prior handles and advances the retained baseline; invalid correction payloads
+leave it unchanged. Neither form requires re-emitting unrelated prepared edits.
 
-Both model variants use the shared Shell reference for execution rules; model-specific sections
-point to it rather than repeat submission syntax. Shell working-directory guidance applies with
-and without CTP. The variants teach the following tool workflow:
+Both model variants point to shared references rather than repeat submission syntax.
+The shared guidance must make these choices directly available in native and CTP modes:
 
-1. Submit a shell call as one free-form script without an outer wrapper. Use Bash by default or
-   select another interpreter with a direct compact shebang. Keep program input on standard input,
-   use exactly one `{.}` in `#!cmd=`, place request-specific outer arguments in `#!params=`, and
-   use native session facilities for PTY-backed or long-running executions.
-   Teach direct interpreter selection with `#!COMMAND [ARGS...]`: its body contains only the
-   selected interpreter's program, without a closing heredoc delimiter. Examples do not limit
-   interpreter selection. Subsequent shell checks belong in a separate default-Bash call
-   after success. Runtime failure may leave earlier statements' effects in place; inspect affected
-   state before retrying. Distinguish HPATCH's `<<PATCH` edit-value syntax and shell data
-   heredocs from interpreter-program submission. Put the optional interpreter selector first,
-   followed by at most one `#!cmd=` and one `#!params=` in either order, then the source body.
-2. Inspect, edit, or rerun a retained shell script through its `@shell/` reference, and never mix
-   retained and workspace paths in one HPATCH script.
-3. Acquire target-bearing context for existing-file edits. When a known identifier or literal is
-   likely to become a target, use hgrep first with
-   repeated fixed-string patterns, adding bounded context options when surrounding code is needed.
-   Every emitted match or context row is target-bearing. When the owner is known but the location
-   is not, use inspect_file for structure or hgrep for a symbol. Copy inspect_file `LINE:HASH`
-   spans directly as HPATCH targets. Use bounded hcat for source text not supplied by the search
-   or outline.
-   Use hsymbol refs for exact Go references and hsymbol def for an
-   editable Go declaration after obtaining a verified selector row.
-4. Run one hcat command per file and batch only already-known reads in one shell script. Copy
-   only current emitted references. Do not follow target-bearing hgrep output with hcat unless
-   nonmatching context outside the requested bounds is needed.
-5. Choose a line, inclusive range, or anchored literal target inside the mutation command.
-6. Submit every known related edit in one atomic script. Split only when a later edit depends on
-   validation or information unavailable before the current call. Keep unrelated large values
-   in separate failure-domain calls.
-7. Use an insertion or targeted replacement rather than rewriting surrounding declarations for
-   formatting that the engine already owns. Reuse exact authored text, unchanged rows, and exact
-   pre-edit rows or ranges covered by confirmed routed mappings. Use returned final-state rows
-   or exact unanchored current text for other changed content. Acquire a focused read when these
-   forms do not identify the intended current target; rereading solely to recover an available
-   target is unnecessary. Use heredoc values for regular expressions and other escape-heavy
-   edit values, selecting the final-newline mode from the shared reference.
-8. Use nonempty `type` to replace and empty target-bearing `type` to delete. Use `add` to
-   insert before a line or text destination and `add EOF` to append. Use inline values for
-   short text and heredocs for multiline or escape-heavy values. Teach `<<PATCH` for values
-   including their final body terminator and `<<PATCH-` for values omitting exactly that
-   terminator. Prefer row/range targets for whole-line replacements; literal targets own only
-   their exact matched bytes. Insertions account for existing separators, and whole-line
-   deletion includes the line terminator. Language-aware formatting and indentation correction
-   remain distinct from authored whitespace, which otherwise stays intact.
-9. After a wholly row-stale routed rejection, use `functions.hpatch_recover` with one current
-   `C... TARGET` line per listed command. Submit every listed target correction in one atomic
-   payload. Use one complete ordinary script for non-target or mixed corrections. After
-   re-rejection, discard all prior handles. Ordinary `functions.hpatch` and root APIs have no
-   recovery mode.
-10. Let mekugi format changed Go files and syntax-check supported changed Python, JavaScript, and
-    TypeScript files.
+1. **Execution:** direct interpreter source, explicit batch separators and failure policies,
+   parameter inheritance, and host-provided continuation actions under
+   [REQ-SHELL-001](shell.md). Retained references include lifetime limits and remain distinct
+   from durable workspace files. A failed execution is not a rollback.
+2. **Acquisition:** reuse known literals, verified rows, and confirmed mappings first.
+   Otherwise select fixed-string hgrep, bounded hcat, structural inspection with optional
+   source, or semantic lookup with a current line or verified row. Explain preview and
+   truncation limits before using partial source as an exact target.
+   Reader contracts remain in [read.md](read.md), [grep.md](grep.md),
+   [inspect.md](inspect.md), and [symbol.md](symbol.md).
+3. **Editing:** group ready related edits against immutable baselines; split dependent work
+   only when validation or missing facts must determine the next edit. Prefer insertions and
+   targeted replacements, leaving language-aware formatting to the engine.
+4. **Values and boundaries:** keep raw and collision-safe line-framed syntax, newline ownership,
+   empty-value deletion, and advisory interpretation together in the shared HPATCH/2 reference.
+   [REQ-SCRIPT-001](script.md), [REQ-EDIT-001](edit.md), and
+   [REQ-OUTPUT-001](output.md) own the behavior.
+5. **Recovery:** choose a payload form in one shared section, using the current rejected
+   baseline rather than workspace rows. Follow [REQ-CORRECT-001](correct.md) for atomic
+   reevaluation, ancestry, and invalid corrections.
+
+The shared source supplies complete call syntax because it is injected into other workspaces;
+it must not require the model to open this repository's specifications. Those specifications
+own acceptance criteria, not additional prompt instructions.
 
 Acceptance:
 
@@ -132,8 +107,11 @@ Acceptance:
    non-null instruction string fails before forwarding. CTP/2 never creates or encodes its selected
    instruction carrier, and `ctp1` fails before router startup.
 5. Dynamic rejected-script references and recovery prose appear only with actionable context.
-6. A wholly row-stale evaluator rejection lists only the rejected target-bearing command handles
-   and exact guidance for one atomic target-correction payload. Other failures direct one complete
-   ordinary script; re-rejection explicitly invalidates prior handles.
+6. Recovery guidance distinguishes target-only shortcuts from script-text edits, preserves
+   unrelated prepared edits, and explicitly invalidates prior handles after re-rejection.
+   It does not direct non-target or mixed failures to re-emit the complete script.
 7. A routed success can be followed by another hpatch call using an exact row from its report
    without an intervening hcat; a saved pre-edit row still rejects as stale.
+8. Both rendered model workflows include the shared commentary, framing, boundary, recovery,
+   continuation, lifetime, and reader contracts exactly once. Superseded requirements for
+   verified-only semantic queries or full-script recovery are absent.

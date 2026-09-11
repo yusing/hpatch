@@ -6,33 +6,50 @@ import (
 	"strings"
 )
 
-// Split separates programs before host translation. After a program body starts,
-// column-one interpreter selectors and params directives are reserved boundaries,
-// including inside language strings and heredocs. Command templates remain local
-// to their program. Only an omitted params directive inherits the previous object.
-func Split(input string) ([]string, error) {
-	var programs []string
-	start, offset := 0, 0
-	bodyStarted := false
-	for remaining := input; remaining != ""; {
-		line, rest := splitFirstLine(remaining)
-		trimmed := trimField(line)
-		key, _, directive := parseDirectiveLine(trimmed)
-		selector := strings.HasPrefix(trimmed, "#!") && !isDirectiveCandidate(trimmed)
-		boundary := line == strings.TrimLeft(line, " \t") &&
-			(selector || key == "params" || key == "script")
-		if boundary && (bodyStarted || (selector && offset > start)) {
-			programs = append(programs, input[start:offset])
-			start = offset
-			bodyStarted = false
-		}
-		if !directive && !(offset == start && selector) {
-			bodyStarted = true
-		}
-		offset += len(remaining) - len(rest)
-		remaining = rest
+const BatchStopHeaderPrefix = "#!batch-stop="
+
+const BatchHeaderPrefix = "#!batch="
+
+// BatchHeader recognizes the two explicit batch policies without interpreting
+// source lines. Split validates the selected separator and every program.
+func BatchHeader(input string) (separator string, stopOnNonzero, ok bool) {
+	first, _ := splitFirstLine(input)
+	if separator, ok := strings.CutPrefix(first, BatchHeaderPrefix); ok {
+		return separator, false, true
 	}
-	programs = append(programs, input[start:])
+	if separator, ok := strings.CutPrefix(first, BatchStopHeaderPrefix); ok {
+		return separator, true, true
+	}
+	return "", false, false
+}
+
+// Split recognizes an explicit first-line batch header. Only exact
+// separator lines delimit programs; all other source bytes remain program data.
+// Only an omitted params directive inherits the preceding complete object.
+func Split(input string) ([]string, error) {
+	programs := []string{input}
+	_, body := splitFirstLine(input)
+	if separator, _, batch := BatchHeader(input); batch {
+		if separator == "" || separator != strings.TrimSpace(separator) || strings.ContainsRune(separator, 0) {
+			return nil, fmt.Errorf("shell batch line 1: separator must be nonempty, without surrounding whitespace or NUL")
+		}
+		programs = nil
+		start, offset := 0, 0
+		for remaining := body; remaining != ""; {
+			line, rest := splitFirstLine(remaining)
+			next := offset + len(remaining) - len(rest)
+			if line == separator {
+				programs = append(programs, body[start:offset])
+				start = next
+			}
+			offset = next
+			remaining = rest
+		}
+		programs = append(programs, body[start:])
+		if len(programs) < 2 {
+			return nil, fmt.Errorf("shell batch line 1: at least two programs separated by %q are required", separator)
+		}
+	}
 
 	var inherited map[string]any
 	for index, source := range programs {
@@ -42,10 +59,10 @@ func Split(input string) ([]string, error) {
 		}
 		if len(programs) > 1 {
 			if parsed.HasScript {
-				return nil, fmt.Errorf("shell program %d: #!script must be the sole directive", index+1)
+				return nil, fmt.Errorf("shell program %d: line 1: #!script must be the sole directive", index+1)
 			}
 			if strings.TrimSpace(parsed.Body) == "" {
-				return nil, fmt.Errorf("shell program %d: batch programs must have a body", index+1)
+				return nil, fmt.Errorf("shell program %d: line 1: batch programs must have a body", index+1)
 			}
 		}
 		if parsed.HasParams {

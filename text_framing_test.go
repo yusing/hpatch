@@ -33,14 +33,30 @@ func TestTextFramingThroughPublicOperations(t *testing.T) {
 				t.Fatalf("translate: %v, %s", err, translated.Diagnostic)
 			}
 			tree, err := patchtest.Apply(before, string(translated.Patch))
-			if err != nil || tree["file.txt"] != test.want {
-				t.Fatalf("translated tree = %v, error %v; want %q", tree, err, test.want)
+			hostWant := test.want
+			if hostWant != "" && !strings.HasSuffix(hostWant, "\n") {
+				hostWant += "\n" // Native apply_patch terminates every resulting line.
+			}
+			if err != nil || tree["file.txt"] != hostWant {
+				t.Fatalf("translated tree = %v, error %v; want %q", tree, err, hostWant)
 			}
 			result, err := applyForHostAtTest(t, root, test.script, "")
 			if err != nil || readTestFile(t, root, "file.txt") != test.want {
 				t.Fatalf("apply: %v, %s; want %q", err, result.Diagnostic, test.want)
 			}
 		})
+	}
+}
+
+func TestTextFrameSyntaxFailuresKeepValueRows(t *testing.T) {
+	root := t.TempDir()
+	script := "new file.go\ntype <<TEXT\n|package p\n|var =\nTEXT\n"
+	result, err := translateForHostAtTest(t, root, script, "")
+	if err == nil || len(result.Rejections) != 1 || result.Rejections[0].Command != 2 || result.Rejections[0].ValueLine != 2 {
+		t.Fatalf("rejections = %+v, error %v; want command 2 value row 2", result.Rejections, err)
+	}
+	if len(result.Patch) != 0 || len(readTree(t, root)) != 0 {
+		t.Fatalf("invalid text value produced effects: %+v", result)
 	}
 }
 
@@ -56,4 +72,3 @@ func TestMalformedTextFrameRejectsWholeScript(t *testing.T) {
 		t.Fatalf("rejection changed tree: %v", tree)
 	}
 }
-

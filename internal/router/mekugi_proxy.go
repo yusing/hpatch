@@ -210,21 +210,22 @@ type mekugiPendingCall struct {
 }
 
 type mekugiResponseTransform struct {
-	featureTrace          featureUsageTrace
-	ctx                   context.Context
-	proxy                 *mekugiProxy
-	sessionID             string
-	shellThreadID         string // Runtime identity remains available when activity attribution is invalid.
-	shellDirectory        string
-	model                 string
-	visible               map[string]mekugiHistory
-	historySessionID      string
-	sessionActive         bool
-	threadID              string
-	activityStarted       time.Time
-	activityBytes         int
-	activityMessages      []map[string]json.RawMessage
-	activityShellSessions map[string]string
+	featureTrace           featureUsageTrace
+	ctx                    context.Context
+	proxy                  *mekugiProxy
+	sessionID              string
+	shellThreadID          string // Runtime identity remains available when activity attribution is invalid.
+	shellDirectory         string
+	model                  string
+	visible                map[string]mekugiHistory
+	historySessionID       string
+	sessionActive          bool
+	threadID               string
+	activityStarted        time.Time
+	activityBytes          int
+	activityMessages       []map[string]json.RawMessage
+	activityShellSessions  map[string]string
+	activityCellOperations map[string]string
 
 	originalTools             json.RawMessage
 	originalToolsPresent      bool
@@ -493,6 +494,7 @@ func (p *mekugiProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		codeModeToolName: codeModeToolName,
 		nativeTools:      nativeTools,
 	}
+	projectExecutionContinuations(request, tools, codeModeToolName, visible)
 	if transform.subagentTurn {
 		transform.prepareShellActivity(request.fields["input"])
 	}
@@ -1197,6 +1199,7 @@ func (t *mekugiResponseTransform) translateRegisteredTool(contribution toolContr
 	}
 	pathPrefix := t.shellDirectory + string(os.PathSeparator)
 	recovered := !t.nativeTools && shellCodeModeRecovery(contribution, input)
+	var stopBatchOnNonzero bool
 	var batch []string
 	var translation toolplugin.Translation
 	var err error
@@ -1205,6 +1208,7 @@ func (t *mekugiResponseTransform) translateRegisteredTool(contribution toolContr
 		effectiveInput, err = t.proxy.resolveShellInput(t.shellDirectory, input)
 		if err == nil {
 			var programs []string
+			_, stopBatchOnNonzero, _ = shellsyntax.BatchHeader(effectiveInput)
 			programs, err = shellsyntax.Split(effectiveInput)
 			if err == nil && len(programs) > 1 {
 				batch, translation, err = t.prepareShellBatch(contribution, programs, pathPrefix)
@@ -1239,9 +1243,15 @@ func (t *mekugiResponseTransform) translateRegisteredTool(contribution toolContr
 	if translation.Carrier.RetainInput != nil {
 		resultMetadata = map[string]json.RawMessage{"retained": mustMarshalJSON(false)}
 		if *translation.Carrier.RetainInput {
-			reference, retained := t.proxy.retainShell(t.shellDirectory, callID, effectiveInput)
+			reference, expiresAt, retained := t.proxy.retainShell(t.shellDirectory, callID, effectiveInput)
 			resultMetadata["retained"] = mustMarshalJSON(retained)
 			if retained {
+				resultMetadata["retention"] = mustMarshalJSON(map[string]any{
+					"scope": "thread", "durable": false,
+					"scheduled_expiry":               expiresAt.UTC().Format(time.RFC3339Nano),
+					"ends_on_router_shutdown":        true,
+					"reads_or_edits_extend_lifetime": false,
+				})
 				resultMetadata["script_ref"] = mustMarshalJSON(reference)
 			}
 		}
@@ -1293,7 +1303,7 @@ func (t *mekugiResponseTransform) translateRegisteredTool(contribution toolContr
 				return mekugiHistory{}, fmt.Errorf("%s exec carrier: %w", contribution.Name, err)
 			}
 			if len(batch) != 0 {
-				payload = renderShellBatch(batch, resultMetadata)
+				payload = renderShellBatch(batch, resultMetadata, stopBatchOnNonzero)
 				splitShellCarrier = true
 				break
 			}

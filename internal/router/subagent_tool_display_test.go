@@ -19,6 +19,12 @@ func TestSubagentToolDisplay(t *testing.T) {
 	tests := []struct {
 		name, input, want string
 	}{
+		{"wait", `{"cell_id":"7","yield_time_ms":30000,"max_tokens":5000}`, "Still Running · operation unavailable"},
+		{"functions.wait", `{"cell_id":"7","terminate":false}`, "Still Running · operation unavailable"},
+		{"functions.wait", `{"cell_id":"7","terminate":true}`, "Stop · operation unavailable"},
+		{"wait", `{"cell_id":""}`, "Tool call: `wait`\n`{\"cell_id\":\"\"}`"},
+		{"wait", `{"cell_id":7}`, "Tool call: `wait`\n`{\"cell_id\":7}`"},
+		{"external.wait", `{"cell_id":"7"}`, "Tool call: `external.wait`\n`{\"cell_id\":\"7\"}`"},
 		{"shell", "cat 'a b.txt'", "Read `a b.txt`"},
 		{"shell", "skills-mgr get golang-best-practices", "Skill Read `golang-best-practices`"},
 		{"shell", "skills-mgr get writing-readme/references/cli.md", "Skill Reference Read `writing-readme/references/cli.md`"},
@@ -28,8 +34,12 @@ func TestSubagentToolDisplay(t *testing.T) {
 		{"shell", "  echo first\n  echo second\n", "Run\n```bash\n  echo first\n  echo second\n```"},
 		{"shell", "cat /skills/writing-readme/SKILL.md", "Skill Read `writing-readme`"},
 		{"shell", "cat a\ncat b", "Read `a`\n\nRead `b`"},
+		{"shell", "hcat --preview-bytes 80 --max-tokens 100 a.go 1:20", "Read `a.go 1:20`"},
 		{"shell", "hcat a.go 1:20", "Read `a.go 1:20`"},
 		{"shell", "hgrep -n -F -e 'some text' a.go", "Search `-n -F -e 'some text' a.go`"},
+		{"shell", "inspect_file --source Main --source-bytes 100 a.go", "Inspect `a.go`"},
+		{"shell", "inspect_file --source-bytes 8192 --source '' a.json", "Inspect `a.json`"},
+		{"shell", "hcat --max-tokens 15500 --preview-bytes 65536 a.go 0:1", "Read `a.go 0:1`"},
 		{"shell", "inspect_file a.go", "Inspect `a.go`"},
 		{"shell", "ls src", "List `src`"},
 		{"shell", `{"command":[]}`, "Run"},
@@ -100,6 +110,35 @@ func TestSubagentMCPToolDisplay(t *testing.T) {
 		if got := subagentToolActivityText(item, "exec"); got != toolActivityJavaScript(source) {
 			t.Fatalf("nontransparent MCP display = %q", got)
 		}
+	}
+}
+
+func TestSubagentToolDisplayInvalidReaderOptions(t *testing.T) {
+	for _, input := range []string{
+		"hcat --max-tokens 0 a.go", "hcat --max-tokens -1 a.go",
+		"hcat --max-tokens 15501 a.go", "hcat --max-tokens 01 a.go",
+		"hcat --max-tokens 1 --max-tokens 2 a.go", "hcat --max-tokens a.go",
+		"hcat --preview-bytes 65537 a.go", "hcat --preview-bytes nope a.go",
+		"hcat --preview-bytes 1 --preview-bytes 2 a.go", "hcat a.go --max-tokens 1",
+		"hcat a.go 2:1", "hcat a.go 1:0", "hcat a.go 01:2", "hcat a.go invalid",
+		"hcat a.go 1:9007199254740992",
+		"inspect_file --source-bytes 100 a.go", "inspect_file --source",
+		"inspect_file --source Main --source Other a.go",
+		"inspect_file --source Main --source-bytes 0 a.go",
+		"inspect_file --source Main --source-bytes 8193 a.go",
+		"inspect_file --source Main --source-bytes +1 a.go",
+		"inspect_file --source Main --source-bytes 01 a.go",
+		"inspect_file --source Main --source-bytes 1 --source-bytes 2 a.go",
+		"inspect_file a.go --source Main",
+		"inspect_file ''", "inspect_file @shell/script", "inspect_file dir/../@shell/script",
+	} {
+		t.Run(input, func(t *testing.T) {
+			item := map[string]json.RawMessage{"name": mustMarshalJSON("shell"), "input": mustMarshalJSON(input)}
+			want := "Run\n```bash\n" + input + "\n```"
+			if got := subagentToolActivityText(item, "shell"); got != want {
+				t.Fatalf("display = %q, want source fallback %q", got, want)
+			}
+		})
 	}
 }
 
@@ -555,5 +594,36 @@ func TestSubagentBatchPatchFilesStaySeparate(t *testing.T) {
 	displays := subagentToolActivityTexts(item, "exec", nil, nil)
 	if len(displays) != 3 || displays[0] != "Write `a`\n```diff\n+x\n```" || displays[1] != "Write `b`\n```diff\n+y\n```" || displays[2] != "Read current time\n`{}`" {
 		t.Fatalf("patch file boundaries = %q", displays)
+	}
+}
+
+func TestShellBatchActivityDisplay(t *testing.T) {
+	const first = "sed -n '1,360p' internal/router/session_inspect.go"
+	const search = "rg -n '^func Test' internal/router/session_inspect_test.go cmd/mekugi/main_test.go 2>/dev/null"
+	const last = "git status --short --branch\ngit log -1 --oneline"
+	for _, marker := range []string{"#!batch=SESSION", "#!batch-stop=SESSION"} {
+		source := marker + "\n" + first + "\nSESSION\n" + search + "\nSESSION\n" + last
+		want := strings.Join([]string{
+			toolActivityShell(first), toolActivityShell(search), toolActivityShell(last),
+		}, "\n\n")
+		if got := toolActivityShell(source); got != want {
+			t.Fatalf("batch display = %q, want %q", got, want)
+		}
+	}
+
+	firstSource := "#!params={\"workdir\":\"/tmp\"}\ncat first"
+	secondSource := "#!python3\nprint('SESSION')"
+	thirdSource := "cat third"
+	source := "#!batch=SESSION\n" + firstSource + "\nSESSION\n" + secondSource + "\nSESSION\n" + thirdSource
+	want := "Read `first`\n\n" +
+		toolActivityShell("#!python3\n#!params={\"workdir\":\"/tmp\"}\nprint('SESSION')\n") +
+		"\n\nRead `third`"
+	if got := toolActivityShell(source); got != want {
+		t.Fatalf("mixed interpreters and inherited params = %q, want %q", got, want)
+	}
+	for _, invalid := range []string{"#!batch=SESSION\ncat first", "#!batch=SESSION\ncat first\nSESSION\n"} {
+		if got := toolActivityShell(invalid); got != "Run\n"+toolActivityFenced("", invalid) {
+			t.Fatalf("invalid batch lost source: %q", got)
+		}
 	}
 }

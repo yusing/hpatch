@@ -4,13 +4,6 @@ Use `functions.hpatch` for local file edits, not `apply_patch`.
 Use shell formatting commands for bulk mechanical rewrites, but do not create or edit files
 with shell write tricks or Python when hpatch is sufficient.
 
-## Commentary
-
-Attach progress commentary only to a supported tool call, using that tool's `commentary` field or
-documented runtime commentary mechanism. When no available tool supports commentary, continue
-without a commentary message. Never emit a standalone assistant message with
-`phase: "commentary"`; standalone commentary messages are router-owned.
-
 ## Shell execution
 
 Use `functions.shell` for command execution. Before submitting a program, follow the shared
@@ -39,9 +32,7 @@ For exact content you just authored in a new file, use an unanchored literal tar
 invocation instead of inventing a row hash or rereading the file. Use focused hcat or hgrep only
 when none of those forms identifies the target.
 
-Use heredoc values for regular expressions and other multiline or escape-heavy text.
-Choose `<<PATCH` or `<<PATCH-` using the shared final-newline rules, or line-framed
-`<<TEXT`/`<<TEXT-` for protocol examples. Acquire only an exact missing target.
+Use the shared HPATCH/2 reference for value framing, newline ownership, and rejected-script recovery.
 
 ## Target acquisition
 

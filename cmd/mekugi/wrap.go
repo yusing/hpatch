@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yusing/mekugi/capturer"
 	"github.com/yusing/mekugi/internal/router"
 )
 
@@ -91,6 +92,9 @@ func wrapCodex(ctx context.Context, routerArgs, args []string) (code int, runErr
 	fmt.Fprintf(os.Stderr, "mekugi dashboard: %s/\n", strings.TrimSuffix(session.BaseURL, "/v1"))
 	cmd := exec.CommandContext(ctx, executable, codexArgs(session.BaseURL, args)...)
 	cmd.Env = append(os.Environ(), "MEKUGI_BASE_URL="+session.BaseURL)
+	if session.AXReadOutput != "" {
+		cmd.Env = append(cmd.Env, capturer.AXReadOutputEnvironment+"="+session.AXReadOutput)
+	}
 	if session.FrontendDirectory != "" {
 		cmd.Env = append(cmd.Env, "PATH="+session.FrontendDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}

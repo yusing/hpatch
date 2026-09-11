@@ -53,11 +53,12 @@ func subagentToolActivityTexts(item map[string]json.RawMessage, qualifiedName st
 			return displays
 		}
 	}
-	if label := toolActivityBuiltinLabel(shortName); label != "" {
-		return []string{toolActivityDetail(label, input)}
-	}
 	var arguments map[string]json.RawMessage
 	_ = json.Unmarshal([]byte(input), &arguments)
+	// Cell waits use the operation-aware display below, not the generic helper label.
+	if label := toolActivityBuiltinLabel(shortName); label != "" && (shortName != "wait" || arguments["cell_id"] == nil) {
+		return []string{toolActivityDetail(label, input)}
+	}
 	if kind := jsonString(item, "type"); kind == "local_shell_call" || kind == "shell_call" {
 		var action struct {
 			Command  []string `json:"command"`
@@ -89,6 +90,15 @@ func subagentToolActivityTexts(item map[string]json.RawMessage, qualifiedName st
 		return []string{toolActivityShell(script)}
 	case "exec":
 		return []string{toolActivityJavaScript(input)}
+	case "wait":
+		if jsonString(arguments, "cell_id") != "" {
+			var terminate bool
+			_ = json.Unmarshal(arguments["terminate"], &terminate)
+			if terminate {
+				return []string{"Stop · operation unavailable"}
+			}
+			return []string{"Still Running · operation unavailable"}
+		}
 	case "view_image":
 		return []string{toolActivityDetail("View image", jsonString(arguments, "path"))}
 	case "write_stdin":
@@ -312,6 +322,15 @@ func toolActivityShellLanguage(script, language string) string {
 	if toolActivityScriptReference(script) != "" {
 		return "Running stored script · command unavailable"
 	}
+	if _, _, batch := shellsyntax.BatchHeader(script); batch {
+		if programs, err := shellsyntax.Split(script); err == nil {
+			displays := make([]string, 0, len(programs))
+			for _, program := range programs {
+				displays = append(displays, toolActivityShellLanguage(program, language))
+			}
+			return strings.Join(displays, "\n\n")
+		}
+	}
 	parsed, err := shellsyntax.Parse(script)
 	if err == nil && !parsed.HasScript && parsed.CommandTemplate == "" && len(parsed.Interpreter) == 1 &&
 		(parsed.Interpreter[0] == "bash" || parsed.Interpreter[0] == "sh") {
@@ -425,12 +444,35 @@ func toolActivityReadCommand(script string, call *syntax.CallExpr) (string, bool
 		}
 		paths, readRange := argv[1:], ""
 		if argv[0] == "hcat" {
-			if len(argv) != 2 && len(argv) != 3 {
+			pathIndex := 1
+			seen := make(map[string]bool)
+			for pathIndex < len(argv) && (argv[pathIndex] == "--max-tokens" || argv[pathIndex] == "--preview-bytes") {
+				option := argv[pathIndex]
+				if seen[option] || pathIndex+1 == len(argv) {
+					return "", false
+				}
+				maximum := uint64(15500)
+				if option == "--preview-bytes" {
+					maximum = 65536
+				}
+				if _, valid := toolActivityPositiveDecimal(argv[pathIndex+1], maximum); !valid {
+					return "", false
+				}
+				seen[option] = true
+				pathIndex += 2
+			}
+			if len(argv)-pathIndex != 1 && len(argv)-pathIndex != 2 {
 				return "", false
 			}
-			paths = argv[1:2]
-			if len(argv) == 3 {
-				readRange = " " + argv[2]
+			paths = argv[pathIndex : pathIndex+1]
+			if len(argv)-pathIndex == 2 {
+				first, last, found := strings.Cut(argv[pathIndex+1], ":")
+				start, validStart := toolActivityPositiveDecimal(first, 1<<53-1)
+				end, validEnd := toolActivityPositiveDecimal(last, 1<<53-1)
+				if !found || (!validStart && first != "0") || !validEnd || start > end {
+					return "", false
+				}
+				readRange = " " + argv[pathIndex+1]
 			}
 		}
 		for _, path := range paths {
@@ -462,10 +504,32 @@ func toolActivityReadCommand(script string, call *syntax.CallExpr) (string, bool
 		}
 		add("Read", argv[3]+" "+start+":"+end)
 	case "inspect_file":
-		if len(argv) != 2 {
+		pathIndex := 1
+		seen := make(map[string]bool)
+		for pathIndex < len(argv) && (argv[pathIndex] == "--source" || argv[pathIndex] == "--source-bytes") {
+			option := argv[pathIndex]
+			if seen[option] || pathIndex+1 == len(argv) {
+				return "", false
+			}
+			if option == "--source-bytes" {
+				if _, valid := toolActivityPositiveDecimal(argv[pathIndex+1], 8192); !valid {
+					return "", false
+				}
+			}
+			seen[option] = true
+			pathIndex += 2
+		}
+		if len(argv)-pathIndex != 1 || seen["--source-bytes"] && !seen["--source"] {
 			return "", false
 		}
-		add("Inspect", argv[1])
+		if argv[pathIndex] == "" || strings.ContainsRune(argv[pathIndex], '\x00') {
+			return "", false
+		}
+		path := filepath.Clean(argv[pathIndex])
+		if path == "@shell" || strings.HasPrefix(path, "@shell"+string(filepath.Separator)) {
+			return "", false
+		}
+		add("Inspect", argv[pathIndex])
 	case "ls":
 		if len(argv) > 2 || (len(argv) == 2 && strings.HasPrefix(argv[1], "-")) {
 			return "", false
@@ -509,6 +573,15 @@ func toolActivityReadCommand(script string, call *syntax.CallExpr) (string, bool
 	}
 	return strings.Join(lines, "\n\n"), true
 
+}
+
+// Match the private readers' positive, canonical decimal options without executing them.
+func toolActivityPositiveDecimal(value string, maximum uint64) (uint64, bool) {
+	if value == "" || value[0] == '0' || strings.Trim(value, "0123456789") != "" {
+		return 0, false
+	}
+	number, err := strconv.ParseUint(value, 10, 64)
+	return number, err == nil && number <= maximum
 }
 
 // Recognize transparent Code Mode wrappers, not arbitrary programs containing a

@@ -16,18 +16,16 @@ const tool = plugin.tools[0];
 
 test("description stays call-local", () => {
   for (const guidance of [
-    "Run free-form scripts.",
-    "Prefer batching ready, independent, noninteractive programs",
-    "use separate calls for interactive work",
-    "omission inherits the previous object",
-    "a supplied object replaces it",
+    "Run free-form scripts",
+    "#!batch=SEPARATOR",
     "Batches require Code Mode",
-    "continue after nonzero exits",
+    "#!batch= continues after nonzero exits",
+    "#!batch-stop= stops before later programs",
   ]) {
     expect(tool.specification.description).toContain(guidance);
   }
 
-  for (const persistentGuidance of ["#!cmd=", "#!script=", "@shell/", "default interpreter"]) {
+  for (const persistentGuidance of ["#!cmd=", "#!script=", "@shell/", "default interpreter", "Prefer batching", "omission inherits"]) {
     expect(tool.specification.description).not.toContain(persistentGuidance);
   }
 });
@@ -203,6 +201,13 @@ describe("installable shell plugin", () => {
       "!unknown value\nprintf ok",
     ]) {
       expect(() => tool.parse(input)).toThrow();
+    }
+  });
+
+  test("locates params policy rejections in the authored header", () => {
+    for (const params of ['{"login":true}', '{"cmd":"override"}']) {
+      expect(() => tool.parse(`#!python3\r\n#!cmd={.}\r\n#!params=${params}\r\nprint(1)`))
+        .toThrow("line 3: #!params");
     }
   });
 

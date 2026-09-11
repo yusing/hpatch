@@ -5,24 +5,37 @@
 The private `hsymbol` command is available only through the model-visible shell tool:
 
 ```text
-hsymbol def PATH LINE:HASH SYMBOL [N]
-hsymbol refs PATH LINE:HASH SYMBOL [N]
+hsymbol [--workspace ROOT] def PATH (LINE|LINE:HASH) SYMBOL [N]
+hsymbol [--workspace ROOT] refs PATH (LINE|LINE:HASH) SYMBOL [N]
 ```
 
-The canonical workspace is `realpath(process.cwd())`. `PATH` may be relative or absolute, but
+The canonical workspace defaults to `realpath(process.cwd())`. An optional leading
+`--workspace ROOT` selects another existing canonical directory for resolver scope
+and relative input paths without changing the caller's working directory. `PATH` may be relative or absolute, but
 its canonical target must remain within that workspace and be a regular UTF-8 supported source
 file. Supported sources are Go `.go`; Python `.py` and `.pyi`; JSON `.json`; and the stable TypeScript 7
 formats `.ts`, `.tsx`, `.d.ts`, `.mts`, `.d.mts`, `.cts`, `.d.cts`, `.js`, `.jsx`, `.mjs`, and
 `.cjs`.
-`LINE:HASH` identifies one current logical line under `REQ-READ-001`. Hsymbol verifies the line
-and hash before starting a resolver and never searches for another matching hash.
+`LINE:HASH` identifies one current logical line under `REQ-READ-001`. Hsymbol verifies
+the line and hash before starting a resolver and never searches for another matching
+hash. A plain positive `LINE` explicitly selects the current file snapshot without
+requiring a preceding verified read. It does not assert that previously read content
+is unchanged. Both modes select exact language tokens, reject missing/ambiguous
+occurrences before resolver startup, and reject input changes during the semantic
+query before emitting result rows. Plain-line successes report the selected input
+identity on stderr as `hsymbol: input "PATH":LINE:HASH (current snapshot)`.
 
-`SYMBOL` selects an exact language token on the verified line. Go accepts non-keyword identifiers;
+`SYMBOL` selects an exact language token on the selected current line. Go accepts non-keyword identifiers;
 JavaScript and TypeScript accept their identifier, property, private-name, type-name, and JSX-name
 tokens; Python accepts identifier and property tokens; JSON accepts a decoded property-name or
 string token. Comments, larger identifiers, and unrelated literal text do not count. `N`, when
 present, is a positive base-ten occurrence without leading zeroes. When `N` is absent, exactly
 one matching token must exist; multiple matches fail as ambiguous before the resolver starts.
+
+Missing-resolver errors identify the executable needed on the executor's PATH,
+including TypeScript 7's `tsc --lsp` capability. Hsymbol never installs dependencies,
+searches for a different workspace, weakens result confinement, or substitutes text
+search. Go and LSP processes both run in the selected workspace.
 
 Each invocation starts exactly one semantic query at the selected token. Go uses one
 `gopls definition -json` or `gopls references -d` query at a UTF-8 byte offset. JavaScript,
@@ -47,8 +60,10 @@ Successful stdout contains first-seen complete verified rows:
 "PATH":LINE:HASH TEXT
 ```
 
-`PATH` is the JSON-quoted path from the canonical workspace root to the canonical result file,
-without a leading `./`. Each result file is canonical, in-workspace, regular, UTF-8, and owned by
+`PATH` is the JSON-quoted path from the default canonical workspace root to the canonical
+result file, without a leading `./`. With an explicit `--workspace`, output and selected-input
+paths are canonical absolute paths so a different resolver root cannot make references
+point at same-named files in the caller's directory. Each result file is canonical, in-workspace, regular, UTF-8, and owned by
 the selected resolver; other returned locations are omitted and counted by reason on stderr.
 References are deduplicated by canonical path and logical line. Empty `refs` is successful.
 A `def` without an editable workspace location is nonzero. An incomplete token-limited result is
@@ -84,3 +99,10 @@ Acceptance:
    model-visible tool or executable frontend. Passthrough mode loads no private command, and
    shell history containing hsymbol is not recovery
    ancestry.
+
+7. Plain-line queries need no pre-acquired hash but retain exact language-token
+   selection, ambiguity checks, and post-query source-change rejection. Hash-qualified
+   queries continue rejecting stale rows before any resolver starts.
+8. Explicit workspace selection determines input resolution and resolver cwd without
+   changing shell state. Results remain confined to that root and use unambiguous
+   absolute paths. Missing prerequisites are actionable without automatic installation.

@@ -566,7 +566,7 @@ func TestMekugiPrepareRequestExposesEditToolsAndShell(t *testing.T) {
 	if exposed != testMekugiToolDescription {
 		t.Fatalf("standalone mekugi description = %q, want native tool help only", exposed)
 	}
-	if description := jsonString(topTools[3], "description"); !strings.HasPrefix(description, "Run free-form scripts. The selected interpreter receives the exact script body, and frontend standard input remains available as program data. Prefer batching ready, independent, noninteractive programs; use separate calls for interactive work. Start each later program with a column-one interpreter selector or #!params= (implicit Bash). Each program may supply its own params object; omission inherits the previous object, while a supplied object replaces it. Batches require Code Mode, wait for each program to finish, continue after nonzero exits, and return an ordered results array.\n\n### `#!params`") ||
+	if description := jsonString(topTools[3], "description"); !strings.HasPrefix(description, "Run free-form scripts") || !strings.Contains(description, "\n\n### `#!params`") ||
 		strings.Contains(description, "#!cmd=") || strings.Contains(description, "@shell/") {
 		t.Fatalf("standalone shell description = %q", description)
 	}
@@ -1895,11 +1895,6 @@ func TestShellInterpreterWrapperAddsWarning(t *testing.T) {
 			misuse: shellWrapperMisuse{Kind: "-c", Interpreter: "sh", InterpreterArgs: []string{"-e"}, wrapper: "-ec"},
 		},
 		{
-			input:  "cat <<'EOF'\nhello\nEOF",
-			want:   "functions.shell: warning: heredoc detected; submit the script body directly instead of wrapping it in a heredoc",
-			misuse: shellWrapperMisuse{Kind: "heredoc"},
-		},
-		{
 			input:  "/usr/bin/python3 -c 'print(1)'",
 			want:   "functions.shell: warning: replace `python3 -c ...` with `#!python3` on the first line and put the Python program directly in the body",
 			misuse: shellWrapperMisuse{Kind: "-c", Interpreter: "python3", wrapper: "-c"},
@@ -1949,8 +1944,6 @@ func TestShellInterpreterWrapperAddsWarning(t *testing.T) {
 		"bash - <<'SH'\nprintf ok\nSH",
 		"sh -ec 'printf ok'",
 		"sh - <<'SH'\nprintf ok\nSH",
-		"cat <<'EOF'\nhello\nEOF",
-		"cat input.txt <<'EOF'\nhello\nEOF",
 		"zsh -c 'printf ok'",
 		"fish -c 'printf ok'",
 		"perl -e 'print 1'",
@@ -1961,8 +1954,6 @@ func TestShellInterpreterWrapperAddsWarning(t *testing.T) {
 		"psql --command 'select 1'",
 		"mysql -e 'select 1'",
 		"mysql --execute 'select 1'",
-		"printf '%s' 'normal command merely contains node -e'",
-		"# example: python3 -c 'print(1)'",
 	} {
 		misuses := shellInterpreterWrapperMisuses(contribution, input)
 		if len(misuses) == 0 || shellInterpreterWrapperWarning(misuses[0]) == "" {
@@ -1970,6 +1961,17 @@ func TestShellInterpreterWrapperAddsWarning(t *testing.T) {
 		}
 	}
 	for _, input := range []string{
+		"cat <<'EOF'\nhello\nEOF",
+		"cat input.txt <<'EOF'\nhello\nEOF",
+		"printf '%s' 'normal command merely contains node -e'",
+		"# example: python3 -c 'print(1)'",
+		"#!python3\nprint(\"python3 -c and <<'EOF'\")",
+		"#!node\nconsole.log(\"ruby -e <<EOF\")",
+		"python3 script.py <<'EOF'\ndata\nEOF",
+		"python3 -m module <<'EOF'\ndata\nEOF",
+		"printf '%s' \"$(printf 'node -e')\"",
+		"node -r fs --version",
+		"python3 -W -c --version",
 		"python3 script.py",
 		"python3 -m module",
 		"python3 -I script.py",
@@ -1993,10 +1995,10 @@ func TestShellInterpreterWrapperAddsWarning(t *testing.T) {
 		t.Error("configured shell plugin received interpreter-wrapper warning")
 	}
 
-	const input = "printf '%s' 'python3 -c'"
+	const input = "printf before\npython3 -c 'print(1)'"
 	misuses := shellInterpreterWrapperMisuses(contribution, input)
 	if len(misuses) == 0 {
-		t.Fatal("quoted interpreter wrapper was not detected")
+		t.Fatal("interpreter command wrapper was not detected")
 	}
 	warningInput := misuseWarningProjection(shellInterpreterWrapperWarning(misuses[0]))
 	transform, _, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
@@ -2031,6 +2033,43 @@ func TestShellInterpreterWrapperAddsWarning(t *testing.T) {
 	}
 }
 
+func TestShellLiteralExamplesDoNotWarnThroughRouter(t *testing.T) {
+	for _, input := range []string{
+		"node -r fs --version",
+		"python3 -W -c --version",
+		"#!python3\nprint(\"python3 -c and <<'EOF'\")",
+		"printf '%s' 'python3 -c and <<EOF'",
+		"cat <<'EOF'\npython3 -c 'example'\nEOF",
+	} {
+		t.Run(input, func(t *testing.T) {
+			transform, _, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
+			visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+				"status": "completed",
+				"output": []any{map[string]any{
+					"type": "custom_tool_call", "id": "item-shell", "call_id": "call-shell",
+					"name": "shell", "input": input, "status": "completed",
+				}},
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(visible), "functions.shell: warning:") {
+				t.Fatalf("source data produced a warning: %s", visible)
+			}
+		})
+	}
+}
+
+func TestShellCommandDataHeredocDoesNotAddWarning(t *testing.T) {
+	misuses := shellInterpreterWrapperMisuses(
+		toolContribution{PluginID: builtinToolsPluginID, Name: "shell"},
+		"python3 -c 'print(1)' <<'EOF'\ndata\nEOF",
+	)
+	if len(misuses) != 1 || misuses[0].Kind != "-c" {
+		t.Fatalf("command-mode input produced extra warnings: %#v", misuses)
+	}
+}
+
 func TestShellStacksDistinctMisuseWarnings(t *testing.T) {
 	contribution := toolContribution{PluginID: "builtin.shell", Name: "shell"}
 	wrapperMisuses := shellInterpreterWrapperMisuses(
@@ -2040,7 +2079,7 @@ func TestShellStacksDistinctMisuseWarnings(t *testing.T) {
 	if len(wrapperMisuses) != 2 || wrapperMisuses[0].Kind != "-c" || wrapperMisuses[1].Kind != "-e" {
 		t.Fatalf("distinct wrapper misuses = %#v, want -c then -e", wrapperMisuses)
 	}
-	const script = "bun -e <<'JS'\nconsole.log('ok')\nJS"
+	const script = "bun -e 'console.log(1)'\npython3 - <<'PY'\nprint('ok')\nPY"
 	misuses := shellInterpreterWrapperMisuses(contribution, script)
 	if len(misuses) != 2 || misuses[0].Kind != "-e" || misuses[1].Kind != "heredoc" {
 		t.Fatalf("stacked shell misuses = %#v, want -e then heredoc", misuses)
@@ -2083,7 +2122,7 @@ func TestShellStacksDistinctMisuseWarnings(t *testing.T) {
 		jsonQuoted(command) +
 		",\"login\":false});\ntext(JSON.stringify(result));"
 	recovered := call(t, recoveredInput)
-	wantPrefix := misuseWarningProjection(shellCodeModeRecoveryWarning) + misuseWarningProjection(nativeExecCommandWarning) + wrapperInput + heredocInput
+	wantPrefix := misuseWarningProjection(shellCodeModeRecoveryWarning) + misuseWarningProjection(nativeExecCommandWarning)
 	if recovered != wantPrefix+recoveredInput {
 		t.Fatalf("recovered shell warnings did not stack in order:\n%s", recovered)
 	}
@@ -2717,12 +2756,13 @@ func TestMekugiFailedRecoveryPreservesEvaluatedBaseline(t *testing.T) {
 	if _, err := transform.translate("call-1", base, nil); err != nil {
 		t.Fatal(err)
 	}
-	failed, err := transform.translateRecovery("call-2", "C2:ffff 2:bbbb\n", nil)
+	staleHandle := "C2:" + strings.Repeat("f", 64)
+	failed, err := transform.translateRecovery("call-2", staleHandle+" 2:bbbb\n", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !failed.unevaluated || failed.correlationID != "call-1" || failed.attempt != 2 ||
-		!strings.Contains(failed.translationError, `command handle "C2:ffff" is stale`) || calls != 1 {
+		!strings.Contains(failed.translationError, `command handle "`+staleHandle+`" is stale`) || calls != 1 {
 		t.Fatalf("failed recovery = %+v, translations %d", failed, calls)
 	}
 	payload := recoveryCommands(base)[1].handle + " 2:bbbb\n"

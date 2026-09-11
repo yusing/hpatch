@@ -50,6 +50,7 @@ async function installFakeGopls(): Promise<FakeGopls> {
     writeFile(path.join(directory, "mutate-source"), "", "utf8"),
     writeFile(executable, `#!/bin/sh
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+printf '%s\\n' "$PWD" > "$root/cwd"
 printf '%s\\n' "$*" >> "$root/calls"
 if [ -s "$root/mutate-path" ]; then
   target=$(cat "$root/mutate-path")
@@ -217,6 +218,81 @@ describe("verified-row output", () => {
     expect(tooLarge.append(`${aboveMaximum}\n`)).toBe(false);
     expect(tooLarge.current).toBe("");
     expect(tooLarge.incomplete).toBe(true);
+  });
+});
+
+describe("reader budgets and previews", () => {
+  test("shares strict budgets and explicit previews without changing row identities", async () => {
+    const directory = await temporaryDirectory("reader-preview-");
+    process.chdir(directory);
+    const content = `needle 🙂${" x".repeat(20_000)}`;
+    await writeFile("long.txt", `${content}\nneedle second\n`, "utf8");
+    const tools = [
+      {tool: createHCatTool("test", ""), args: ["long.txt"]},
+      {tool: createHGrepTool("test", ""), args: ["-F", "needle", "long.txt"]},
+    ];
+    for (const {tool, args} of tools) {
+      const result = await tool.execute(["--max-tokens", "200", "--preview-bytes", "9", ...args], executionContext);
+      expect(result.exitCode).toBe(0);
+      expect(countGPT5Tokens(result.stdout ?? "")).toBeLessThanOrEqual(200);
+      const rows = result.stdout!.trimEnd().split("\n").map((line) => JSON.parse(line));
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toMatchObject({
+        row: `1:${hashLine(content)}`,
+        preview: "needle ",
+        source_bytes: Buffer.byteLength(content),
+        omitted_bytes: Buffer.byteLength(content) - 7,
+      });
+      expect(rows[1].row).toBe(`2:${hashLine("needle second")}`);
+      const limited = await tool.execute(["--max-tokens", "1", ...args], executionContext);
+      expect(limited.exitCode).toBe(1);
+      expect(limited.stdout).toBe("");
+      expect(limited.stderr).toContain("output incomplete: 1-token limit reached");
+      for (const invalid of [
+        ["--max-tokens", "0"], ["--max-tokens", "15501"], ["--preview-bytes", "65537"],
+        ["--preview-bytes", "2", "--preview-bytes", "3"], ["--max-tokens", "1e3"],
+      ]) {
+        const rejected = await tool.execute([...invalid, ...args], executionContext);
+        expect(rejected.exitCode).toBe(1);
+        expect(rejected.stderr).toContain("requires one integer");
+      }
+    }
+  });
+
+  test("keeps admitted rows within a strict caller budget", async () => {
+    const directory = await temporaryDirectory("reader-budget-");
+    process.chdir(directory);
+    await writeFile("rows.txt", "needle first\nneedle second\n", "utf8");
+    for (const {tool, args} of [
+      {tool: createHCatTool("test", ""), args: ["rows.txt"]},
+      {tool: createHGrepTool("test", ""), args: ["-F", "needle", "rows.txt"]},
+    ]) {
+      const full = await tool.execute(args, executionContext);
+      const first = full.stdout!.split("\n")[0] + "\n";
+      const budget = countGPT5Tokens(first);
+      const limited = await tool.execute(["--max-tokens", String(budget), ...args], executionContext);
+      expect(limited.stdout).toBe(first);
+      expect(limited.exitCode).toBe(1);
+      expect(countGPT5Tokens(limited.stdout!)).toBeLessThanOrEqual(budget);
+    }
+  });
+
+  test("retains bounded hcat storage and reports the preview source bound", async () => {
+    const directory = await temporaryDirectory("reader-preview-bound-");
+    process.chdir(directory);
+    await writeFile("huge.txt", "a".repeat(2_000_000), "utf8");
+    const result = await createHCatTool("test", "").execute(["--preview-bytes", "32", "huge.txt"], executionContext);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("row 1 exceeds the 1984000-byte inspection bound");
+  });
+
+  test("parses hcat reader options before a quoted path", async () => {
+    const tool = createHCatTool("test", "");
+    expect(await tool.parse('--preview-bytes 12 --max-tokens 100 "path with spaces" 0:2',
+      {resolvePath: (value: string) => `/root/${value}`})).toEqual([
+      "--preview-bytes", "12", "--max-tokens", "100", "/root/path with spaces", "1:2",
+    ]);
   });
 });
 
@@ -562,13 +638,81 @@ describe("hgrep built-in plugin", () => {
 describe("hsymbol built-in plugin", () => {
   test("keeps its private contract behavioral", () => {
     const description = plugin.tools[2].specification.description.replace(/\s+/g, " ");
-    expect(description).toContain("hsymbol (def|refs) PATH LINE:HASH SYMBOL [N]");
+    expect(description).toContain("hsymbol [--workspace ROOT] (def|refs) PATH (LINE|LINE:HASH) SYMBOL [N]");
     expect(description).toContain('"PATH":LINE:HASH TEXT');
     expect(description).toContain("ambiguous selectors");
     for (const persistent of ["rename", "audit", "before editing", "functions.hpatch"]) {
       expect(description).not.toContain(persistent);
     }
   });
+
+  test("queries a current line in an explicit workspace without a verified read", async () => {
+    const directory = await temporaryDirectory("hsymbol-current-");
+    const caller = await temporaryDirectory("hsymbol-caller-");
+    const source = "package p\nfunc Pick() {}\nfunc Use() { Pick() }\n";
+    await writeFile(path.join(directory, "sample.go"), source);
+    process.chdir(caller);
+    const fake = await installFakeGopls();
+    const tool = createHSymbolTool("test", "");
+    await fake.respond(`${path.join(directory, "sample.go")}:3:14-18\n`);
+    const result = await tool.execute(["--workspace", directory, "refs", "sample.go", "3", "Pick"], executionContext);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe(`${JSON.stringify(path.join(directory, "sample.go"))}:${formatVerifiedRow(3, "func Use() { Pick() }")}`);
+    expect(result.stderr).toBe(`hsymbol: input ${JSON.stringify(path.join(directory, "sample.go"))}:3:${hashLine("func Use() { Pick() }")} (current snapshot)\n`);
+    expect(await readFile(path.join(path.dirname(fake.callsPath), "cwd"), "utf8")).toBe(`${directory}\n`);
+    expect(process.cwd()).toBe(caller);
+    expect(await tool.parse(`--workspace "${directory}" def sample.go 3 Pick`, {})).toEqual([
+      "--workspace", directory, "def", "sample.go", "3", "Pick",
+    ]);
+    const outside = await tool.execute(["--workspace", directory, "refs", path.join(caller, "sample.go"), "3", "Pick"], executionContext);
+    expect(outside.exitCode).toBe(1);
+    expect(outside.stderr).toContain("outside the workspace");
+    const notDirectory = await tool.execute(["--workspace", path.join(directory, "sample.go"), "refs", ".", "3", "Pick"], executionContext);
+    expect(notDirectory.stderr).toContain("workspace is not a directory");
+    await fake.mutateBeforeResponse(path.join(directory, "sample.go"), source.replace("Pick() }", "Pick(); Pick() }"));
+    const changed = await tool.execute(["--workspace", directory, "refs", "sample.go", "3", "Pick"], executionContext);
+    expect(changed.exitCode).toBe(1);
+    expect(changed.stdout).toBeUndefined();
+    expect(changed.stderr).toContain("input changed during query");
+  });
+
+  test("plain-line selection retains exact tokens and ambiguity checks before resolver startup", async () => {
+    const directory = await temporaryDirectory("hsymbol-plain-validation-");
+    process.chdir(directory);
+    await writeFile("sample.go", 'package p\nfunc Use() { target := 1; _ = target; _ = "target" }\n');
+    const fake = await installFakeGopls();
+    const tool = createHSymbolTool("test", "");
+    for (const args of [
+      ["refs", "sample.go", "2", "target"],
+      ["refs", "sample.go", "2", "targ"],
+      ["refs", "sample.go", "20", "target"],
+      ["refs", "sample.go", "02", "target"],
+      ["refs", "sample.go", "2", "target", "3"],
+    ]) {
+      const result = await tool.execute(args, executionContext);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBeUndefined();
+    }
+    expect(await readFile(fake.callsPath, "utf8")).toBe("");
+    const selected = await tool.execute(["refs", "sample.go", "2", "target", "2"], executionContext);
+    expect(selected.exitCode).toBe(0);
+    expect(selected.stderr).toContain("(current snapshot)");
+  });
+
+  test("plain-line TypeScript lookup uses the explicit resolver workspace", async () => {
+    const directory = await temporaryDirectory("hsymbol-current-ts-");
+    const caller = await temporaryDirectory("hsymbol-current-ts-caller-");
+    await writeFile(path.join(directory, "tsconfig.json"), '{"include":["*.ts"]}');
+    await writeFile(path.join(directory, "sample.ts"), "export const target = 42;\nconsole.log(target);\n");
+    process.chdir(caller);
+    process.env.PATH = `${pluginBin}${path.delimiter}${originalPath ?? ""}`;
+    const result = await createHSymbolTool("test", "").execute([
+      "--workspace", directory, "def", "sample.ts", "2", "target",
+    ], executionContext);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(`${JSON.stringify(path.join(directory, "sample.ts"))}:${formatVerifiedRow(1, "export const target = 42;")}`);
+    expect(result.stderr).toContain(`${JSON.stringify(path.join(directory, "sample.ts"))}:2:${hashLine("console.log(target);")} (current snapshot)`);
+  }, 30_000);
 
   test("validates the verified Go token selector before starting gopls", async () => {
     const directory = await temporaryDirectory("hsymbol-plugin-");
@@ -630,7 +774,7 @@ describe("hsymbol built-in plugin", () => {
       executionContext,
     );
     expect(result).toEqual({
-      stderr: "hsymbol: target is not a symbol token on the verified line\n",
+      stderr: "hsymbol: target is not a symbol token on the selected line\n",
       exitCode: 1,
     });
   });
@@ -859,7 +1003,7 @@ describe("hsymbol built-in plugin", () => {
     const emptyPath = await temporaryDirectory("hsymbol-empty-path-");
     process.env.PATH = emptyPath;
     const unavailable = await tool.execute(["refs", "input.go", reference, "Target"], executionContext);
-    expect(unavailable).toEqual({stderr: "hsymbol: gopls is unavailable\n", exitCode: 1, terminationReason: "resolver_cleanup"});
+    expect(unavailable).toEqual({stderr: "hsymbol: gopls is unavailable; expose gopls on the executor PATH\n", exitCode: 1, terminationReason: "resolver_cleanup"});
   });
 
   test("fails without query output when the selected input changes during gopls", async () => {
@@ -1014,11 +1158,11 @@ describe("hsymbol built-in plugin", () => {
     expect(await tool.execute(
       ["refs", "input.ts", `2:${hashLine(typescriptLine)}`, "target"],
       executionContext,
-    )).toEqual({stderr: "hsymbol: tsc is unavailable\n", exitCode: 1, terminationReason: "resolver_cleanup"});
+    )).toEqual({stderr: "hsymbol: tsc is unavailable; expose TypeScript 7 tsc with --lsp support on the executor PATH\n", exitCode: 1, terminationReason: "resolver_cleanup"});
     expect(await tool.execute(
       ["refs", "input.py", `2:${hashLine(pythonLine)}`, "target"],
       executionContext,
-    )).toEqual({stderr: "hsymbol: pyright-langserver is unavailable\n", exitCode: 1, terminationReason: "resolver_cleanup"});
+    )).toEqual({stderr: "hsymbol: pyright-langserver is unavailable; expose pyright-langserver on the executor PATH\n", exitCode: 1, terminationReason: "resolver_cleanup"});
   });
 
   test("reaps a language server that ignores shutdown", async () => {
@@ -1099,7 +1243,7 @@ process.stdin.on("data", (chunk) => {
       expect(result).toMatchObject({exitCode: 0});
       expect(result.stderr).toBeUndefined();
     }
-  });
+  }, 30_000);
 });
 
 describe("inspect_file built-in plugin", () => {
@@ -1110,7 +1254,7 @@ describe("inspect_file built-in plugin", () => {
       inspectFileDescription.indexOf(marker) + marker.length,
     ));
     expect(schema.success.data.outline).toBe("outline_entry[]");
-    expect(schema.failure.error.code).toContain("outside_workspace");
+    expect(schema.selected_entry_source.omitted_bytes).toBe("integer");
     for (const persistent of ["hcat", "before editing", "Reason carefully"]) {
       expect(inspectFileDescription).not.toContain(persistent);
     }
@@ -1372,7 +1516,107 @@ describe("inspect_file language projections", () => {
   });
 });
 
-describe("inspect_file bounds and confinement", () => {
+describe("inspect_file source selection", () => {
+  test("preserves the colon in frontmatter entries with omitted values", async () => {
+    const directory = await temporaryDirectory("inspect-null-source-");
+    process.chdir(directory);
+    await writeFile("meta.md", "---\ndraft:\n---\n");
+    const tool = createInspectFileTool("test", "");
+    const result = await tool.execute(["--source", "draft", "meta.md"], executionContext);
+    expect(result.exitCode).toBe(0);
+    const entry = JSON.parse(result.stdout!).data.outline[0];
+    expect(entry.source).toEqual({text: "draft:", source_bytes: 6, omitted_bytes: 0});
+    expect(entry.line).toBe(`2:${hashLine("draft:")}`);
+    expect(entry.line_end).toBe(entry.line);
+  });
+
+  test("reads absolute, parent-relative and outside symlink paths like hcat", async () => {
+    const directory = await temporaryDirectory("inspect-paths-");
+    const outside = await temporaryDirectory("inspect-outside-");
+    await writeFile(path.join(outside, "value.json"), '{"value":42}\n');
+    process.chdir(directory);
+    await symlink(path.join(outside, "value.json"), "linked.json");
+    const tool = createInspectFileTool("test", "");
+    for (const input of [path.join(outside, "value.json"), path.relative(directory, path.join(outside, "value.json")), "linked.json"]) {
+      const result = await tool.execute([input], executionContext);
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout!).data.outline).toHaveLength(2);
+    }
+    const directoryResult = await tool.execute([outside], executionContext);
+    expect(JSON.parse(directoryResult.stdout!).error.code).toBe("not_regular");
+  });
+
+  test("returns matching declaration source and minified JSON value without a second read", async () => {
+    const directory = await temporaryDirectory("inspect-source-");
+    process.chdir(directory);
+    const source = "package p\r\nfunc Pick() {\r\n\tprintln(\"🙂\")\r\n}\r\nfunc Other() {}\r\n";
+    await writeFile("sample.go", source);
+    await writeFile("value.json", '{"a/b":{"~x":"🙂value"},"other":"not-selected"}');
+    await writeFile("meta.md", "---\nsummary: |\n  multiline value\n---\n# Title\n");
+    const tool = createInspectFileTool("test", "");
+    const code = await tool.execute(["--source", "Pick", "sample.go"], executionContext);
+    const data = JSON.parse(code.stdout!).data;
+    expect(data.selection).toBe("Pick");
+    expect(data.outline).toHaveLength(1);
+    expect(data.outline[0].source).toEqual({
+      text: 'func Pick() {\r\n\tprintln("🙂")\r\n}',
+      source_bytes: Buffer.byteLength('func Pick() {\r\n\tprintln("🙂")\r\n}'),
+      omitted_bytes: 0,
+    });
+    expect(data.outline[0].line).toBe(`2:${hashLine("func Pick() {")}`);
+    expect(data.outline[0].line_end).toBe(`4:${hashLine("}")}`);
+
+    const value = await tool.execute(["--source", "/a~1b/~0x", "--source-bytes", "3", "value.json"], executionContext);
+    const entry = JSON.parse(value.stdout!).data.outline[0];
+    expect(entry.source.text).toBe('"');
+    expect(entry.source.source_bytes).toBe(Buffer.byteLength('"🙂value"'));
+    expect(entry.source.omitted_bytes).toBe(Buffer.byteLength('"🙂value"') - 1);
+    expect(entry.line).toBe(`1:${hashLine('{"a/b":{"~x":"🙂value"},"other":"not-selected"}')}`);
+    const root = await tool.execute(["--source", "", "value.json"], executionContext);
+    expect(JSON.parse(root.stdout!).data.outline[0].source.text).toBe('{"a/b":{"~x":"🙂value"},"other":"not-selected"}');
+    const yaml = await tool.execute(["--source", "summary", "meta.md"], executionContext);
+    expect(JSON.parse(yaml.stdout!).data.outline[0].source.text).toContain("multiline value");
+    expect(JSON.parse(yaml.stdout!).data.outline[0].line_end).toBe(`3:${hashLine("  multiline value")}`);
+    const missing = await tool.execute(["--source", "NoSuchName", "sample.go"], executionContext);
+    expect(JSON.parse(missing.stdout!).data.outline).toEqual([]);
+  });
+
+  test("keeps duplicate selections, bounded prefixes, and output-envelope truncation explicit", async () => {
+    const directory = await temporaryDirectory("inspect-selected-bound-");
+    process.chdir(directory);
+    await writeFile("long.json", `{${Array.from({length: 40}, () => `"same":"${"x".repeat(10_000)}"`).join(",")}}`);
+    const tool = createInspectFileTool("test", "");
+    const result = await tool.execute(["--source", "/same", "long.json"], executionContext);
+    expect(result.exitCode).toBe(0);
+    expect(Buffer.byteLength(result.stdout!)).toBeLessThanOrEqual(65_536);
+    const parsed = JSON.parse(result.stdout!);
+    expect(parsed.truncated).toBe(true);
+    expect(parsed.data.outline.length).toBeGreaterThan(1);
+    expect(parsed.truncation.after_entries).toBe(parsed.data.outline.length);
+    for (const entry of parsed.data.outline) {
+      expect(entry.source.source_bytes).toBe(10_002);
+      expect(entry.source.omitted_bytes).toBe(10_002 - 8192);
+    }
+    for (const args of [
+      ["--source-bytes", "1", "long.json"],
+      ["--source", "/same", "--source-bytes", "8193", "long.json"],
+      ["--source", "/same", "--source", "/same", "long.json"],
+    ]) {
+      const rejected = await tool.execute(args, executionContext);
+      expect(rejected.exitCode).toBe(1);
+      expect(JSON.parse(rejected.stdout!).error.code).toBe("usage");
+    }
+  });
+
+  test("parses quoted names and paths in source selections", async () => {
+    const tool = createInspectFileTool("test", "");
+    expect(await tool.parse('--source "A name" "path with spaces.md"', {})).toEqual([
+      "--source", "A name", "path with spaces.md",
+    ]);
+  });
+});
+
+describe("inspect_file bounds and paths", () => {
 
   test("emits LINE:HASH span identities without source bodies", async () => {
     const directory = await temporaryDirectory("inspect-file-hash-");

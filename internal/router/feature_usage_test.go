@@ -15,12 +15,13 @@ import (
 
 func featureDebugOutput(t *testing.T) *debugOutput {
 	t.Helper()
-	file, err := os.Create(filepath.Join(t.TempDir(), "router.jsonl"))
+	flags := newRouterFlags(io.Discard)
+	*flags.debug = true
+	d, err := openDebugOutput(flags)
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := &debugOutput{log: file}
-	t.Cleanup(func() { _ = d.close() })
+	t.Cleanup(func() { _ = d.close(); _ = os.RemoveAll(filepath.Dir(d.paths[0])) })
 	return d
 }
 

@@ -13,8 +13,13 @@ func TestSubagentToolActivityJSONAndSSE(t *testing.T) {
 		t.Run(map[bool]string{false: "json", true: "sse"}[stream], func(t *testing.T) {
 			proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 			root, _ := prepareActivityTest(t, proxy, "root", "r", "", "/root", nil)
-			child, _ := prepareActivityTest(t, proxy, "child", "c", "r", "/root/worker", nil)
+			child, _ := prepareActivityTest(t, proxy, "child", "c", "r", "/root/worker", []any{
+				map[string]any{"type": "custom_tool_call", "call_id": "origin", "name": "exec", "input": `text(await tools.exec_command({cmd:"go test ./internal/router"}));`},
+				map[string]any{"type": "custom_tool_call_output", "call_id": "origin", "output": "Script running with cell ID 7\nWall time 30 seconds\nOutput:\n"},
+			})
 			calls := []map[string]any{
+				{"type": "function_call", "id": "cell-wait", "call_id": "cell-wait", "name": "wait", "arguments": `{"cell_id":"7","yield_time_ms":30000,"max_tokens":5000}`},
+				{"type": "function_call", "id": "cell-stop", "call_id": "cell-stop", "namespace": "functions", "name": "wait", "arguments": `{"cell_id":"7","terminate":true}`},
 				{"type": "function_call", "id": "first", "call_id": "first", "namespace": "functions", "name": "lookup", "arguments": "{\"query\":\"hello\"}"},
 				{"type": "custom_tool_call", "id": "second", "call_id": "second", "name": "external", "input": "first line\n" + strings.Repeat("界", 300)},
 				{"type": "function_call", "id": "third", "call_id": "third", "namespace": "collaboration", "name": "send_message", "arguments": "opaque message"},
@@ -54,7 +59,7 @@ func TestSubagentToolActivityJSONAndSSE(t *testing.T) {
 			// Start metadata precedes the child's distinct tool calls.
 			response.Output = response.Output[1:]
 			got := commentaryText(t, response.Output[0])
-			want := "In `/root/worker`\n\n- Tool call: `functions.lookup`\n  `{\"query\":\"hello\"}`" +
+			want := "In `/root/worker`\n\n- Still Running\n  ```bash\n  go test ./internal/router\n  ```\n\n- Stop\n  ```bash\n  go test ./internal/router\n  ```\n\n- Tool call: `functions.lookup`\n  `{\"query\":\"hello\"}`" +
 				"\n\n- Tool call: `external`\n  ```\n  first line\n  " + strings.Repeat("界", 300) + "\n  ```" +
 				"\n\n- Tool call: `collaboration.send_message`" +
 				"\n\n- Run\n  ```bash\n  echo a\n    echo b\n  ```" +
@@ -225,5 +230,49 @@ func TestCommentaryCodeEscapesBackticks(t *testing.T) {
 	text := attributedCommentary("/root/a`b", "Working.")
 	if attributedCommentary("/root/a`b", text) != text {
 		t.Fatal("attribution duplicated")
+	}
+}
+
+func TestSubagentBatchToolActivityJSONAndSSE(t *testing.T) {
+	const source = "#!batch=SESSION\nsed -n '1,360p' file.go\nSESSION\nrg pattern file.go\nSESSION\ngit status --short\ngit log -1 --oneline"
+	for _, stream := range []bool{false, true} {
+		t.Run(map[bool]string{false: "json", true: "sse"}[stream], func(t *testing.T) {
+			proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+			root, _ := prepareActivityTest(t, proxy, "root", "r", "", "/root", nil)
+			child, _ := prepareActivityTest(t, proxy, "child", "c", "r", "/root/worker", nil)
+			call := map[string]any{"type": "shell_call", "id": "batch", "status": "completed", "action": map[string]any{"commands": []string{source}}}
+			payload := mustTestJSON(t, map[string]any{"status": "completed", "output": []any{call}})
+			if stream {
+				for _, eventType := range []string{"response.output_item.added", "response.output_item.done"} {
+					event := mustTestJSON(t, map[string]any{"type": eventType, "item": call})
+					events, err := child.TransformSSE(event)
+					if err != nil || len(events) != 1 || !bytes.Equal(events[0], event) {
+						t.Fatalf("native child call changed: %s, %v", events, err)
+					}
+				}
+				if _, err := child.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.completed", "response": json.RawMessage(payload)})); err != nil {
+					t.Fatal(err)
+				}
+			} else if output, err := child.TransformJSON(payload); err != nil || !bytes.Equal(output, payload) {
+				t.Fatalf("native child call changed: %s, %v", output, err)
+			}
+			output, err := root.TransformJSON([]byte(`{"status":"completed","output":[]}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var response struct{ Output []map[string]json.RawMessage }
+			if err := json.Unmarshal(output, &response); err != nil || len(response.Output) != 2 {
+				t.Fatalf("batch activity deduplication: %s, %v", output, err)
+			}
+			text := commentaryText(t, response.Output[1])
+			for _, want := range []string{"Read `file.go 1:360`", "Search", "pattern", "git status --short", "git log -1 --oneline"} {
+				if !strings.Contains(text, want) {
+					t.Fatalf("missing %q in %s", want, text)
+				}
+			}
+			if strings.Contains(text, "SESSION") || strings.Contains(text, "#!batch") {
+				t.Fatalf("transport framing leaked into activity: %s", text)
+			}
+		})
 	}
 }

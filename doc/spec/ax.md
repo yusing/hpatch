@@ -1,0 +1,88 @@
+# Agent-experience evidence
+
+## REQ-AX-001 — Runtime reads and evidence-backed AX reporting
+
+The shell worker observes actual invocations of private `hcat`, `hgrep`, `hsymbol`,
+and `inspect_file` at its dispatch boundary. An absolute `MEKUGI_AX_OUTPUT` opts into
+a local `mekugi.ax.read.v1` JSONL journal. The worker inherits this environment value;
+no router process, transport request, or static source scan supplies an executed-read count.
+
+`--debug` implies AX instrumentation without an additional flag or environment setting.
+It creates a journal in the debug directory unless `MEKUGI_AX_OUTPUT` is already set,
+supplies its path to the wrapped executor, and includes an automatic `ax.json` report
+and the journal among the printed artifact paths. Automatic rollout discovery and
+missing-evidence states follow [REQ-ROUTER-001](router.md). The ordinary manual
+journal/inspection workflow remains available without enabling other debug artifacts.
+
+Each invocation emits a random identity, thread ID, reader name, UTC timestamp,
+and start/finish phase. Finish includes elapsed monotonic nanoseconds and success.
+Loops count each actual invocation. Skipped branches and literal source examples count
+none. Reader failures, including invalid arguments or retained-file acquisition, remain
+failed invocation attempts. These counts are not physical filesystem-open counts.
+Other interpreters and external programs' internal reads remain outside coverage.
+
+The journal is optional, private (`0600`), regular, append-only, and limited to 64 MiB.
+New journals receive `0600` even under a restrictive umask; existing files with other
+permissions are rejected without changing their mode.
+Capacity checking and append share a cross-process lock acquired with nonblocking attempts
+and a 200 ms retry budget. Router startup rejects journal aliases of capture or metrics outputs, with or without debug.
+It contains no source paths, scripts, arguments, credentials, or command output.
+An existing symlink or nonregular path is rejected without blocking; no parent is created.
+Observation failures cannot stop, repeat, or change the exit status/stdout of a command.
+Auxiliary stderr identifies unavailable or incomplete evidence without raw error content.
+A missing finish is incomplete; missing or unattributed evidence is unavailable.
+The journal is local evidence, not a tamper-proof audit or a claim that all processes
+in the session had instrumentation enabled.
+
+`mekugi inspect-session --session PATH --ax` returns additive AX data with
+`scope` explicitly covering the entire supplied rollout, independent of table pagination
+or call filtering. `--read-log PATH` and `--defects PATH` imply `--ax`.
+The capturer package owns the following offline calculations:
+
+- **Edit observations:** count matched original HPATCH/recovery calls, recorded attempts
+  above one, emitted payload bytes, rejected attempts, and unconfirmed translations.
+  Missing replay is counted separately, not reconstructed from carrier code.
+- **Repeated bytes:** sum exact physical-line bytes also present in the preceding matched
+  edit's original emitted payload, with multiplicity capped by that preceding payload.
+  LF bytes count; changed lines and router-rebuilt scripts are not substituted. This is
+  line-aligned re-emission, not a judgment that those bytes were unnecessary.
+- **Read observations:** filter runtime events by the rollout's recorded thread ID, pair
+  starts/finishes by invocation identity, and expose started/completed/succeeded/failed,
+  incomplete, per-reader counts, and measured duration. Reject malformed, duplicate,
+  unpaired, oversized, or arithmetically invalid evidence. No source-derived read estimate
+  substitutes for runtime evidence.
+- **Completion observations:** pair `task_started`/`task_complete` or
+  `turn_started`/`turn_complete` by turn identity and matching event family using rollout timestamps.
+  Cross-family events remain unpaired. Report completed-turn count,
+  summed observed intervals (milliseconds saturated at the signed 64-bit maximum), and
+  unpaired events. Missing events do not imply completion;
+  these intervals include all activity between recorded start and completion.
+- **Defect assessments:** accept a JSON array of unique known edit call IDs, explicit
+  `defect`/`no_defect` verdicts, and real evidence-artifact paths. Relative paths resolve
+  from the assessment file. Evidence must be nonempty, regular, and at most 1 MiB; record
+  its absolute path and SHA-256, not its content. Report assessed/unassessed calls and
+  reported defects separately from observed rejection/application outcomes. The supplied
+  judgment is not converted into independently proven causality or semantic correctness.
+
+Assessment JSON is bounded to 1 MiB. Runtime journals are bounded to 64 MiB, 4096 bytes
+per event, and 100000 invocation identities. Explicitly supplied journals are validated even when
+thread metadata is absent; attribution remains unavailable rather than skipping validation. Missing sources remain unavailable;
+invalid supplied sources fail the query before any result is emitted. No AX query writes
+the session, journal, evidence artifacts, or replay store.
+
+These additions do not alter schema-6 transport captures, metrics-v4 endpoints, existing
+benchmark calculations, or dashboard ownership. AX journals and assessment artifacts are
+separate explicit inputs, not unsanitized content added to transport metrics.
+
+Acceptance:
+1. Real worker tests distinguish executed reads, repeated loop iterations, skipped code,
+   literal examples, and failures while retaining command output and exit behavior.
+2. Missing instrumentation, interrupted readers, other-thread events, concurrent writers,
+   malformed evidence, and observation-write failures cannot create false success.
+3. Original/recovery payloads produce reproducible byte/retry measurements; repeated lines
+   are multiplicity-bounded and actual rebuilt edits are not counted as re-emitted.
+4. Completion timing comes from paired recorded events, not wall-clock guessing.
+5. Every defect verdict references a bounded real artifact with a checked fingerprint;
+   missing, duplicate, unknown-call, and invalid-verdict assessments fail.
+6. The installed CLI exercises runtime journal and defect reporting end to end without
+   requiring a workspace argument or changing inspected state.

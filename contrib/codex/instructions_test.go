@@ -134,7 +134,7 @@ func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 	for _, required := range []string{
 		"Use separate shell calls for interactive programs",
 		"prefer one batch for ready, independent, noninteractive programs",
-		"#!params={\"yield_time_ms\":1000}\necho hello\n#!python3\nprint(\"hello\")",
+		"#!batch=NEXT_PROGRAM\n#!params={\"yield_time_ms\":1000}\necho hello\nNEXT_PROGRAM\n#!python3\nprint(\"hello\")",
 		"Submit free-form programs to `functions.shell`",
 		"Bash: write commands directly, without a shebang.",
 		"a shell heredoc such as `python3 - <<'PY'`",
@@ -147,7 +147,13 @@ func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 		"`hcat @shell/<reference>`",
 		"only `#!script=@shell/<reference>`",
 		"never mix retained scripts and workspace files",
-		"PTY-backed, interactive, and long-running programs",
+		"use native session facilities for interactive input or termination",
+		"`#!batch-stop=SEPARATOR`",
+		"Omitted params inherit the previous complete object",
+		"shell variables and `cd` changes do not carry over",
+		"expire at the reported deadline or earlier",
+		"Reads and edits do not renew them",
+		"Save durable source in workspace files",
 	} {
 		for _, model := range []string{"", "gpt-6-astra"} {
 			for _, compact := range []bool{false, true} {
@@ -165,8 +171,10 @@ func TestInstructionsAcquireAndReuseVerifiedTargets(t *testing.T) {
 		"Acquire target-bearing context for existing-file edits.",
 		"use hgrep first; use `-F` with repeated `-e` literals",
 		"Copy inspect_file `LINE:HASH` spans",
-		"`hsymbol refs PATH LINE:HASH SYMBOL [N]`",
-		"Use `hsymbol def PATH LINE:HASH SYMBOL [N]`",
+		"`hsymbol refs PATH LINE SYMBOL [N]`",
+		"`hsymbol def PATH LINE SYMBOL [N]`",
+		"`LINE:HASH` instead of `LINE` to enforce a prior read",
+		"A leading `--workspace ROOT` chooses resolver scope",
 		"instead of rereading solely to obtain an already available target",
 		"When those forms no longer identify the intended current span",
 		"Existing-file edits require a target.",
@@ -174,7 +182,7 @@ func TestInstructionsAcquireAndReuseVerifiedTargets(t *testing.T) {
 		"unchanged saved rows remain valid even when edits shifted their line numbers",
 		"On later calls, target previously changed content with a returned final-state row, a\nconfirmed mapping, or exact unanchored current text; never reconstruct a row or range endpoint.",
 		`type "return oldResult, nil" "return newResult, nil"`,
-		`C3:bcde "return oldResult, nil"`,
+		`C3:bcde0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab "return oldResult, nil"`,
 		"exact known target text spans logical lines or includes a trailing LF",
 	} {
 		if !strings.Contains(InstructionsForModel("", true), required) {
@@ -206,15 +214,54 @@ func TestInstructionsStayWithinMekugiAndPrivateTools(t *testing.T) {
 
 func TestRecoveryGuidanceRendersDynamicReferences(t *testing.T) {
 	const references = "Rejected target commands:\n"
-	const want = "\nRepair only the stale targets in the retained rejected script. Each line is a current `C...` command handle followed directly by one different ordinary HPATCH/2 target. Submit every listed correction in one atomic payload. Recovery preserves operations, values, command order, and file context. A re-rejection changes no workspace file and makes every earlier handle stale. Use a complete script through functions.hpatch for every other correction.\n\n" + references
+	const want = "\nRepair only the stale targets in the retained rejected script. Each line is a current `C...` command handle followed directly by one different ordinary HPATCH/2 target. Submit every listed correction in one atomic payload. Other commands and fields are preserved. A re-rejection changes no workspace file and makes every earlier handle stale. For other corrections, use ordinary type/add mutations through functions.hpatch_recover against retained-script text.\n\n" + references
 	if got := RecoveryGuidance(references); got != want {
 		t.Fatalf("RecoveryGuidance() = %q, want %q", got, want)
 	}
 }
 
 func TestRecoveryGuidanceWithoutReferences(t *testing.T) {
-	const want = "\nRepair only the stale targets in the retained rejected script. Each line is a current `C...` command handle followed directly by one different ordinary HPATCH/2 target. Submit every listed correction in one atomic payload. Recovery preserves operations, values, command order, and file context. A re-rejection changes no workspace file and makes every earlier handle stale. Use a complete script through functions.hpatch for every other correction.\n\n"
+	const want = "\nRepair only the stale targets in the retained rejected script. Each line is a current `C...` command handle followed directly by one different ordinary HPATCH/2 target. Submit every listed correction in one atomic payload. Other commands and fields are preserved. A re-rejection changes no workspace file and makes every earlier handle stale. For other corrections, use ordinary type/add mutations through functions.hpatch_recover against retained-script text.\n\n"
 	if got := RecoveryGuidance(""); got != want {
 		t.Fatalf("RecoveryGuidance() = %q, want %q", got, want)
+	}
+}
+
+func TestInstructionsConsolidateDeliveredContracts(t *testing.T) {
+	for _, model := range []string{"gpt-6-astra", "gpt-5.6-sol"} {
+		for _, compact := range []bool{false, true} {
+			got := InstructionsForModel(model, compact)
+			for _, required := range []string{
+				"## Commentary\n",
+				"### Rejected-script recovery\n",
+				"Nonempty line and range `type` replacements preserve",
+				"`advisory`",
+				"`<<TEXT` (keep final terminator)",
+				"`continuation` notice's `next_call`",
+				"Retained scripts are thread-private",
+				"`--preview-bytes N`",
+				"`inspect_file --source NAME PATH`",
+				"plain lines query the\ncurrent snapshot",
+				"For values, framing, paths, conflicting commands, or mixed corrections",
+				"not workspace files",
+				"keep the two payload forms separate",
+				"reevaluate the complete script atomically",
+				"use its script rows and refreshed command handles",
+				"Invalid corrections leave the workspace and retained baseline unchanged",
+			} {
+				if strings.Count(got, required) != 1 {
+					t.Errorf("model %q compact %v: contract %q must occur once", model, compact, required)
+				}
+			}
+			for _, obsolete := range []string{
+				"one complete ordinary script for non-target",
+				"after obtaining a verified selector row",
+				"selector lines are reserved even inside",
+			} {
+				if strings.Contains(got, obsolete) {
+					t.Errorf("model %q compact %v: superseded guidance %q", model, compact, obsolete)
+				}
+			}
+		}
 	}
 }

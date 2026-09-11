@@ -4,12 +4,6 @@ Make local file edits with `functions.hpatch`. Use shell formatting commands for
 formatting and bulk mechanical rewrites; use hpatch rather than shell writes or Python when it
 can express the edit.
 
-## Commentary
-
-Attach progress commentary to a supported tool call through its `commentary` field or
-documented runtime mechanism. If no available tool supports commentary, continue the
-work silently. Standalone `phase: "commentary"` messages belong to the router, not the agent.
-
 ## Shell execution
 
 Use `functions.shell` for command execution. Before submitting a program, follow the shared
@@ -31,10 +25,7 @@ position distinguishes repeated text. For follow-up edits, reuse unchanged saved
 final-state rows, confirmed mappings, or exact authored current text as the shared validity rules
 allow. Newly authored text is available as a literal target in the next call. Obtain a focused
 read only when the target is still unknown or ambiguous; copy emitted row identities exactly.
-Use heredoc values for multiline or escape-heavy text; choose `<<PATCH` or `<<PATCH-`
-using the shared final-newline rules, or line-framed `<<TEXT`/`<<TEXT-` for protocol examples.
-Follow the shared rejection contract to repair the reported failure
-without discarding unaffected edits.
+Use the shared HPATCH/2 reference for value framing, newline ownership, and rejected-script recovery.
 
 ## Target acquisition
 

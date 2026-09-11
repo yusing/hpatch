@@ -30,6 +30,18 @@ The engine orders registered immutable-baseline edits once and renders one final
 value per file. It never reads pending mutated content while resolving a later target.
 Content movement requires emitting the destination content; `mv` moves whole files only.
 
+Successful host reports expose advisory boundary evidence under `REQ-OUTPUT-001`,
+including empty-value deletion, inherited terminators, and adjacent blank
+separators. These observations never adjust whitespace or turn a valid edit into
+a rejection.
+
+`EditText` exposes the same target-bearing `type`/`add` subset over an in-memory
+immutable string, without filesystem access, language validation, formatting, or
+indentation correction. `EditTextBounded` additionally requires a nonnegative byte
+limit and rejects an oversized baseline or planned result after any command,
+before concatenating expanded content. It returns no text on rejection. These
+generic primitives know nothing about router recovery ancestry.
+
 Acceptance:
 
 1. Replacement, deletion, insertion before a line or text destination, and EOF append

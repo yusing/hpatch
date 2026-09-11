@@ -34,7 +34,7 @@ func TestDebugPathsPrintAfterCodexExit(t *testing.T) {
 				t.Fatal(err)
 			}
 			before, after, ok := strings.Cut(string(data), "codex-finished\n")
-			if !ok || strings.Contains(before, "mekugi debug:") || strings.Count(after, "mekugi debug: ") != 4 {
+			if !ok || strings.Contains(before, "mekugi debug:") || strings.Count(after, "mekugi debug: ") != 6 {
 				t.Fatalf("debug paths did not print only after child exit: %q", data)
 			}
 			for line := range strings.Lines(after) {

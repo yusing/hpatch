@@ -287,35 +287,36 @@ func (p *mekugiProxy) shellRoot(directory string) (*os.Root, func(), error) {
 	return session.scripts, release, nil
 }
 
-func (p *mekugiProxy) retainShell(directory, callID, script string) (string, bool) {
+func (p *mekugiProxy) retainShell(directory, callID, script string) (string, time.Time, bool) {
 	if shellruntime.ValidateID(callID) != nil || callID == ".runtime" {
-		return "", false
+		return "", time.Time{}, false
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	session, ok := p.shellSessions[directory]
 	if p.closed || !ok {
-		return "", false
+		return "", time.Time{}, false
 	}
 	if err := session.createStorage(); err != nil {
-		return "", false
+		return "", time.Time{}, false
 	}
 	defer session.retireIdle()
 	if _, pendingExpiry := session.timers[callID]; pendingExpiry {
-		return "", false
+		return "", time.Time{}, false
 	}
 	// Exclusive creation rejects duplicate IDs and preexisting symlinks rather
 	// than overwriting an artifact or following a link supplied by another writer.
 	file, err := session.scripts.OpenFile(callID, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return "", false
+		return "", time.Time{}, false
 	}
 	_, writeErr := io.WriteString(file, script)
 	if err = errors.Join(writeErr, file.Close()); err != nil {
 		_ = session.scripts.Remove(callID)
-		return "", false
+		return "", time.Time{}, false
 	}
-	session.timers[callID] = time.AfterFunc(shellArtifactTTL, func() {
+	expiresAt := time.Now().Add(shellArtifactTTL)
+	session.timers[callID] = time.AfterFunc(time.Until(expiresAt), func() {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		if !p.closed {
@@ -323,13 +324,18 @@ func (p *mekugiProxy) retainShell(directory, callID, script string) (string, boo
 			session.retireIdle()
 		}
 	})
-	return shellArtifactPrefix + callID, true
+	return shellArtifactPrefix + callID, expiresAt, true
 }
 
 func (p *mekugiProxy) resolveShellInput(directory, input string) (string, error) {
 	seen := make(map[string]bool)
 	var root *os.Root
 	for {
+		// Batch framing belongs to Split after reference resolution, not to
+		// the single-program header parser. This also applies to retained batches.
+		if _, _, batch := shellsyntax.BatchHeader(input); batch {
+			return input, nil
+		}
 		parsed, err := shellsyntax.Parse(input)
 		if err != nil {
 			return "", err

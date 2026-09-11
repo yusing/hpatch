@@ -110,6 +110,8 @@ shown as `Still Running` with a short excerpt of the actual command, matching na
 `write_stdin` polls. Stored shell references display `Running stored script` with the
 resolved command excerpt, not transport directives or reference IDs. These excerpts
 use the first source line, at most 120 characters including an ellipsis when shortened.
+For an explicit batch, they use the first program's body and an ellipsis for the remaining
+programs, rather than exposing the batch header as the command.
 Polls correlate only with visible call/result pairs that include execution metadata in the
 same request; output-only Code Mode projections are not session evidence. Missing command
 history or unavailable stored source is labelled `command unavailable`, never guessed.
@@ -128,6 +130,12 @@ establish shell-session result metadata. Dynamic arguments, control flow, runtim
 name shadowing, unknown tools, or unrelated executable statements retain the
 complete JavaScript preview, never a partially simplified subset. Rendering never
 evaluates a call or claims success, and collaboration display stays Codex-owned.
+Code Mode `wait` calls display `Still Running` with the originating operation or source,
+or `Stop` with that operation when `terminate` is true, without transport arguments.
+Cell identity comes only from a visible matched call/result pair with leading host execution
+metadata; subsequent waits preserve that association and terminal results retire it.
+Missing history is labelled `operation unavailable`, never inferred from another cell.
+Stop describes the requested operation, not successful termination.
 Simple literal `cat` and `hcat` calls display `Read <file>`. Literal bounded
 `sed -n 'START,ENDp' <file>` reads display `Read <file> START:END`, with positive decimal
 line numbers and an end not before the start. Only this single-file print form is classified;
@@ -140,6 +148,8 @@ full skill/reference operand. Optional read ranges remain visible for both forms
 Simple listing, search, and structural inspection commands use `List`, `Search`, and `Inspect`
 labels, retaining search flags and operands. Native web/file search, image viewing/generation,
 code execution, input sending, and editing calls use descriptive operation labels.
+Hcat and inspect_file previews validate literal option bounds, duplicates, and operand
+placement before classification; invalid forms retain their source-level `Run` display.
 A native `apply_patch` call unwraps its string or structured patch argument for display.
 A successfully translated `hpatch` or `hpatch_recover` call uses the already-retained translated
 patch for display. Framed patches show one commentary per file with an inline-code path and an operation
@@ -150,6 +160,11 @@ heading. Literal added, removed, and context lines remain intact. Unrecognized p
 retains the original source-level diff display. Display never executes or retranslates an edit.
 Rejected, unavailable, and already-satisfied translations retain a truthful source-level
 fallback rather than claiming a patch was applied.
+Valid explicit shell batches classify each program independently, in order, using
+that program's interpreter and directives. Batch headers and separator lines are
+transport framing, not displayed commands. Malformed batches retain the complete
+source-level fallback; marker-like lines inside ordinary programs remain source.
+
 Mixed scripts of simple commands classify each command independently. An unclassified command
 retains its source as a `Run` action without hiding neighboring `Search`, `Read`, or other
 classified operations. Single-line `Run` details in these mixed summaries use inline code;

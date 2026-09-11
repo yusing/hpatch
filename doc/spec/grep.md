@@ -30,6 +30,13 @@ cancellation, invalid-pattern, and missing-executable failures return concise no
 diagnostics. Output contains only complete rows and uses the shared verified-row token admission
 rule in `REQ-READ-001`. On the first omitted distinct result, hgrep terminates and reaps ripgrep.
 
+The leading reader options, strict caller token ceiling, and explicit JSON preview
+format are shared with `REQ-READ-001`. They are consumed before ripgrep argument
+normalization and are never forwarded to ripgrep. The prefix preview may not
+contain a match that occurs later in a long line; its full-row hash and omitted
+byte count remain exact. Pattern operands (including `-e --max-tokens`) retain
+ripgrep meaning after the leading reader options have ended.
+
 Acceptance:
 
 1. A regular-expression search with an explicit path and glob emits JSON-quoted paths,

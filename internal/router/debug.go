@@ -11,16 +11,20 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/yusing/mekugi/capturer"
 )
 
 // Debug output is separate from sanitized capture. Only the instruction dump
 // contains prompt text; diagnostics never serialize arbitrary errors or headers.
 type debugOutput struct {
-	mu    sync.Mutex
-	log   *os.File
-	dump  *os.File
-	paths []string
-	err   error
+	mu               sync.Mutex
+	log              *os.File
+	dump             *os.File
+	paths            []string
+	axThreads        map[string]bool
+	axDroppedThreads bool
+	err              error
 }
 
 type debugContextKey struct{}
@@ -51,7 +55,21 @@ func openDebugOutput(flags routerFlags) (*debugOutput, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := &debugOutput{paths: []string{filepath.Join(directory, "router.jsonl"), capture, metrics, filepath.Join(directory, "instructions.jsonl")}}
+	readLog := os.Getenv(capturer.AXReadOutputEnvironment)
+	if readLog == "" {
+		readLog = filepath.Join(directory, "reads.jsonl")
+	}
+	if err := capturer.PrepareAXReadJournal(readLog); err != nil {
+		return nil, fmt.Errorf("initialize AX read journal: %w", err)
+	}
+	if err := validateAXOutputAliases(readLog, capture, metrics); err != nil {
+		return nil, err
+	}
+	d := &debugOutput{
+		paths: []string{filepath.Join(directory, "router.jsonl"), capture, metrics,
+			filepath.Join(directory, "instructions.jsonl"), readLog, filepath.Join(directory, "ax.json")},
+		axThreads: make(map[string]bool),
+	}
 	d.log, err = os.OpenFile(d.paths[0], os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err == nil {
 		d.dump, err = os.OpenFile(d.paths[3], os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -67,11 +85,44 @@ func openDebugOutput(flags routerFlags) (*debugOutput, error) {
 	return d, nil
 }
 
+// Check before opening mutable outputs, including when instrumentation is manual.
+func validateAXOutputAliases(readLog string, outputs ...string) error {
+	if readLog == "" {
+		return nil
+	}
+	journalPath, err := filepath.Abs(readLog)
+	if err != nil {
+		return err
+	}
+	journalInfo, err := os.Stat(journalPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	for _, output := range outputs {
+		if output == "" {
+			continue
+		}
+		outputPath, err := filepath.Abs(output)
+		if err != nil {
+			return err
+		}
+		info, err := os.Stat(outputPath)
+		if outputPath == journalPath || err == nil && journalInfo != nil && os.SameFile(journalInfo, info) {
+			return errors.New("AX journal, capture-output, and metrics-output must use different files")
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
 func (d *debugOutput) handler(next http.Handler) http.Handler {
 	if d == nil {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		d.observeAXThread(codexThreadID(r.Header))
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), debugContextKey{}, d)))
 	})
 }
@@ -99,6 +150,7 @@ func (d *debugOutput) instructions(body, wire []byte, headers http.Header, sessi
 	if d == nil {
 		return
 	}
+	d.observeAXThread(codexThreadID(headers))
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(body, &fields); err != nil {
 		d.mu.Lock()
@@ -177,5 +229,5 @@ func (d *debugOutput) close() error {
 			closeErr = errors.Join(closeErr, file.Close())
 		}
 	}
-	return errors.Join(d.err, closeErr)
+	return errors.Join(d.err, closeErr, d.writeAXReport())
 }

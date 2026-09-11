@@ -72,7 +72,8 @@ The snapshot derives:
 Router, edit-engine, CTP, registry, and plugin production code implement behavior only. They do not
 maintain hypothetical stock baselines, synthetic stock commands or results, gain counters, metric callbacks,
 persistence slots, session metric histories, dashboard-owned calculations, or metric-only
-classifier events.
+classifier events. The opt-in actual-reader observation seam below is the explicit
+exception for runtime AX evidence, not a transport metric callback.
 The router passes usage and the actual post-replay, post-Mekugi, pre-CTP request as request-scoped
 observation data without receiving metric callbacks. The capturer measures the latter immediately
 and retains only sizes and keyed fingerprints. Native-only forwarding supplies its inference request before WebSocket transport framing as the baseline.
@@ -103,6 +104,20 @@ and terminal cached-token field presence. The router usage callback and normaliz
 unchanged. Evidence travels with each attempt, without another callback or retained raw response;
 snapshot clones isolate its explicit count. Reports distinguish unknown telemetry from explicit
 zero and keep provider request IDs out of public summaries.
+
+`capturer/ax.go` owns opt-in runtime-reader journal serialization and offline AX
+calculations under `REQ-AX-001`. The shell dispatch boundary supplies actual private-reader
+start/finish observations; this explicit execution-observation seam is separate from
+transport measurement and adds no synthetic stock counters. It records no source content.
+`internal/router/debug_ax.go` owns automatic discovery of known-thread rollout paths
+and debug report orchestration, reusing the inspector and capturer rather than another
+calculation path. `cmd/mekugi/wrap.go` passes the selected debug journal environment to
+the executor; debug shutdown retains the report and prints its artifact path.
+The offline session inspector supplies original replay payloads transiently for byte
+comparison, paired rollout events for timing, and explicit assessment/evidence paths.
+Capturer owns their aggregation and preserves the distinction between observations,
+missing coverage, and defect judgments. These separate local artifacts do not enter
+sanitized transport capture, live snapshots, or benchmark transport calculations.
 
 The capturer also owns final snapshot serialization and offline benchmark session
 aggregation. Both reuse the live snapshot and exchange calculations. The benchmark

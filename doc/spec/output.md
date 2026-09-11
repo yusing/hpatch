@@ -30,7 +30,7 @@ groups or an invalid baseline use nearest-edit attribution without subset replay
 changed `.py`, `.js`, and `.ts` files are syntax-checked with Tree-sitter and contribute all
 discovered failures to the same validation result. Parser
 cascades are collapsed when blanking an earlier repair line removes a later parser failure.
-Failures are deduplicated by originating command and physical heredoc value row, or by the
+Failures are deduplicated by originating command and physical multiline value row, or by the
 command's script row when no physical value row exists. Each retained location includes at
 most two generated lines before and after the failing line; neighboring lines are capped at
 64 runes and the failing line at 200. Supported baseline-aware indentation corrections are
@@ -56,6 +56,12 @@ Translation output contains file actions in deterministic first-touch order:
 *** End Patch
 ```
 
+An `Add File` action emits one `+` row per actual logical source line. The host supplies
+that row's final LF; a terminating LF is not an extra empty row. Empty content emits
+no addition rows. Explicit blank lines, including at EOF, remain addition rows.
+Like the host format itself, a nonempty unterminated addition receives a final LF;
+direct engine application remains byte-exact.
+
 Each action includes only syntax relevant to that file: additions use `Add File`,
 deletions use `Delete File`, moves use `Update File` plus `Move to`, and content edits
 use `Update File` hunks. A moved and edited file combines its content hunks and move in
@@ -73,6 +79,7 @@ restored carrier. Basic `Apply` does not return the report. Its line forms are:
 in PATH
 last OP PATH COUNT ranges RANGE[, RANGE[, RANGE]] [ +N more]
 files add=A update=U move=M delete=D
+advisory COMMAND OP PATH: baseline-boundary owned=ENDING value=ENDING ...
 refs COMMAND OP PATH
 LINE:HASH TEXT
 ```
@@ -85,6 +92,42 @@ ranges. Extra ranges are summarized by `+N more`. `RANGE` is a half-open
 `START_LINE:START_COLUMN-END_LINE:END_COLUMN` pair in one-based Unicode coordinates; a
 complete-line range includes its final terminator when present. The `files` line counts
 net original-to-final actions.
+
+Host reports may insert one bounded advisory line per effective command between
+the `files` summary and reference blocks:
+
+```text
+advisory COMMAND OP PATH: baseline-boundary owned=LF value=empty mode=<<PATCH- deletes=1 removes-ending=1
+```
+
+These lines describe each command's authored splice against the immutable baseline,
+before other commands or language formatting affect adjacent content. They are
+inspection aids, not errors or claims about user intent, and never change bytes,
+validation, aliases, or application. Failed or cancelled host results publish no
+success report and therefore no boundary advisories.
+
+`owned` names the removed target's final terminator (`LF`, `CRLF`, `CR`, or `none`);
+insertions own no target bytes. `value` names the decoded value's final terminator,
+or `none` for nonempty unterminated text and `empty` for a deletion value. Multiline
+values also show their exact `mode`. An empty initializer is not a deletion.
+
+Nonzero counts summarize effective spans in that command:
+- `preserves-ending`: a nonempty whole-row/range value inherits its owned final
+  terminator;
+- `deletes`: an empty replacement removes target bytes;
+- `removes-ending`: a replacement removes the target's final terminator without
+  preserving or supplying one;
+- `blank-before` / `blank-after`: a terminating side meets a blank, possibly
+  space/tab-only line on the other side of the splice;
+- `joins-left`: an EOF insertion continues a nonterminated baseline line without
+  a leading terminator.
+
+A split CRLF is one terminator, not a blank line. Counts do not infer that an
+existing separator is accidental. Inline edits with none of these observations
+emit no advisory; effective multiline edits always expose their ownership and
+value ending. No-op mutations emit none. Counts aggregate multiple matches into
+one line, and advisory paths follow pending moves with the same escaping as the
+rest of the report.
 
 One `refs` block follows for every effective content-mutating command on every surviving
 edited file. `COMMAND` is the command's positive one-based nonblank script index, `OP` is
@@ -169,9 +212,17 @@ prevents application; cancellation during that sequence does not interrupt it. A
 return late cancellation after applying changes. An application error therefore does not imply
 that no files changed; callers must inspect the outcome and workspace before retrying.
 
-OpenAI `apply_patch` is a logical-line format and cannot preserve CRLF or standalone-CR
-bytes when its output is applied by the tool. Translation therefore returns LF-only patch text and normalizes line endings only in its displayed before/after lines. It does not modify source files. Root application continues to preserve existing line endings outside explicitly inserted strings. Applying translated output to a non-LF file may normalize
-that file to LF; this is a declared format limitation, not byte equivalence.
+OpenAI `apply_patch` is a logical-line format. Translation returns LF-only patch text
+and normalizes line endings only in its displayed before/after lines; it does not
+modify source files. The host's legacy update mode normalizes files to LF and can
+collapse blank lines at EOF. Its line-ending-preservation mode retains those blank
+lines and existing line endings. New files and updated final lines receive a final
+terminator; an explicitly unterminated result is not byte-representable through
+this format. Direct root application remains byte-exact outside the documented
+language-aware finalization. Native executor parity tests cover the preservation
+mode separately from direct engine application and the portable host test harness.
+Set `MEKUGI_TEST_APPLY_PATCH` to the installed host executable when running
+`go test . -run TestHostNewlineParity`; the native subtests otherwise skip.
 
 Basic `Apply` returns errors for failures. Host variants place generic diagnostics
 and structured failure data in `HostTranslation`; rendered generic diagnostics use the `mekugi:`
@@ -214,7 +265,7 @@ a command depends on content introduced by another command, the diagnostic direc
 apply the prerequisite independently, reread, and submit a later invocation. A missing row or
 failure without a verified baseline does not choose repair context. Repair context is
 supplementary: it never changes the host outcome, mutation, or returned patch.
-When invalid generated source is localized to a fixed-heredoc mutation, each distinct rejection
+When invalid generated source is localized to a multiline mutation, each distinct rejection
 identity includes the non-sensitive `value_line`. Transient root diagnostics describe every
 bounded value-row context rather than mutation addresses. Routed target-only recovery diagnostics
 add current hashed `C...` handles only when every rejection is `row-stale`; other failures expose
@@ -255,8 +306,9 @@ Acceptance:
 8. Stale rows, incomplete literal targets, and edit conflicts emit verified repair context;
    a missing row fails without guessing, and a failure with no active baseline emits its
    diagnostic alone.
-9. Invalid Go localized inside a fixed `<<PATCH` value reports its physical body row in
-   bounded repair context and structured host rejection identity without retaining body text.
+9. Invalid Go localized inside a raw heredoc or line-framed text value reports its
+   physical body row in bounded repair context and structured host rejection identity
+   without retaining body text. Transport bars do not become source content.
 10. One syntax-validation rejection includes every distinct actionable repair location from
     all changed files, groups visible diagnostics once per originating command and path,
     deduplicates parser cascades by repair row, and exposes enough current rejected-script rows

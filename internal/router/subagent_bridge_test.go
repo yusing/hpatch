@@ -3,6 +3,7 @@ package router
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -164,5 +165,120 @@ func TestGrokCatalogRebuildsCachedMetadata(t *testing.T) {
 	grok := catalog.Models[1]
 	if jsonString(grok, "slug") != grokModel || jsonString(grok, "apply_patch_tool_type") != "freeform" || jsonString(grok, "shell_type") != "unified_exec" {
 		t.Fatalf("cached Grok tool metadata was not rebuilt: %s", result)
+	}
+}
+
+func TestSubagentBridgeSpawnArgumentGuidancePreservesNativeContract(t *testing.T) {
+	for _, additional := range []bool{false, true} {
+		t.Run(fmt.Sprint(additional), func(t *testing.T) {
+			schema := map[string]any{
+				"type": "object", "additionalProperties": false,
+				"required": []string{"message", "task_name"},
+				"properties": map[string]any{
+					"message":          map[string]any{"type": "string", "encrypted": true, "description": "Native message"},
+					"model":            map[string]any{"type": "string", "description": "Native model restrictions"},
+					"fork_turns":       map[string]any{"type": "string", "default": "all", "description": "Native context rules"},
+					"reasoning_effort": map[string]any{"type": "string", "enum": []string{"low", "medium", "high", "xhigh"}, "description": "Native effort restrictions"},
+					"agent_type":       map[string]any{"type": "string", "enum": []string{"default", "review"}, "description": "Fixed role model cannot be overridden"},
+					"permission":       map[string]any{"type": "string", "description": "Native permission policy"},
+				},
+			}
+			fn := map[string]any{"type": "function", "name": "spawn_agent", "description": "Native lifecycle rules", "strict": true, "parameters": schema}
+			ns := map[string]any{"type": "namespace", "name": "collaboration", "tools": []any{fn}}
+			request := bridgeTestRequest(t, false)
+			request.fields["tools"] = mustMarshalJSON([]any{ns})
+			request.fields["input"] = mustMarshalJSON([]any{})
+			if additional {
+				request.fields["tools"] = mustMarshalJSON([]any{})
+				request.fields["input"] = mustMarshalJSON([]any{map[string]any{"type": "additional_tools", "tools": []any{ns}}})
+			}
+			bridge, err := prepareSubagentBridge(&request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			catalog := request.fields["tools"]
+			if additional {
+				var input []map[string]json.RawMessage
+				if err := json.Unmarshal(request.fields["input"], &input); err != nil {
+					t.Fatal(err)
+				}
+				catalog = input[0]["tools"]
+			}
+			var projected []struct {
+				Tools []struct {
+					Description string         `json:"description"`
+					Strict      bool           `json:"strict"`
+					Parameters  map[string]any `json:"parameters"`
+				} `json:"tools"`
+			}
+			if err := json.Unmarshal(catalog, &projected); err != nil {
+				t.Fatal(err)
+			}
+			got := projected[0].Tools[0]
+			if !got.Strict || !strings.HasPrefix(got.Description, "Native lifecycle rules") {
+				t.Fatalf("native function contract changed: %+v", got)
+			}
+			properties := got.Parameters["properties"].(map[string]any)
+			original := schema["properties"].(map[string]any)
+			for _, name := range []string{"model", "fork_turns", "reasoning_effort"} {
+				property := properties[name].(map[string]any)
+				description := property["description"].(string)
+				native := original[name].(map[string]any)["description"].(string)
+				if !strings.HasPrefix(description, native+"\n") || !strings.Contains(description, "grok:grok-4.6") {
+					t.Fatalf("%s guidance = %q", name, description)
+				}
+				if name == "fork_turns" && (!strings.Contains(description, `"none"`) || !strings.Contains(description, "complete task")) {
+					t.Fatalf("missing fresh-context assignment guidance: %q", description)
+				}
+				property["description"] = native
+			}
+			properties["message"].(map[string]any)["encrypted"] = true
+			if !bytes.Equal(mustMarshalJSON(got.Parameters), mustMarshalJSON(schema)) {
+				t.Fatalf("native schema changed: %s", mustMarshalJSON(got.Parameters))
+			}
+			arguments := `{"agent_type":"review","model":"grok:grok-4.6","fork_turns":"none","reasoning_effort":"high","message":"complete assignment","permission":"native"}`
+			item := mustMarshalJSON(map[string]any{"type": "function_call", "namespace": subagentBridgeNamespace, "name": "spawn_agent", "arguments": arguments, "call_id": "spawn"})
+			check := func(raw json.RawMessage) {
+				t.Helper()
+				var restored map[string]json.RawMessage
+				if err := json.Unmarshal(raw, &restored); err != nil {
+					t.Fatal(err)
+				}
+				if jsonString(restored, "arguments") != arguments || jsonString(restored, "namespace") != "collaboration" {
+					t.Fatalf("restoration changed arguments or namespace: %s", raw)
+				}
+			}
+			result, err := bridge.TransformJSON(mustMarshalJSON(map[string]any{"output": []json.RawMessage{item}}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var response struct {
+				Output []json.RawMessage `json:"output"`
+			}
+			if err := json.Unmarshal(result, &response); err != nil {
+				t.Fatal(err)
+			}
+			check(response.Output[0])
+			events, err := bridge.TransformSSE(mustMarshalJSON(map[string]any{"type": "response.output_item.done", "item": item}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var event map[string]json.RawMessage
+			if err := json.Unmarshal(events[0], &event); err != nil {
+				t.Fatal(err)
+			}
+			check(event["item"])
+		})
+	}
+}
+
+func TestSubagentBridgeDoesNotAddAbsentSpawnArguments(t *testing.T) {
+	request := bridgeTestRequest(t, false)
+	if _, err := prepareSubagentBridge(&request); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(request.fields["tools"], []byte(`"fork_turns":`)) ||
+		bytes.Contains(request.fields["tools"], []byte(`"reasoning_effort":`)) {
+		t.Fatalf("projection added absent arguments: %s", request.fields["tools"])
 	}
 }

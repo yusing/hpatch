@@ -32,13 +32,13 @@ func Apply(initial map[string]string, patch string) (map[string]string, error) {
 				if !strings.HasPrefix(lines[index], "+") {
 					return nil, fmt.Errorf("invalid add line %q", lines[index])
 				}
-				content = append(content, strings.TrimPrefix(lines[index], "+"))
+				content = append(content, strings.TrimPrefix(lines[index], "+")+"\n")
 				index++
 			}
 			if _, exists := tree[path]; exists {
 				return nil, fmt.Errorf("add destination %s exists", path)
 			}
-			tree[path] = strings.Join(content, "\n")
+			tree[path] = strings.Join(content, "")
 
 		case strings.HasPrefix(line, "*** Delete File: "):
 			path := strings.TrimPrefix(line, "*** Delete File: ")
@@ -85,7 +85,13 @@ func Apply(initial map[string]string, patch string) (map[string]string, error) {
 }
 
 func applyHunks(content string, patch []string) (string, error) {
-	current := strings.Split(content, "\n")
+	// Source: codex-rs/apply-patch/src/file_update.rs:48:79 derive_new_contents_from_chunks
+	// PreserveLineEndings uses real source lines, not an EOF sentinel. This
+	// harness accepts LF source; every surviving host line receives its LF.
+	var current []string
+	if content != "" {
+		current = strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+	}
 	for index := 0; index < len(patch); {
 		if !strings.HasPrefix(patch[index], "@@") {
 			return "", fmt.Errorf("expected hunk, got %q", patch[index])
@@ -111,6 +117,14 @@ func applyHunks(content string, patch []string) (string, error) {
 			index++
 		}
 		position := findLines(current, oldLines, hint)
+		if position < 0 && len(oldLines) > 0 && oldLines[len(oldLines)-1] == "" {
+			// The native matcher retries a diff's trailing empty sentinel.
+			oldLines = oldLines[:len(oldLines)-1]
+			if len(newLines) > 0 && newLines[len(newLines)-1] == "" {
+				newLines = newLines[:len(newLines)-1]
+			}
+			position = findLines(current, oldLines, hint)
+		}
 		if position < 0 {
 			return "", fmt.Errorf("hunk context not found")
 		}
@@ -120,7 +134,10 @@ func applyHunks(content string, patch []string) (string, error) {
 		replacement = append(replacement, current[position+len(oldLines):]...)
 		current = replacement
 	}
-	return strings.Join(current, "\n"), nil
+	if len(current) == 0 {
+		return "", nil
+	}
+	return strings.Join(current, "\n") + "\n", nil
 }
 
 func findLines(content, sought []string, hint int) int {

@@ -189,7 +189,7 @@ func TestShellMisuseRejectionDeliveryAndReplay(t *testing.T) {
 
 func TestRetainedShellMisuse(t *testing.T) {
 	transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
-	reference, retained := proxy.retainShell(transform.shellDirectory, "retained-source", `text("not Bash")`)
+	reference, _, retained := proxy.retainShell(transform.shellDirectory, "retained-source", `text("not Bash")`)
 	if !retained {
 		t.Fatal("could not retain fixture")
 	}
