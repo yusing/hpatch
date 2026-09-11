@@ -12,20 +12,17 @@ jobs:
   checkout:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          persist-credentials: false
-      - uses: oven-sh/setup-bun@v2
-      - name: Prepare offline plugin build inputs
+          node-version: '24'
+      - name: Export supported runtime
         run: |
-          bun install --cwd plugins --frozen-lockfile
-          mkdir "$RUNNER_TEMP/plugin-inputs"
-          cp "$(command -v bun)" "$RUNNER_TEMP/plugin-inputs/bun"
-          cp -a plugins/node_modules "$RUNNER_TEMP/plugin-inputs/node_modules"
-          tar -czf "$RUNNER_TEMP/plugin-inputs.tar.gz" -C "$RUNNER_TEMP/plugin-inputs" .
+          mkdir "$RUNNER_TEMP/node-inputs"
+          cp "$(command -v node)" "$RUNNER_TEMP/node-inputs/node"
+          tar -czf "$RUNNER_TEMP/node-inputs.tar.gz" -C "$RUNNER_TEMP/node-inputs" .
       - uses: actions/upload-artifact@v4
         with:
-          name: mekugi-plugin-inputs
-          path: ${{ runner.temp }}/plugin-inputs.tar.gz
+          name: mekugi-node-inputs
+          path: ${{ runner.temp }}/node-inputs.tar.gz
           retention-days: 1
           compression-level: 0
