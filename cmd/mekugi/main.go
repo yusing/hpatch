@@ -30,6 +30,9 @@ func run() int {
 	); handled {
 		return exitCode
 	}
+	if len(os.Args) > 1 && os.Args[1] == "inspect-session" {
+		return router.RunSessionInspection(ctx, os.Args[2:], os.Stdout, os.Stderr)
+	}
 	routerArgs, command, err := router.SplitCommand(os.Args[1:])
 	if errors.Is(err, flag.ErrHelp) {
 		router.PrintUsage(os.Stdout)

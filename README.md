@@ -487,6 +487,33 @@ whose records you remove lose replay restoration; keep the moved directory if yo
 may need to restore it later. Do not remove records just because one fork no longer
 shows those calls: a parent or sibling conversation may still need them.
 
+### Inspect a session
+
+Inspect a local Codex rollout without decoding execution carriers or running old
+commands. This is read-only and starts no router. By default, JSON output contains
+logical tool names, call IDs, outcomes, text sizes, and pagination, not private text:
+
+```sh
+mekugi inspect-session --session /path/to/rollout.jsonl
+mekugi inspect-session --session /path/to/rollout.jsonl \
+  --call-id call_example --field script
+```
+
+Use `--field evaluated`, `patch`, `report`, `diagnostic`, `rejections`, or `output`
+to inspect that evidence, or `all` for every text field. These fields may contain
+private source and command output. `--text-bytes` bounds each UTF-8 prefix and
+`omitted_bytes` identifies missing text. `--offset` and `--limit` page through calls;
+`next_offset` identifies the next page. `--replay-dir` selects a moved replay store.
+
+Workspace identity is inferred from the rollout's session and turn metadata, including
+workspace changes. Use `--workspace` only to override missing or incorrect metadata.
+Missing workspace metadata or replay records remain
+explicitly unavailable rather than being reconstructed from carrier code.
+`translated_unconfirmed` means a patch was prepared, not applied. `confirmed`
+requires the matching executor report in the supplied rollout; `applied` records
+router-owned application. Inspection does not establish that a change was correct
+or restore a live session. See the [session inspection contract](doc/spec/session.md).
+
 ### Older installations
 
 Finish active sessions before replacing an older installation. Retire any old
