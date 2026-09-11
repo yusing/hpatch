@@ -15,10 +15,25 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Export tracked source for offline validation
-        run: git archive --format=tar.gz --output="$RUNNER_TEMP/mekugi-source.tar.gz" HEAD
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: oven-sh/setup-bun@v2
+      - name: Prepare offline test inputs
+        run: |
+          go mod download
+          bun install --cwd plugins --frozen-lockfile
+          go generate ./internal/router/toolplugin
+          mkdir "$RUNNER_TEMP/test-inputs"
+          cp -a "$(go env GOROOT)" "$RUNNER_TEMP/test-inputs/go"
+          cp -a "$(go env GOMODCACHE)" "$RUNNER_TEMP/test-inputs/mod"
+          mkdir "$RUNNER_TEMP/test-inputs/assets"
+          cp -a internal/router/toolplugin/dist "$RUNNER_TEMP/test-inputs/assets/dist"
+          tar -czf "$RUNNER_TEMP/test-inputs.tar.gz" -C "$RUNNER_TEMP/test-inputs" .
       - uses: actions/upload-artifact@v4
         with:
-          name: mekugi-source
-          path: ${{ runner.temp }}/mekugi-source.tar.gz
+          name: mekugi-test-inputs
+          path: ${{ runner.temp }}/test-inputs.tar.gz
           retention-days: 1
+          compression-level: 0
