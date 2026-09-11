@@ -83,6 +83,25 @@ func TestWrappedCodexProcess(t *testing.T) {
 	if os.Getenv("MEKUGI_TEST_CODEX") != "1" {
 		return
 	}
+	if slices.Contains(os.Args, "debug") && slices.Contains(os.Args, "models") {
+		fmt.Fprintln(os.Stdout, testNativeModelCatalog)
+		os.Exit(0)
+	}
+	if os.Getenv("MEKUGI_TEST_PINNED_CATALOG") == "1" {
+		var catalogPath string
+		for _, arg := range os.Args {
+			if strings.HasPrefix(arg, "model_catalog_json=") {
+				catalogPath, _ = strconv.Unquote(strings.TrimPrefix(arg, "model_catalog_json="))
+			}
+		}
+		body, err := os.ReadFile(catalogPath)
+		if err != nil || !bytes.Contains(body, []byte("grok:grok-4.6")) || !bytes.Contains(body, []byte("freeform")) {
+			os.Exit(98)
+		}
+		if err := os.WriteFile(os.Getenv("MEKUGI_TEST_ADDRESS")+".catalog", []byte(catalogPath), 0o600); err != nil {
+			os.Exit(99)
+		}
+	}
 	interrupts := make(chan os.Signal, 1)
 	if os.Getenv("MEKUGI_TEST_EXIT") == "interrupt" {
 		signal.Notify(interrupts, os.Interrupt)
@@ -235,8 +254,10 @@ func TestWrapCodexLifecycle(t *testing.T) {
 	for _, test := range []struct {
 		name, exit string
 		code       int
+		grok       bool
 	}{
-		{"success", "0", 0}, {"failure", "23", 23}, {"signal", "signal", 143}, {"termination", "wait", 143},
+		{"success", "0", 0, false}, {"failure", "23", 23, false}, {"signal", "signal", 143, false}, {"termination", "wait", 143, false},
+		{"grok_success", "0", 0, true}, {"grok_failure", "23", 23, true}, {"grok_signal", "signal", 143, true}, {"grok_termination", "wait", 143, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			directory := t.TempDir()
@@ -274,9 +295,23 @@ func TestWrapCodexLifecycle(t *testing.T) {
 			}
 			deadline := time.AfterFunc(20*time.Second, cancel)
 			defer deadline.Stop()
-			code, err := wrapCodex(ctx, nil, []string{"exec", "prompt with spaces"})
+			var routerArgs []string
+			if test.grok {
+				routerArgs = []string{"--grok"}
+				t.Setenv("MEKUGI_TEST_PINNED_CATALOG", "1")
+			}
+			code, err := wrapCodex(ctx, routerArgs, []string{"exec", "prompt with spaces"})
 			if err != nil || code != test.code {
 				t.Fatalf("wrap = %d, %v; want %d", code, err, test.code)
+			}
+			if test.grok {
+				path, err := os.ReadFile(addressFile + ".catalog")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := os.Stat(filepath.Dir(string(path))); !os.IsNotExist(err) {
+					t.Fatalf("private catalog survived child exit: %v", err)
+				}
 			}
 			address, err := os.ReadFile(addressFile)
 			if err != nil {

@@ -34,7 +34,7 @@ func runWrap(routerArgs, args []string) int {
 	return code
 }
 
-func wrapCodex(ctx context.Context, routerArgs, args []string) (int, error) {
+func wrapCodex(ctx context.Context, routerArgs, args []string) (code int, runErr error) {
 	if err := validateCodexArgs(args); err != nil {
 		return 2, err
 	}
@@ -68,6 +68,21 @@ func wrapCodex(ctx context.Context, routerArgs, args []string) (int, error) {
 	case err := <-routerDone:
 		return 1, err
 	case session = <-ready:
+	}
+	if session.GrokEnabled {
+		catalogDirectory, catalogPath, err := prepareGrokCatalog(ctx, executable, session.BaseURL, args)
+		if err != nil {
+			cancel()
+			return 1, errors.Join(err, <-routerDone)
+		}
+		defer func() {
+			runErr = errors.Join(runErr, os.RemoveAll(catalogDirectory))
+		}()
+		index := slices.Index(args, "--")
+		if index < 0 {
+			index = len(args)
+		}
+		args = slices.Insert(slices.Clone(args), index, "-c", fmt.Sprintf("model_catalog_json=%q", catalogPath))
 	}
 	// Announce once before Codex takes over the terminal, never during its UI.
 	fmt.Fprintf(os.Stderr, "mekugi dashboard: %s/\n", strings.TrimSuffix(session.BaseURL, "/v1"))

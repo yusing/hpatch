@@ -26,7 +26,7 @@ When parts of this file is stale after your work, update this file.
 | Portable verified-row, source-capability, Go-lexical, and shell-header semantics | `internal/verifiedrow`, `internal/sourcekind`, `internal/golex`, `internal/shellsyntax` |
 | Versioned plugin shared-core adapter and private WASM bridge | `internal/router/toolplugin/core-v1.mjs`, `internal/router/toolplugin/core-v1.d.ts`, `internal/sharedwasm` |
 | Router lifecycle, launch flags, modes, and HTTP endpoints | `internal/router/server.go`, `internal/router/flags.go` |
-| Third-party native subagent projection, Grok authentication/translation, and catalog augmentation | `internal/router/subagent_bridge.go`, `internal/router/grok_*.go` |
+| Third-party native subagent projection, Grok authentication/translation, and model-catalog metadata | `internal/router/subagent_bridge.go`, `internal/router/grok_*.go` |
 | Codex-facing WebSocket sessions, incremental history, and steering | `internal/router/server_websocket.go` |
 | Codex authentication and upstream Responses transport | `internal/router/client.go`, `internal/router/client_websocket.go` |
 | Tool replacement, host translation, and response restoration | `internal/router/mekugi_proxy.go` |
@@ -35,7 +35,7 @@ When parts of this file is stale after your work, update this file.
 | Built-in tool sources and private execution runtime | `plugins`, `internal/router/toolplugin` |
 | Fixed shell-runtime locator and per-thread runtime path | `cmd/shell`, `internal/shellruntime`, `internal/router/shell_runtime.go` |
 | Configured plugin discovery, authenticated snapshots, and frontends | `internal/router/toolplugin/runtime.go`, `internal/router/tool_registry.go`, `internal/router/tool_wrapper.go` |
-| Router process signals, wrapped Codex lifecycle, and top-level exit behavior | `cmd/mekugi/main.go`, `cmd/mekugi/wrap.go` |
+| Router process signals, wrapped Codex lifecycle, private model-catalog snapshot, and top-level exit behavior | `cmd/mekugi/main.go`, `cmd/mekugi/wrap.go`, `cmd/mekugi/catalog.go` |
 | Normative interface requirements | `doc/spec/index.md` and the listed requirement file |
 | Stable ownership contracts | `doc/architecture/index.md` and the listed contract file |
 

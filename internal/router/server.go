@@ -5,7 +5,6 @@ package router
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -39,6 +38,7 @@ var errUpstreamResponseWithoutTerminal = errors.New("upstream Responses response
 // Session is available only after initialization and listener binding succeed.
 type Session struct {
 	BaseURL           string
+	GrokEnabled       bool
 	FrontendDirectory string
 }
 
@@ -258,7 +258,7 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 		serverError <- server.Serve(listener)
 	}()
 	if ready != nil && ctx.Err() == nil {
-		ready(Session{BaseURL: baseURL, FrontendDirectory: frontendDirectory})
+		ready(Session{BaseURL: baseURL, FrontendDirectory: frontendDirectory, GrokEnabled: *flags.grokEnabled})
 	}
 	select {
 	case err := <-serverError:
@@ -306,15 +306,6 @@ func modelsHandler(provider *providerClient, issues *CriticalErrors) http.Handle
 		if len(body) > modelsResponseBufferBytes {
 			http.Error(writer, "upstream models response exceeds the router buffer budget", http.StatusBadGateway)
 			return
-		}
-		if provider.grok != nil && response.StatusCode == http.StatusOK {
-			body, err = appendGrokModel(body)
-			if err != nil {
-				http.Error(writer, err.Error(), http.StatusBadGateway)
-				return
-			}
-			sum := sha256.Sum256(body)
-			response.Header.Set("ETag", fmt.Sprintf(`"mekugi-%x"`, sum))
 		}
 		for _, name := range []string{"Content-Type", "Cache-Control", "ETag"} {
 			for _, value := range response.Header.Values(name) {

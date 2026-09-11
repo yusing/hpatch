@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
+	"slices"
 )
 
-// appendGrokModel preserves Codex's evolving model metadata schema by extending
-// a native v2 entry instead of inventing an incomplete catalog representation.
-func appendGrokModel(body []byte) ([]byte, error) {
+// GrokModelCatalog builds a session catalog from Codex's selected native catalog.
+// It rebuilds any cached Grok entry from a native v2 template, preserving the
+// other models and Codex's evolving instruction and executor metadata.
+func GrokModelCatalog(body []byte) ([]byte, error) {
 	var catalog map[string]json.RawMessage
 	if json.Unmarshal(body, &catalog) != nil || catalog == nil {
 		return nil, errors.New("invalid Codex model catalog")
@@ -17,11 +19,11 @@ func appendGrokModel(body []byte) ([]byte, error) {
 	if json.Unmarshal(catalog["models"], &models) != nil {
 		return nil, errors.New("Codex model catalog is missing models")
 	}
+	models = slices.DeleteFunc(models, func(model map[string]json.RawMessage) bool {
+		return jsonString(model, "slug") == grokModel
+	})
 	var template map[string]json.RawMessage
 	for _, model := range models {
-		if jsonString(model, "slug") == grokModel {
-			return nil, errors.New("upstream model catalog already owns grok:grok-4.6")
-		}
 		if jsonString(model, "slug") == "gpt-5.6-sol" && jsonString(model, "multi_agent_version") == "v2" {
 			template = model
 		}
@@ -37,8 +39,7 @@ func appendGrokModel(body []byte) ([]byte, error) {
 	if template == nil {
 		return nil, errors.New("Grok requires a Codex catalog with native v2 subagent support")
 	}
-	model := make(map[string]json.RawMessage, len(template))
-	maps.Copy(model, template)
+	model := maps.Clone(template)
 	for key, value := range map[string]any{
 		"slug": grokModel, "display_name": grokModel, "description": "Grok 4.6 native subagent through Mekugi. Start with fork_turns=none.",
 		"context_window": 500000, "max_context_window": 500000,

@@ -16,6 +16,11 @@ The wrapper also enforces `include_collaboration_mode_instructions=false` in the
 final command's invocation-only config layer, after user overrides and before `--`.
 This disables Codex's collaboration-mode instruction injection without editing config files.
 
+With `--grok`, the wrapper pins the selected model catalog through Codex's
+`model_catalog_json` setting before launching the interactive or execution command.
+The session catalog and its cleanup follow [REQ-SUBAGENTS-001](subagents.md).
+Other invocations do not run the catalog command or pin model metadata.
+
 Codex inherits cwd, stdin, stdout, stderr, and the environment, augmented only
 with `MEKUGI_BASE_URL` and the private configured-plugin frontend directory at
 the front of PATH. Terminal Ctrl-C remains Codex-owned. SIGTERM to the wrapper
