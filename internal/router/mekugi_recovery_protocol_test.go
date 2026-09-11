@@ -15,13 +15,13 @@ func recoverScriptForTest(ctx context.Context, rejectedScript, payload string) (
 }
 
 func TestMekugiRecoveryDescriptionIsNonInstructional(t *testing.T) {
-	const want = "Target correction for the latest rejected HPATCH/2 script. Invalid recovery leaves the retained script and workspace unchanged."
+	const want = "Correction of the latest rejected HPATCH/2 script. Invalid correction leaves the retained script and workspace unchanged."
 	if mekugiRecoveryDescription != want {
 		t.Fatalf("mekugiRecoveryDescription = %q, want %q", mekugiRecoveryDescription, want)
 	}
 }
 
-func TestRecoveryCommandsHashCompleteFrames(t *testing.T) {
+func TestRecoveryCommandsBindCompleteFramesAndBaseline(t *testing.T) {
 	script := "in file.go\n" +
 		"type 1:ffff <<PATCH\n" +
 		"first\n" +
@@ -31,8 +31,16 @@ func TestRecoveryCommandsHashCompleteFrames(t *testing.T) {
 	if len(commands) != 2 {
 		t.Fatalf("commands = %+v", commands)
 	}
-	if want := "C2:" + recoveryHash("type 1:ffff <<PATCH\nfirst\nsecond\nPATCH\n"); commands[1].handle != want {
-		t.Fatalf("command handle = %q, want %q", commands[1].handle, want)
+	if again := recoveryCommands(script); again[1].handle != commands[1].handle {
+		t.Fatal("same baseline produced different handles")
+	}
+	for _, changed := range []string{
+		strings.Replace(script, "second", "changed", 1),
+		strings.Replace(script, "file.go", "other.go", 1),
+	} {
+		if fresh := recoveryCommands(changed); fresh[1].handle == commands[1].handle {
+			t.Fatal("changed body or file context retained an old command handle")
+		}
 	}
 }
 
@@ -244,7 +252,7 @@ func TestRecoverScriptHonorsContext(t *testing.T) {
 
 func TestRecoveryGrammarContainsHandleAndOrdinaryTarget(t *testing.T) {
 	for _, want := range []string{
-		`start: _blank_line* recovery (_separator recovery)* _blank_line*`,
+		`start: _blank_line* (corrections | mutations) _blank_line*`,
 		`recovery: HANDLE SP target`,
 	} {
 		if !strings.Contains(mekugiRecoveryGrammar, want) {
@@ -254,10 +262,12 @@ func TestRecoveryGrammarContainsHandleAndOrdinaryTarget(t *testing.T) {
 }
 
 func TestRecoveryGrammarMirrorsPublicMultilineTargetTerminal(t *testing.T) {
-	public := grammarTerminalLine(t, mekugi.ToolGrammar(), "TARGET_QUOTED")
-	recovery := grammarTerminalLine(t, mekugiRecoveryGrammar, "TARGET_QUOTED")
-	if recovery != public {
-		t.Fatalf("recovery TARGET_QUOTED = %q, public = %q", recovery, public)
+	for _, name := range []string{"TARGET_QUOTED", "QUOTED", "HEREDOC_MARKER", "TEXT_MARKER", "TEXT_BODY_LINE", "PATCH_BODY_LINE"} {
+		public := grammarTerminalLine(t, mekugi.ToolGrammar(), name)
+		recovery := grammarTerminalLine(t, mekugiRecoveryGrammar, name)
+		if recovery != public {
+			t.Fatalf("recovery %s = %q, public = %q", name, recovery, public)
+		}
 	}
 }
 

@@ -311,13 +311,25 @@ C2:abcd 37:8c2f
 C3:bcde "return oldResult, nil"
 ```
 
-Put every listed correction in one payload and use the current handles exactly. Recovery changes
-targets only; it preserves operations, values, command order, and file context before reevaluating
-the complete script. Each corrected target must differ from its rejected target; equivalent
-spellings of the same target reject before reevaluation. A re-rejection replaces the baseline and makes every earlier handle stale.
-Use one complete HPATCH/2 script for every non-target or mixed correction. A malformed, stale,
-conflicting, or incomplete recovery changes neither the workspace nor the retained rejected
-script. Ordinary `functions.hpatch` and root APIs have no recovery mode.
+Put every listed target correction in one payload and use the current handles
+exactly. This shortcut preserves every other command field. Equivalent spellings
+of the same target reject before reevaluation.
+
+For values, framing, conflicting commands, or other fields, send ordinary
+target-bearing `type`/`add` mutations through `functions.hpatch_recover`. They edit
+the retained rejected-script text, not workspace files. Use the diagnostic's
+verified script rows or exact known literals; omit `in`, `new`, `mv`, and `rm`.
+All ordinary value forms are available, including line-framed text for protocol
+examples. For example, `type "bad value" "fixed value"` changes that exact retained
+text without repeating unrelated prepared edits. Keep target shortcuts and
+script-text mutations in separate payloads.
+
+Both forms rebuild and reevaluate the complete script atomically. The retained
+baseline and every planned text-edit result must fit 1 MiB; unchanged or empty
+reconstructions reject. A re-rejection becomes the next baseline, so verify script
+rows there and use refreshed command handles. Invalid correction payloads leave
+both the workspace and retained baseline unchanged. Ordinary `functions.hpatch`
+still edits workspace files and has no implicit recovery mode.
 
 ## Reading and inspection reference
 

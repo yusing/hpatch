@@ -64,8 +64,9 @@ command sessions, and patch diff UI. No fork, no config edits, no daemon.
 - **Correct without starting over.**
   - Eligible shell programs can be retained, inspected, edited, and rerun
     instead of emitted again.
-  - When an edit is rejected solely because its target rows are stale, the
-    agent can correct the references without repeating the replacement text.
+  - After an edit is rejected, the agent can repair its retained script without
+    repeating unrelated prepared changes. Stale-target shortcuts remain available;
+    other corrections use ordinary text edits before the complete script is retried.
 
 ### Token saving
 

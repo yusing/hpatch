@@ -24,9 +24,55 @@ func mekugiRecoveryGuidance(
 ) string {
 	references, eligible := mekugiRecoveryReferences(script, rejections, refreshed)
 	if !eligible {
-		return "\nThis rejection requires one complete corrected HPATCH/2 script through functions.hpatch; functions.hpatch_recover changes stale targets only.\n"
+		return genericRecoveryGuidance(script, rejections, refreshed)
 	}
 	return codexinstructions.RecoveryGuidance(references)
+}
+
+func genericRecoveryGuidance(script string, rejections []mekugi.HostRejection, refreshed bool) string {
+	var output strings.Builder
+	if refreshed {
+		output.WriteString("\nThis re-rejection changed no workspace file. Corrections are retained only in the new rejected-script baseline; earlier script rows and C... handles may be stale.\n")
+	}
+	output.WriteString("\nRepair retained-script text with ordinary type/add mutations through functions.hpatch_recover, without in/new/mv/rm commands. Targets below address the rejected script, not workspace files. Use exact known literals for other retained text. The router rebuilds and reevaluates the complete script atomically; do not repeat unrelated prepared edits.\n\nRetained rejected-script rows:\n")
+	lines := hpatchsyntax.SplitPhysicalLines(script)
+	logicalRows := mekugiLogicalRowsByPhysicalLine(script, lines)
+	commands := recoveryCommands(script)
+	const rowLimit = 12
+	rows := make([]int, 0, rowLimit)
+	seen := make(map[int]bool)
+	addPhysical := func(index int) {
+		if index < 0 || index >= len(logicalRows) {
+			return
+		}
+		for _, row := range logicalRows[index] {
+			if !seen[row] && len(rows) < rowLimit {
+				rows = append(rows, row)
+				seen[row] = true
+			}
+		}
+	}
+	for _, rejection := range rejections {
+		if rejection.Command < 1 || rejection.Command > len(commands) {
+			continue
+		}
+		command := commands[rejection.Command-1]
+		addPhysical(command.header)
+		if rejection.ValueLine > 0 {
+			for _, offset := range []int{-1, 0, 1} {
+				addPhysical(command.header + rejection.ValueLine + offset)
+			}
+		} else {
+			addPhysical(command.header + 1)
+			addPhysical(command.end - 1)
+		}
+	}
+	slices.Sort(rows)
+	output.WriteString(mekugi.TextReferences(script, rows...))
+	if len(rows) == rowLimit {
+		output.WriteString("Preview limited to 12 script rows.\n")
+	}
+	return output.String()
 }
 
 func mekugiRecoveryReferences(

@@ -35,6 +35,13 @@ including empty-value deletion, inherited terminators, and adjacent blank
 separators. These observations never adjust whitespace or turn a valid edit into
 a rejection.
 
+`EditText` exposes the same target-bearing `type`/`add` subset over an in-memory
+immutable string, without filesystem access, language validation, formatting, or
+indentation correction. `EditTextBounded` additionally requires a nonnegative byte
+limit and rejects an oversized baseline or planned result after any command,
+before concatenating expanded content. It returns no text on rejection. These
+generic primitives know nothing about router recovery ancestry.
+
 Acceptance:
 
 1. Replacement, deletion, insertion before a line or text destination, and EOF append

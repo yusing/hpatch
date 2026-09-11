@@ -206,14 +206,14 @@ func TestInstructionsStayWithinMekugiAndPrivateTools(t *testing.T) {
 
 func TestRecoveryGuidanceRendersDynamicReferences(t *testing.T) {
 	const references = "Rejected target commands:\n"
-	const want = "\nRepair only the stale targets in the retained rejected script. Each line is a current `C...` command handle followed directly by one different ordinary HPATCH/2 target. Submit every listed correction in one atomic payload. Recovery preserves operations, values, command order, and file context. A re-rejection changes no workspace file and makes every earlier handle stale. Use a complete script through functions.hpatch for every other correction.\n\n" + references
+	const want = "\nRepair only the stale targets in the retained rejected script. Each line is a current `C...` command handle followed directly by one different ordinary HPATCH/2 target. Submit every listed correction in one atomic payload. Recovery preserves operations, values, command order, and file context. A re-rejection changes no workspace file and makes every earlier handle stale. For other corrections, use ordinary type/add mutations through functions.hpatch_recover against retained-script text.\n\n" + references
 	if got := RecoveryGuidance(references); got != want {
 		t.Fatalf("RecoveryGuidance() = %q, want %q", got, want)
 	}
 }
 
 func TestRecoveryGuidanceWithoutReferences(t *testing.T) {
-	const want = "\nRepair only the stale targets in the retained rejected script. Each line is a current `C...` command handle followed directly by one different ordinary HPATCH/2 target. Submit every listed correction in one atomic payload. Recovery preserves operations, values, command order, and file context. A re-rejection changes no workspace file and makes every earlier handle stale. Use a complete script through functions.hpatch for every other correction.\n\n"
+	const want = "\nRepair only the stale targets in the retained rejected script. Each line is a current `C...` command handle followed directly by one different ordinary HPATCH/2 target. Submit every listed correction in one atomic payload. Recovery preserves operations, values, command order, and file context. A re-rejection changes no workspace file and makes every earlier handle stale. For other corrections, use ordinary type/add mutations through functions.hpatch_recover against retained-script text.\n\n"
 	if got := RecoveryGuidance(""); got != want {
 		t.Fatalf("RecoveryGuidance() = %q, want %q", got, want)
 	}

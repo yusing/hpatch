@@ -31,11 +31,28 @@ type Workspace struct {
 // baseline. It performs no filesystem access, language validation, formatting,
 // indentation correction, or whitespace cleanup.
 func EditText(ctx context.Context, baseline, script string) (string, error) {
+	return editText(ctx, baseline, script, -1)
+}
+
+// EditTextBounded is EditText with a byte limit on the baseline and the planned
+// result after each command. It checks sizes before rendering expanded content.
+// maxBytes must be nonnegative; zero permits only empty content.
+func EditTextBounded(ctx context.Context, baseline, script string, maxBytes int) (string, error) {
+	if maxBytes < 0 {
+		return "", fmt.Errorf("text edit byte limit must be nonnegative")
+	}
+	return editText(ctx, baseline, script, maxBytes)
+}
+
+func editText(ctx context.Context, baseline, script string, maxBytes int) (string, error) {
 	if ctx == nil {
 		return "", fmt.Errorf("context is nil")
 	}
 	if err := ctx.Err(); err != nil {
 		return "", err
+	}
+	if maxBytes >= 0 && len(baseline) > maxBytes {
+		return "", fmt.Errorf("text edit baseline exceeds %d bytes", maxBytes)
 	}
 	program, err := parse(script)
 	if err != nil {
@@ -66,6 +83,12 @@ func EditText(ctx context.Context, baseline, script string) (string, error) {
 		if err := target.applyMutation(command.operation, command.target, command.text, origin, command, ""); err != nil {
 			return "", textEditCommandError(command, index+1, reasonOf(err, reasonOther), err.Error())
 		}
+		if maxBytes >= 0 && !target.contentFits(maxBytes) {
+			return "", fmt.Errorf("text edit command %d result exceeds %d bytes", index+1, maxBytes)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 	return target.content(), nil
 }
