@@ -1,0 +1,142 @@
+name: Debug evidence validation
+
+on:
+  push:
+    branches: [codex/debug-evidence]
+    paths: [.github/workflows/debug-evidence-validation.yml]
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 427f157e296c3664eedf621c4e8d10c66cab6175
+          persist-credentials: false
+      - name: Apply ripgrep diagnostic compatibility fix
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('plugins/hgrep.ts')
+          s = p.read_text()
+          old = '''      if (details.startsWith(messageStart)) {
+                  return details.slice(messageStart.length);
+                }
+              }
+              return line;
+          '''
+          new = r'''      if (details.startsWith(messageStart)) {
+                  return details.slice(messageStart.length);
+                }
+              }
+              // Older ripgrep versions omit the repeated operation path.
+              const osError = /^rg: .*: ([^:\r\n]+ \(os error [0-9]+\))$/u.exec(line);
+              if (osError !== null) {
+                return osError[1];
+              }
+              return line;
+          '''
+          # Remove the extra indentation required by this YAML block.
+          old = '\n'.join(line[8:] if line.startswith('        ') else line for line in old.split('\n'))
+          new = '\n'.join(line[8:] if line.startswith('        ') else line for line in new.split('\n'))
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, new))
+          PY
+          cat > internal/router/toolplugin/tests/hgrep_diagnostic.test.ts <<'TS'
+          import {afterEach, expect, test} from "bun:test";
+          import {mkdtemp, rm, writeFile} from "node:fs/promises";
+          import {tmpdir} from "node:os";
+          import path from "node:path";
+
+          import {createHGrepTool} from "../../../../plugins/hgrep.ts";
+
+          const originalPath = process.env.PATH;
+          const directories: string[] = [];
+
+          afterEach(async () => {
+            if (originalPath === undefined) {
+              delete process.env.PATH;
+            } else {
+              process.env.PATH = originalPath;
+            }
+            await Promise.all(directories.splice(0).map((directory) => rm(directory, {recursive: true, force: true})));
+          });
+
+          test.each([
+            ["rg: missing.txt: No such file or directory (os error 2)", "No such file or directory (os error 2)"],
+            ["rg: private: path.txt: Permission denied (os error 13)", "Permission denied (os error 13)"],
+            ["rg: missing.txt: IO error for operation on missing.txt: No such file or directory (os error 2)", "No such file or directory (os error 2)"],
+            ["regex parse error:\nerror: unclosed character class", "error: unclosed character class"],
+          ])("preserves useful ripgrep diagnostics without redundant paths: %s", async (diagnostic, expected) => {
+            const directory = await mkdtemp(path.join(tmpdir(), "hgrep-diagnostic-"));
+            directories.push(directory);
+            const executable = path.join(directory, "rg");
+            await writeFile(executable, '#!/bin/sh\ncat "${0}.stderr" >&2\nexit 2\n', {mode: 0o700});
+            await writeFile(`${executable}.stderr`, `${diagnostic}\n`, "utf8");
+            process.env.PATH = `${directory}${path.delimiter}${originalPath ?? ""}`;
+
+            const result = await createHGrepTool("description", "start: TEST").execute(["needle", "missing.txt"], {
+              stdinFD: null,
+              scriptReadFD: null,
+              scriptWriteFD: null,
+              outputBudgetBytes: 16 * 1024 * 1024,
+            });
+            expect(result).toEqual({stderr: `hgrep: ${expected}\n`, exitCode: 1, failureClass: "search_error"});
+          });
+          TS
+          git diff --check
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+      - name: Prepare generated plugin assets
+        run: |
+          if ! command -v rg >/dev/null; then sudo apt-get update && sudo apt-get install -y ripgrep; fi
+          rg --version
+          bun install --cwd plugins --frozen-lockfile
+          go generate ./internal/router/toolplugin
+      - name: Go tests
+        run: go test -p 2 ./... -count=1 -timeout=10m 2>&1 | tee "$RUNNER_TEMP/go-tests.log"
+      - name: Plugin tests
+        run: bun test --timeout 30000 ./internal/router/toolplugin/tests 2>&1 | tee "$RUNNER_TEMP/plugin-tests.log"
+      - name: Go vet
+        run: go vet ./... 2>&1 | tee "$RUNNER_TEMP/vet.log"
+      - name: Focused race regressions
+        run: go test -race ./capturer ./internal/router -run 'TestAX|TestFeatureUsage|TestDebug|TestRequestContext' -count=1 -timeout=5m 2>&1 | tee "$RUNNER_TEMP/race.log"
+      - name: Publish only the validated compatibility fix
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git add plugins/hgrep.ts internal/router/toolplugin/tests/hgrep_diagnostic.test.ts
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: normalize older ripgrep filesystem diagnostics'
+          cat > "$RUNNER_TEMP/git-askpass" <<'SH'
+          #!/bin/sh
+          case "$1" in
+            *Username*) printf '%s\n' x-access-token ;;
+            *Password*) printf '%s\n' "$GH_TOKEN" ;;
+          esac
+          SH
+          chmod 700 "$RUNNER_TEMP/git-askpass"
+          GIT_ASKPASS="$RUNNER_TEMP/git-askpass" GIT_TERMINAL_PROMPT=0 git push origin HEAD:refs/heads/codex/fix-debug-observability
+          printf 'Validated product commit: `%s`\n' "$(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: debug-evidence-validation-logs
+          path: ${{ runner.temp }}/*.log
+          retention-days: 7
