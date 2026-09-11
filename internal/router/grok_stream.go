@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 )
 
@@ -245,7 +246,20 @@ func (tr *grokTranslation) readGrokStream(reader io.Reader, emit func(map[string
 	for _, item := range callItems {
 		index := len(output)
 		output = append(output, item)
-		if err := emit(map[string]any{"type": "response.output_item.added", "output_index": index, "item": item}); err != nil {
+		// Emit the complete Responses tool lifecycle only after every call has
+		// validated. Router transforms use input/arguments.done as the handoff
+		// boundary, even though Chat Completions buffers the whole call.
+		field, doneType := "arguments", "response.function_call_arguments.done"
+		if item["type"] == "custom_tool_call" {
+			field, doneType = "input", "response.custom_tool_call_input.done"
+		}
+		added := maps.Clone(item)
+		added["status"] = "in_progress"
+		added[field] = ""
+		if err := emit(map[string]any{"type": "response.output_item.added", "output_index": index, "item": added}); err != nil {
+			return nil, err
+		}
+		if err := emit(map[string]any{"type": doneType, "output_index": index, "item_id": item["id"], "call_id": item["call_id"], field: item[field]}); err != nil {
 			return nil, err
 		}
 		if err := emit(map[string]any{"type": "response.output_item.done", "output_index": index, "item": item}); err != nil {

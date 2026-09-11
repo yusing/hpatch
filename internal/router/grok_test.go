@@ -127,6 +127,129 @@ func TestGrokStreamingCustomCallsAndUsage(t *testing.T) {
 	}
 }
 
+// Exercise the adapter through the same response transform used by Codex.
+func TestGrokToolStreamThroughMekugi(t *testing.T) {
+	for _, name := range []string{"exec", "shell", "lookup"} {
+		t.Run(name, func(t *testing.T) {
+			transform, _, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
+			kind := "custom"
+			arguments := `{"input":"text(1)"}`
+			if name == "shell" {
+				arguments = `{"input":"pwd"}`
+			}
+			if name == "lookup" {
+				kind = "function"
+				arguments = `{"query":"test"}`
+				transform.commentaryTools = commentaryToolCatalog{
+					functionToolKey("", name): {qualifiedName: name},
+				}
+			}
+			tr := &grokTranslation{tools: map[string]grokTool{
+				"tool": {kind: kind, name: name},
+			}}
+			stream := grokTestSSE(map[string]any{"choices": []any{map[string]any{
+				"index": 0, "delta": map[string]any{"tool_calls": []any{map[string]any{
+					"index": 0, "id": "call-test", "function": map[string]string{"name": "tool", "arguments": arguments},
+				}}}, "finish_reason": "tool_calls",
+			}}})
+			var completed int
+			_, err := tr.readGrokStream(strings.NewReader(stream), func(event map[string]any) error {
+				visible, err := transform.TransformSSE(mustTestJSON(t, event))
+				if err != nil {
+					return fmt.Errorf("%s: %w", event["type"], err)
+				}
+				for _, payload := range visible {
+					var envelope map[string]json.RawMessage
+					if err := json.Unmarshal(payload, &envelope); err != nil {
+						t.Fatal(err)
+					}
+					if jsonString(envelope, "type") == "response.completed" {
+						completed++
+					}
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if completed != 1 {
+				t.Fatalf("completed responses = %d", completed)
+			}
+		})
+	}
+}
+
+func TestGrokParallelToolLifecycle(t *testing.T) {
+	tr := &grokTranslation{tools: map[string]grokTool{
+		"custom":   {kind: "custom", name: "exec"},
+		"function": {kind: "function", namespace: "functions", name: "lookup"},
+	}}
+	for _, invalid := range []bool{false, true} {
+		t.Run(fmt.Sprint(invalid), func(t *testing.T) {
+			args := `{"query":"test"}`
+			if invalid {
+				args = `{"query":`
+			}
+			stream := grokTestSSE(map[string]any{"choices": []any{map[string]any{
+				"index": 0, "delta": map[string]any{
+					"content": "Checking.",
+					"tool_calls": []any{
+						map[string]any{"index": 0, "id": "c1", "function": map[string]string{"name": "custom", "arguments": `{"input":"text(1)"}`}},
+						map[string]any{"index": 1, "id": "c2", "function": map[string]string{"name": "function", "arguments": args}},
+					},
+				}, "finish_reason": "tool_calls",
+			}}})
+			var events []map[string]any
+			result, err := tr.readGrokStream(strings.NewReader(stream), func(event map[string]any) error {
+				if item, ok := event["item"].(map[string]any); ok && item["type"] == "message" {
+					return nil
+				}
+				if event["type"] == "response.output_item.added" || event["type"] == "response.output_item.done" ||
+					event["type"] == "response.custom_tool_call_input.done" || event["type"] == "response.function_call_arguments.done" {
+					events = append(events, event)
+				}
+				return nil
+			})
+			if invalid {
+				if err == nil || len(events) != 0 {
+					t.Fatalf("invalid parallel call released tools: events=%v err=%v", events, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(events) != 6 {
+				t.Fatalf("tool events = %v", events)
+			}
+			for i, field := range []string{"input", "arguments"} {
+				added, done, completed := events[i*3], events[i*3+1], events[i*3+2]
+				item := result["output"].([]any)[i+1].(map[string]any)
+				addedItem := added["item"].(map[string]any)
+				doneType := "response.function_call_arguments.done"
+				if field == "input" {
+					doneType = "response.custom_tool_call_input.done"
+				}
+				if added["type"] != "response.output_item.added" || done["type"] != doneType ||
+					completed["type"] != "response.output_item.done" ||
+					addedItem[field] != "" || addedItem["status"] != "in_progress" ||
+					done[field] != item[field] || done["item_id"] != item["id"] || done["call_id"] != item["call_id"] {
+					t.Fatalf("invalid lifecycle: %v", events[i*3:i*3+3])
+				}
+				for _, event := range events[i*3 : i*3+3] {
+					if event["output_index"] != i+1 {
+						t.Fatalf("output index = %v", event["output_index"])
+					}
+					if eventItem, ok := event["item"].(map[string]any); ok &&
+						(eventItem["id"] != item["id"] || eventItem["call_id"] != item["call_id"]) {
+						t.Fatalf("changed identity: %v", eventItem)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestGrokReasoningUsage(t *testing.T) {
 	for _, fields := range []string{
 		`"completion_tokens_details":{"reasoning_tokens":94}`,
