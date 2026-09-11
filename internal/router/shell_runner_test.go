@@ -161,7 +161,7 @@ func TestShellRunnerQueriesCurrentSymbol(t *testing.T) {
 	}
 }
 
-func TestShellRunnerInspectsSelectedOutsideSource(t *testing.T) {
+func TestShellRunnerInspectsOutsideFile(t *testing.T) {
 	registry := sharedProxyTestRegistry(t)
 	workspace := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "value.json")
@@ -170,24 +170,21 @@ func TestShellRunnerInspectsSelectedOutsideSource(t *testing.T) {
 	}
 	t.Chdir(workspace)
 	stdout, stderr, status := runShellWorkerTest(t, registry, "/bin/sh", nil,
-		fmt.Sprintf("inspect_file --source /answer %q", outside), nil)
+		fmt.Sprintf("inspect_file %q", outside), nil)
 	var result struct {
 		OK   bool `json:"ok"`
 		Data struct {
 			Outline []struct {
-				Source struct {
-					Text    string `json:"text"`
-					Omitted int    `json:"omitted_bytes"`
-				} `json:"source"`
+				Pointer string `json:"pointer"`
 			} `json:"outline"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
 		t.Fatal(err)
 	}
-	if status != 0 || stderr != "" || !result.OK || len(result.Data.Outline) != 1 ||
-		result.Data.Outline[0].Source.Text != `{"nested":42}` || result.Data.Outline[0].Source.Omitted != 0 {
-		t.Fatalf("selected inspection: stdout=%s stderr=%q exit=%d", stdout, stderr, status)
+	if status != 0 || stderr != "" || !result.OK || len(result.Data.Outline) != 4 ||
+		result.Data.Outline[1].Pointer != "/answer" {
+		t.Fatalf("inspection: stdout=%s stderr=%q exit=%d", stdout, stderr, status)
 	}
 }
 

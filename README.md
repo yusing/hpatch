@@ -60,8 +60,8 @@ command sessions, and patch diff UI. No fork, no config edits, no daemon.
 - **Read only what the edit needs.**
   - Inside `functions.shell`, `hgrep` searches with verified rows, `hsymbol`
     finds semantic definitions and references, and `hcat` reads exact source ranges.
-  - `inspect_file` returns a structural outline with editable spans, or selected
-    declaration and JSON-value source in the same call with `--source`.
+  - `inspect_file` returns a structural outline with editable spans without
+    exposing source bodies.
   - `hcat --max-tokens N` and `hgrep --max-tokens N` set a strict output token
     ceiling. Add `--preview-bytes N` for bounded long-line previews.
     Omitted content is explicit; previews retain the complete row's verified identity.
@@ -338,7 +338,7 @@ programs**, not as standalone utilities in your terminal:
 | `hcat` | Read verified source rows | None |
 | `hgrep` | Search text with verified row references | `rg` |
 | `hsymbol` | Look up definitions and references | `gopls` for Go; TypeScript 7 as `tsc` for JS, TS, and JSON; `pyright-langserver` for Python |
-| `inspect_file` | Inspect structure, optionally including selected source | None |
+| `inspect_file` | Inspect a structural outline | None |
 
 Semantic lookup can start with a known line number:
 `hsymbol def source.go 42 MyFunction`. Use `LINE:HASH` instead when the query
@@ -346,11 +346,9 @@ must verify a prior read. `hsymbol --workspace /path/to/project refs source.go 4
 selects a resolver root without changing shell state and returns absolute result
 paths. Semantic results stay confined to that root.
 
-Structural inspection accepts ordinary relative or absolute paths.
-`inspect_file --source MyFunction source.go` returns the matching declaration and
-its verified span; `inspect_file --source /settings config.json` selects a JSON
-value by pointer. Source prefixes are bounded and report omitted bytes. Without
-`--source`, inspection remains outline-only.
+Structural inspection accepts one ordinary relative or absolute path.
+`inspect_file source.go` returns an outline whose verified spans can be used as
+HPATCH targets.
 
 For long lines, both verified readers offer an explicit bounded preview:
 `hcat --max-tokens 2000 --preview-bytes 160 source.ts` or

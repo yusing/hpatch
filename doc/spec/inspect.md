@@ -2,7 +2,7 @@
 
 ## REQ-INSPECT-001 — Shell-routed structural file inspection
 
-The private `inspect_file [--source NAME] [--source-bytes N] PATH` command is
+The private `inspect_file PATH` command is
 available only through the model-visible shell tool. It accepts one shell-separated
 path, relative to the process working directory or absolute, like hcat. Parent
 paths and symlinks are allowed; the target must be a host-readable regular file.
@@ -36,31 +36,8 @@ logical line and the lowercase four-digit hash of that complete logical line, ex
 terminator. A single-line span repeats the same identity in both fields. Repeated boundaries within an
 inspection MUST reuse the verified identity of that immutable source line rather than rehashing
 the complete line for every entry. Those identities are
-copyable HPATCH row or `ROW..ROW` range targets. By default, results contain no raw
+copyable HPATCH row or `ROW..ROW` range targets. Results contain no raw
 excerpts, bodies, fields, comments, frontmatter values, JSON scalar values, or row `TEXT`.
-
-The optional leading `--source NAME` selects all outline entries with that exact
-name or JSON pointer, in source order. An empty name selects the JSON root pointer;
-duplicate names or pointers remain separate entries. No match is a successful empty
-outline. `data.selection` records the selector. There is no regex or fuzzy matching.
-Selection and extraction use the same parsed UTF-8 snapshot as the row identities,
-so a caller can obtain a known declaration or JSON value without a preceding outline
-lookup or a second read.
-
-Selected entries add `source: {text, source_bytes, omitted_bytes}`. The text is the
-exact parser-located declaration, heading, JSON value syntax, or YAML key/value
-source, up to 8,192 UTF-8 bytes by default. It is not a decoded JSON/YAML value.
-`--source-bytes N` accepts 1 through 8,192, requires `--source`, and can precede it.
-Each option may appear once, before PATH. Prefixes never split a Unicode character.
-Omitted bytes are counted explicitly; the caller must not treat a partial prefix as
-complete source. The source's inclusive whole-line identities cover its full span,
-including multiline selected YAML values. A heading selects its own source, not
-the section that follows it. Default outline-only spans remain unchanged.
-
-The existing total stdout ceiling also applies to selected results. It can omit
-complete selected entries independently of their per-entry source-prefix bounds;
-`truncated` and `truncation.after_entries` report that omission. A byte-prefix
-omission alone does not mean outline entries were omitted.
 
 The complete successful stdout, including its final LF, is at most 65,536 UTF-8 bytes. When
 necessary, the worker retains the longest complete outline prefix and returns
@@ -94,7 +71,3 @@ Acceptance:
 
 5. Absolute, parent-relative, and symlink paths outside the current directory work
    when host permissions allow; non-regular files still fail.
-6. Exact source selection returns matching code, minified JSON values, and YAML
-   key/value source from the same snapshot as its full-span identities. Duplicate
-   selectors, no matches, Unicode prefix boundaries, and independent total-output
-   truncation remain explicit and deterministic.

@@ -8,7 +8,6 @@ export const inspectFileShapeSchema = {
       size_bytes: "integer",
       line_count: "integer | null",
       parse_complete: "boolean",
-      selection: "optional exact name or JSON pointer",
       outline: "outline_entry[]",
     },
     truncated: "boolean",
@@ -22,14 +21,12 @@ export const inspectFileShapeSchema = {
       message: "string",
     },
   },
-  selected_entry_source: {text: "UTF-8 source prefix", source_bytes: "integer", omitted_bytes: "integer"},
   outline_entry: [
     {
       kind: "import | constant | variable | type | class | function",
       name: "string",
       line: "LINE:HASH",
       line_end: "LINE:HASH",
-      source: "optional selected_entry_source",
     },
     {
       kind: "method",
@@ -37,7 +34,6 @@ export const inspectFileShapeSchema = {
       receiver: "string",
       line: "LINE:HASH",
       line_end: "LINE:HASH",
-      source: "optional selected_entry_source",
     },
     {
       kind: "heading",
@@ -45,14 +41,12 @@ export const inspectFileShapeSchema = {
       level: "1 | 2 | 3 | 4 | 5 | 6",
       line: "LINE:HASH",
       line_end: "LINE:HASH",
-      source: "optional selected_entry_source",
     },
     {
       kind: "frontmatter",
       name: "string",
       line: "LINE:HASH",
       line_end: "LINE:HASH",
-      source: "optional selected_entry_source",
     },
     {
       kind: "json",
@@ -60,7 +54,6 @@ export const inspectFileShapeSchema = {
       value_type: "object | array | string | number | boolean | null",
       line: "LINE:HASH",
       line_end: "LINE:HASH",
-      source: "optional selected_entry_source",
     },
   ],
 } as const;

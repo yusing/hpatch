@@ -504,32 +504,14 @@ func toolActivityReadCommand(script string, call *syntax.CallExpr) (string, bool
 		}
 		add("Read", argv[3]+" "+start+":"+end)
 	case "inspect_file":
-		pathIndex := 1
-		seen := make(map[string]bool)
-		for pathIndex < len(argv) && (argv[pathIndex] == "--source" || argv[pathIndex] == "--source-bytes") {
-			option := argv[pathIndex]
-			if seen[option] || pathIndex+1 == len(argv) {
-				return "", false
-			}
-			if option == "--source-bytes" {
-				if _, valid := toolActivityPositiveDecimal(argv[pathIndex+1], 8192); !valid {
-					return "", false
-				}
-			}
-			seen[option] = true
-			pathIndex += 2
-		}
-		if len(argv)-pathIndex != 1 || seen["--source-bytes"] && !seen["--source"] {
+		if len(argv) != 2 || argv[1] == "" || strings.ContainsRune(argv[1], '\x00') {
 			return "", false
 		}
-		if argv[pathIndex] == "" || strings.ContainsRune(argv[pathIndex], '\x00') {
-			return "", false
-		}
-		path := filepath.Clean(argv[pathIndex])
+		path := filepath.Clean(argv[1])
 		if path == "@shell" || strings.HasPrefix(path, "@shell"+string(filepath.Separator)) {
 			return "", false
 		}
-		add("Inspect", argv[pathIndex])
+		add("Inspect", argv[1])
 	case "ls":
 		if len(argv) > 2 || (len(argv) == 2 && strings.HasPrefix(argv[1], "-")) {
 			return "", false

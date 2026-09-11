@@ -376,13 +376,6 @@ as a complete definition or reference set.
 Use `inspect_file PATH` for bounded metadata and a structural outline. Each outline entry's
 `line` and `line_end` are copyable `LINE:HASH` identities for that inclusive span. Copy a
 single-line span as a row target and a multi-line span as `line..line_end` with no spaces.
-To obtain a known declaration or value in the same call, use
-`inspect_file --source NAME PATH` with an exact name or JSON pointer (empty for
-the JSON root). All matches include source; `--source-bytes N` sets its per-entry UTF-8
-prefix bound (1–8192, default 8192). Default inspection remains outline-only.
-Paths are absolute or working-directory-relative, like hcat.
-
-Selected source is exact syntax, not a decoded JSON/YAML value. Check both per-entry
-`omitted_bytes` and envelope `truncated` before treating it as complete. Use hcat
-only for still-missing context, not to reacquire identities already supplied.
+Paths are absolute or working-directory-relative, like hcat. Use bounded hcat when the
+outline does not provide source text needed for the next decision.
 <!-- mekugi-model-instructions:end -->

@@ -240,7 +240,7 @@ func TestInstructionsConsolidateDeliveredContracts(t *testing.T) {
 				"`continuation` notice's `next_call`",
 				"Retained scripts are thread-private",
 				"`--preview-bytes N`",
-				"`inspect_file --source NAME PATH`",
+				"`inspect_file PATH` for bounded metadata",
 				"plain lines query the\ncurrent snapshot",
 				"For values, framing, paths, conflicting commands, or mixed corrections",
 				"not workspace files",
