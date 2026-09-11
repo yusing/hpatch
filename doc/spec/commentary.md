@@ -114,6 +114,20 @@ Polls correlate only with visible call/result pairs that include execution metad
 same request; output-only Code Mode projections are not session evidence. Missing command
 history or unavailable stored source is labelled `command unavailable`, never guessed.
 These presentation rules do not change execution, validation, or replay payloads. Calls that send nonempty characters display `Send input`.
+MCP function names in Codex's `mcp__<server>__<tool>` form and native calls with
+namespace `mcp__<server>` display `MCP` with the `server.tool` identity and full
+arguments. MCP resource listing, template listing, and reading, clock, context,
+goal, execution-wait, web, and image-generation helpers use descriptive operation
+labels with full arguments. `update_plan` retains its existing generic display.
+Transparent Code Mode wrappers use the same display, including bound results,
+inline awaited calls, and `generatedImage(result)` for image generation.
+Static sequential calls and literal `Promise.all`/`Promise.allSettled` batches
+display every operation in source order, grouped unless the batch contains patches;
+patch files retain independently identified messages. Batches do not
+establish shell-session result metadata. Dynamic arguments, control flow, runtime
+name shadowing, unknown tools, or unrelated executable statements retain the
+complete JavaScript preview, never a partially simplified subset. Rendering never
+evaluates a call or claims success, and collaboration display stays Codex-owned.
 Simple literal `cat` and `hcat` calls display `Read <file>`. Literal bounded
 `sed -n 'START,ENDp' <file>` reads display `Read <file> START:END`, with positive decimal
 line numbers and an end not before the start. Only this single-file print form is classified;

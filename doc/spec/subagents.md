@@ -49,6 +49,9 @@ provider-only history items cannot be translated. Fresh-context spawning (`fork_
 inherited OpenAI encrypted history; unsupported history must fail without a provider request.
 
 Text and content-free progress stream while complete tool arguments are buffered and validated.
+Validated calls emit the Responses tool lifecycle in order: item added, input or arguments done,
+then item done, with stable item/call identities and output indexes. Function argument-completion
+events include the restored function name.
 Truncated streams and malformed/unknown tool calls never become successful executable results.
 JSON clients receive the equivalent terminal Responses object. Cancellation and stream inactivity
 limits propagate to the upstream HTTP request; request start and execution have distinct lifetimes.

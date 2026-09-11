@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"math"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -13,20 +14,47 @@ import (
 )
 
 // Presentation only: never evaluate code, expand paths, or alter the observed call.
-func subagentToolActivityTexts(item map[string]json.RawMessage, qualifiedName string, history *mekugiHistory) []string {
+func subagentToolActivityTexts(item map[string]json.RawMessage, qualifiedName string, history *mekugiHistory, shellDisplay func(map[string]json.RawMessage, string) (string, bool)) []string {
 	name := jsonString(item, "name")
 	if commentaryExcluded(jsonString(item, "namespace"), name) {
 		return []string{"Tool call: " + commentaryCode(qualifiedName)}
+	}
+	if shellDisplay != nil {
+		if display, ok := shellDisplay(item, qualifiedName); ok {
+			return []string{display}
+		}
 	}
 	input := jsonString(item, "arguments")
 	if input == "" {
 		input = jsonString(item, "input")
 	}
 	shortName := strings.TrimPrefix(qualifiedName, "functions.")
+	if server, ok := strings.CutPrefix(jsonString(item, "namespace"), "mcp__"); ok && server != "" && name != "" {
+		return []string{toolActivityDetail("MCP "+commentaryCode(server+"."+name), input)}
+	}
+	if server, tool, ok := toolActivityMCPName(shortName); ok {
+		// Source: codex-rs/tui/src/history_cell/mcp.rs:727:748 format_mcp_invocation.
+		// Keep Codex's server.tool identity and arguments, without claiming success.
+		return []string{toolActivityDetail("MCP "+commentaryCode(server+"."+tool), input)}
+	}
 	if shortName == "exec" {
-		if nested, ok := toolActivityUnwrapExec(input, false); ok {
-			return subagentToolActivityTexts(nested, qualifiedToolName(jsonString(nested, "namespace"), jsonString(nested, "name")), nil)
+		if calls, ok := toolActivityUnwrapExecCalls(input, false); ok {
+			var displays []string
+			for _, nested := range calls {
+				displays = append(displays, subagentToolActivityTexts(nested, qualifiedToolName(jsonString(nested, "namespace"), jsonString(nested, "name")), nil, shellDisplay)...)
+			}
+			// Keep patch files independently renderable under their existing delivery budget.
+			hasPatch := slices.ContainsFunc(calls, func(call map[string]json.RawMessage) bool {
+				return jsonString(call, "name") == "apply_patch"
+			})
+			if len(calls) > 1 && !hasPatch {
+				return []string{strings.Join(displays, "\n\n")}
+			}
+			return displays
 		}
+	}
+	if label := toolActivityBuiltinLabel(shortName); label != "" {
+		return []string{toolActivityDetail(label, input)}
 	}
 	var arguments map[string]json.RawMessage
 	_ = json.Unmarshal([]byte(input), &arguments)
@@ -109,6 +137,49 @@ func subagentToolActivityTexts(item map[string]json.RawMessage, qualifiedName st
 		return []string{toolActivityDetail("Run code", jsonString(item, "code"))}
 	}
 	return []string{toolActivityDetail("Tool call: "+commentaryCode(qualifiedName), input)}
+}
+
+// Use one label table for native calls and normalized Code Mode identifiers.
+// Retain full arguments: auxiliary options are part of the observed operation too.
+func toolActivityBuiltinLabel(name string) string {
+	switch name {
+	case "list_mcp_resources":
+		return "List MCP resources"
+	case "list_mcp_resource_templates":
+		return "List MCP resource templates"
+	case "read_mcp_resource":
+		return "Read MCP resource"
+	case "clock.curr_time", "clock__curr_time", "curr_time":
+		return "Read current time"
+	case "clock.sleep", "clock__sleep", "sleep":
+		return "Sleep"
+	case "get_context_remaining":
+		return "Check remaining context"
+	case "new_context":
+		return "Start new context"
+	case "create_goal":
+		return "Create goal"
+	case "get_goal":
+		return "Read goal"
+	case "update_goal":
+		return "Update goal"
+	case "web.run", "web__run":
+		return "Browse web"
+	case "image_gen.imagegen", "image_gen__imagegen":
+		return "Generate image"
+	case "wait":
+		return "Wait for execution"
+	}
+	return ""
+}
+
+func toolActivityMCPName(name string) (server, tool string, ok bool) {
+	qualified, ok := strings.CutPrefix(name, "mcp__")
+	if !ok {
+		return "", "", false
+	}
+	server, tool, ok = strings.Cut(qualified, "__")
+	return server, tool, ok && server != "" && tool != ""
 }
 
 func toolActivityDetail(label, input string) string {
@@ -445,6 +516,14 @@ func toolActivityReadCommand(script string, call *syntax.CallExpr) (string, bool
 // Output-only projections can describe commands but cannot identify sessions:
 // their stdout is program-controlled, not execution metadata.
 func toolActivityUnwrapExec(source string, requireResultMetadata bool) (map[string]json.RawMessage, bool) {
+	calls, ok := toolActivityUnwrapExecCalls(source, requireResultMetadata)
+	if !ok || len(calls) != 1 {
+		return nil, false
+	}
+	return calls[0], true
+}
+
+func toolActivityUnwrapExecCalls(source string, requireResultMetadata bool) ([]map[string]json.RawMessage, bool) {
 	parser := sitter.NewParser()
 	defer parser.Close()
 	if parser.SetLanguage(codeModeJavaScriptLanguage) != nil {
@@ -467,30 +546,49 @@ func toolActivityUnwrapExec(source string, requireResultMetadata bool) (map[stri
 			statements = append(statements, node)
 		}
 	}
-	if len(statements) == 0 || len(statements) > 2 {
+	if len(statements) == 0 {
 		return nil, false
 	}
-	first := statements[0]
-	var expression *sitter.Node
-	if first.Kind() == "expression_statement" && len(statements) == 1 {
-		expression = first.NamedChild(0)
-		if args, ok := toolActivityCallArguments(expression, bytes, "text"); ok && len(args) == 1 {
-			expression = args[0]
-		} else if requireResultMetadata {
+	var calls []map[string]json.RawMessage
+	for i := 0; i < len(statements); i++ {
+		first := statements[i]
+		var expression *sitter.Node
+		if first.Kind() == "expression_statement" {
+			expression = first.NamedChild(0)
+			if args, ok := toolActivityCallArguments(expression, bytes, "text"); ok && len(args) == 1 {
+				expression = args[0]
+			} else if args, ok := toolActivityCallArguments(expression, bytes, "generatedImage"); ok && len(args) == 1 && !requireResultMetadata {
+				expression = args[0]
+			} else if requireResultMetadata {
+				return nil, false
+			}
+		} else if first.Kind() == "lexical_declaration" && first.NamedChildCount() == 1 && i+1 < len(statements) {
+			declaration := first.NamedChild(0)
+			binding := declaration.ChildByFieldName("name")
+			if binding == nil || binding.Kind() != "identifier" {
+				return nil, false
+			}
+			name := binding.Utf8Text(bytes)
+			// A local runtime binding changes every call in the program, including earlier calls.
+			if slices.Contains([]string{"tools", "text", "JSON", "Object", "Promise", "generatedImage"}, name) {
+				return nil, false
+			}
+			if !toolActivityResultProjection(statements[i+1], bytes, name, requireResultMetadata) {
+				return nil, false
+			}
+			expression = declaration.ChildByFieldName("value")
+			i++
+		}
+		nested, ok := toolActivityAwaitedCalls(expression, bytes, requireResultMetadata)
+		if !ok {
 			return nil, false
 		}
-	} else if first.Kind() == "lexical_declaration" && first.NamedChildCount() == 1 && len(statements) == 2 {
-		declaration := first.NamedChild(0)
-		binding := declaration.ChildByFieldName("name")
-		if binding == nil || binding.Kind() != "identifier" {
-			return nil, false
-		}
-		name := binding.Utf8Text(bytes)
-		if !toolActivityResultProjection(statements[1], bytes, name, requireResultMetadata) {
-			return nil, false
-		}
-		expression = declaration.ChildByFieldName("value")
+		calls = append(calls, nested...)
 	}
+	return calls, true
+}
+
+func toolActivityAwaitedCalls(expression *sitter.Node, bytes []byte, requireResultMetadata bool) ([]map[string]json.RawMessage, bool) {
 	if expression == nil || expression.Kind() != "await_expression" {
 		return nil, false
 	}
@@ -498,8 +596,35 @@ func toolActivityUnwrapExec(source string, requireResultMetadata bool) (map[stri
 	if call == nil || call.Kind() != "call_expression" {
 		return nil, false
 	}
+	if !requireResultMetadata {
+		for _, method := range []string{"all", "allSettled"} {
+			if args, ok := toolActivityCallArguments(call, bytes, "Promise", method); ok && len(args) == 1 && args[0].Kind() == "array" {
+				var calls []map[string]json.RawMessage
+				for i := range args[0].NamedChildCount() {
+					node := args[0].NamedChild(uint(i))
+					item, ok := toolActivityStaticToolCall(node, bytes)
+					if !ok {
+						return nil, false
+					}
+					calls = append(calls, item)
+				}
+				return calls, len(calls) > 0
+			}
+		}
+	}
+	item, ok := toolActivityStaticToolCall(call, bytes)
+	if !ok {
+		return nil, false
+	}
+	return []map[string]json.RawMessage{item}, true
+}
+
+func toolActivityStaticToolCall(call *sitter.Node, bytes []byte) (map[string]json.RawMessage, bool) {
+	if call == nil || call.Kind() != "call_expression" {
+		return nil, false
+	}
 	callee, args := call.ChildByFieldName("function"), call.ChildByFieldName("arguments")
-	if callee == nil || args == nil || args.NamedChildCount() != 1 {
+	if callee == nil || args == nil || args.NamedChildCount() > 1 {
 		return nil, false
 	}
 	property := callee.ChildByFieldName("property")
@@ -510,19 +635,25 @@ func toolActivityUnwrapExec(source string, requireResultMetadata bool) (map[stri
 	switch name {
 	case "exec_command", "shell_command", "shell", "view_image", "write_stdin", "apply_patch":
 	default:
-		return nil, false
+		if _, _, ok := toolActivityMCPName(name); !ok && toolActivityBuiltinLabel(name) == "" {
+			return nil, false
+		}
 	}
 	if !toolActivityMemberPath(callee, bytes, "tools", name) || call.ChildByFieldName("optional_chain") != nil {
 		return nil, false
 	}
-	value, ok := toolActivityStaticJavaScriptValue(args.NamedChild(0), bytes)
-	if !ok {
-		return nil, false
+	var value any
+	if args.NamedChildCount() == 1 {
+		var ok bool
+		value, ok = toolActivityStaticJavaScriptValue(args.NamedChild(0), bytes)
+		if !ok {
+			return nil, false
+		}
 	}
 	item := map[string]json.RawMessage{"name": mustMarshalJSON(name)}
 	if text, ok := value.(string); ok {
 		item["input"] = mustMarshalJSON(text)
-	} else {
+	} else if args.NamedChildCount() != 0 {
 		item["arguments"] = mustMarshalJSON(string(mustMarshalJSON(value)))
 	}
 	return item, true
@@ -535,6 +666,10 @@ func toolActivityResultProjection(statement *sitter.Node, source []byte, binding
 		return false
 	}
 	args, ok := toolActivityCallArguments(statement.NamedChild(0), source, "text")
+	if !ok && !requireResultMetadata {
+		args, ok = toolActivityCallArguments(statement.NamedChild(0), source, "generatedImage")
+		return ok && len(args) == 1 && toolActivityMemberPath(args[0], source, binding)
+	}
 	if !ok || len(args) != 1 {
 		return false
 	}
