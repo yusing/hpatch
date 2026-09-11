@@ -410,17 +410,20 @@ describe("hcat built-in plugin", () => {
     expect(outside).toEqual({
       stderr: "hcat: start line 4 is past EOF (3 lines)\n",
       exitCode: 1,
+      failureClass: "reader_error",
     });
 
     const missing = await tool.execute(["missing.txt"], executionContext);
     expect(missing).toEqual({
       stderr: "hcat: ENOENT: no such file or directory\n",
       exitCode: 1,
+      failureClass: "not_found",
     });
 
     expect(await tool.execute(["@shell/call-id"], executionContext)).toEqual({
       stderr: "hcat: unresolved @shell path\n",
       exitCode: 1,
+      failureClass: "reader_error",
     });
   });
 
@@ -460,6 +463,7 @@ describe("hcat built-in plugin", () => {
       stdout: formatVerifiedRow(1, first) + formatVerifiedRow(2, "second"),
       stderr: "hcat: output incomplete: 15,000-token limit reached\n",
       exitCode: 1,
+      failureClass: "output_limit",
     });
   });
 
@@ -474,6 +478,7 @@ describe("hcat built-in plugin", () => {
       stdout: "",
       stderr: "hcat: output incomplete: 15,000-token limit reached\n",
       exitCode: 1,
+      failureClass: "output_limit",
     });
   });
 
@@ -776,6 +781,7 @@ describe("hsymbol built-in plugin", () => {
     expect(result).toEqual({
       stderr: "hsymbol: target is not a symbol token on the selected line\n",
       exitCode: 1,
+      failureClass: "resolver_error",
     });
   });
 
@@ -993,17 +999,18 @@ describe("hsymbol built-in plugin", () => {
     expect(external).toEqual({
       stderr: "hsymbol: skipped 1 location outside workspace\nhsymbol: definition has no editable workspace location\n",
       exitCode: 1,
+      failureClass: "no_editable_location",
       terminationReason: "resolver_cleanup",
     });
 
     await fake.respond("", "query failed\n", 2);
     const failed = await tool.execute(["refs", "input.go", reference, "Target"], executionContext);
-    expect(failed).toEqual({stderr: "hsymbol: query failed\n", exitCode: 1, terminationReason: "resolver_cleanup"});
+    expect(failed).toEqual({stderr: "hsymbol: query failed\n", exitCode: 1, failureClass: "resolver_error", terminationReason: "resolver_cleanup"});
 
     const emptyPath = await temporaryDirectory("hsymbol-empty-path-");
     process.env.PATH = emptyPath;
     const unavailable = await tool.execute(["refs", "input.go", reference, "Target"], executionContext);
-    expect(unavailable).toEqual({stderr: "hsymbol: gopls is unavailable; expose gopls on the executor PATH\n", exitCode: 1, terminationReason: "resolver_cleanup"});
+    expect(unavailable).toEqual({stderr: "hsymbol: gopls is unavailable; expose gopls on the executor PATH\n", exitCode: 1, failureClass: "dependency_unavailable", terminationReason: "resolver_cleanup"});
   });
 
   test("fails without query output when the selected input changes during gopls", async () => {
@@ -1024,7 +1031,7 @@ describe("hsymbol built-in plugin", () => {
       ["refs", "input.go", `2:${hashLine(inputLine)}`, "Target"],
       executionContext,
     );
-    expect(result).toEqual({stderr: "hsymbol: input changed during query\n", exitCode: 1, terminationReason: "resolver_cleanup"});
+    expect(result).toEqual({stderr: "hsymbol: input changed during query\n", exitCode: 1, failureClass: "resolver_error", terminationReason: "resolver_cleanup"});
   });
 
   test("applies the shared whole-row token admission to references", async () => {
@@ -1061,6 +1068,7 @@ describe("hsymbol built-in plugin", () => {
       stderr: "hsymbol: skipped 1 location outside workspace\n"
         + "hsymbol: output incomplete: 15,000-token limit reached\n",
       exitCode: 1,
+      failureClass: "output_limit",
       terminationReason: "resolver_cleanup",
     });
   });
@@ -1158,11 +1166,11 @@ describe("hsymbol built-in plugin", () => {
     expect(await tool.execute(
       ["refs", "input.ts", `2:${hashLine(typescriptLine)}`, "target"],
       executionContext,
-    )).toEqual({stderr: "hsymbol: tsc is unavailable; expose TypeScript 7 tsc with --lsp support on the executor PATH\n", exitCode: 1, terminationReason: "resolver_cleanup"});
+    )).toEqual({stderr: "hsymbol: tsc is unavailable; expose TypeScript 7 tsc with --lsp support on the executor PATH\n", exitCode: 1, failureClass: "dependency_unavailable", terminationReason: "resolver_cleanup"});
     expect(await tool.execute(
       ["refs", "input.py", `2:${hashLine(pythonLine)}`, "target"],
       executionContext,
-    )).toEqual({stderr: "hsymbol: pyright-langserver is unavailable; expose pyright-langserver on the executor PATH\n", exitCode: 1, terminationReason: "resolver_cleanup"});
+    )).toEqual({stderr: "hsymbol: pyright-langserver is unavailable; expose pyright-langserver on the executor PATH\n", exitCode: 1, failureClass: "dependency_unavailable", terminationReason: "resolver_cleanup"});
   });
 
   test("reaps a language server that ignores shutdown", async () => {

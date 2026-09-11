@@ -4,18 +4,32 @@
 
 The shell worker observes actual invocations of private `hcat`, `hgrep`, `hsymbol`,
 and `inspect_file` at its dispatch boundary. An absolute `MEKUGI_AX_OUTPUT` opts into
-a local `mekugi.ax.read.v1` JSONL journal. The worker inherits this environment value;
+a local `mekugi.ax.read.v2` JSONL journal (v1 remains readable). The worker inherits this environment value;
 no router process, transport request, or static source scan supplies an executed-read count.
 
 `--debug` implies AX instrumentation without an additional flag or environment setting.
 It creates a journal in the debug directory unless `MEKUGI_AX_OUTPUT` is already set,
-supplies its path to the wrapped executor, and includes an automatic `ax.json` report
+pins its path in the authenticated worker manifest as well as supplying it to the
+wrapped executor, and includes an automatic `ax.json` report
 and the journal among the printed artifact paths. Automatic rollout discovery and
 missing-evidence states follow [REQ-ROUTER-001](router.md). The ordinary manual
 journal/inspection workflow remains available without enabling other debug artifacts.
 
 Each invocation emits a random identity, thread ID, reader name, UTC timestamp,
-and start/finish phase. Finish includes elapsed monotonic nanoseconds and success.
+and start/finish phase. Finish includes elapsed monotonic nanoseconds, success,
+a fixed allowlisted `failure_class` on failure, and an optional observed process exit
+code. The host validates private reader classification metadata; dispatch separately
+classifies retained-file, execution, output-write, cancellation, and deadline failures.
+Unclassified failures use `unknown`; v1 failures are never reclassified from prose.
+
+With AX enabled, generated shell carriers may carry the opaque logical call identity
+in `MEKUGI_AX_CALL_ID`, not a capability, path, script, or publication route. Normal
+uninstrumented carriers remain unchanged. Journal events include safe `call_id` when
+available and a worker-local random `shell_id`. Start and finish must agree on schema,
+thread, reader, and all correlation fields. A call ID is not inferred from an arbitrary
+shell command or shared thread. Child workers use their own runtime thread identity;
+missing identities remain unattributed. Repository router tests clear inherited AX
+output at process startup and explicitly opt in only to test-owned journals.
 Loops count each actual invocation. Skipped branches and literal source examples count
 none. Reader failures, including invalid arguments or retained-file acquisition, remain
 failed invocation attempts. These counts are not physical filesystem-open counts.
@@ -48,7 +62,11 @@ The capturer package owns the following offline calculations:
   line-aligned re-emission, not a judgment that those bytes were unnecessary.
 - **Read observations:** filter runtime events by the rollout's recorded thread ID, pair
   starts/finishes by invocation identity, and expose started/completed/succeeded/failed,
-  incomplete, per-reader counts, and measured duration. Reject malformed, duplicate,
+  incomplete, per-reader counts, measured duration, and failure-class counts. Expose up
+  to 256 failure details per thread with journal/call/shell identities and a dropped-detail
+  count. Other-thread and anonymous start counts are explicit exclusions, not discarded
+  noise. Validate the entire journal once before attribution; invalid input yields no
+  partial journal result. Reject malformed, duplicate,
   unpaired, oversized, or arithmetically invalid evidence. No source-derived read estimate
   substitutes for runtime evidence.
 - **Completion observations:** pair `task_started`/`task_complete` or
@@ -57,6 +75,13 @@ The capturer package owns the following offline calculations:
   summed observed intervals (milliseconds saturated at the signed 64-bit maximum), and
   unpaired events. Missing events do not imply completion;
   these intervals include all activity between recorded start and completion.
+- **Command observations:** observe `item_started`/`item_completed` events whose item
+  type is `CommandExecution`. Retain item identity, optional literal carrier correlation,
+  timestamps, observed exit status, and paired duration. At most 10000 command identities
+  are accepted. Missing, duplicate, or backwards events remain unpaired; only a known
+  end followed by a non-overlapping start establishes a gap. Summed millisecond intervals
+  saturate at the signed 64-bit maximum. These gaps include all intervening activity,
+  not inferred router overhead. Commands and output are never retained in AX results.
 - **Defect assessments:** accept a JSON array of unique known edit call IDs, explicit
   `defect`/`no_defect` verdicts, and real evidence-artifact paths. Relative paths resolve
   from the assessment file. Evidence must be nonempty, regular, and at most 1 MiB; record

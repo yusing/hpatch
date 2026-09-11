@@ -10,7 +10,7 @@ import (
 
 // Prepare every program before emitting a carrier, so an invalid later header
 // or interpreter cannot cause a valid prefix to execute.
-func (t *mekugiResponseTransform) prepareShellBatch(contribution toolContribution, sources []string, pathPrefix string) ([]string, toolplugin.Translation, error) {
+func (t *mekugiResponseTransform) prepareShellBatch(contribution toolContribution, sources []string, pathPrefix string, callIDs ...string) ([]string, toolplugin.Translation, error) {
 	if t.nativeTools {
 		return nil, toolplugin.Translation{}, fmt.Errorf("shell batches require Code Mode; submit separate shell calls with this client")
 	}
@@ -31,11 +31,11 @@ func (t *mekugiResponseTransform) prepareShellBatch(contribution toolContributio
 			return nil, toolplugin.Translation{}, fmt.Errorf("shell program %d: expected an exec carrier", index+1)
 		}
 		var program strings.Builder
-		steps, commands, catWrites := t.shellCatPlan(contribution, translation.Arguments, translation.Carrier.Template, translation.Carrier.Params)
+		steps, commands, catWrites := t.shellCatPlan(contribution, translation.Arguments, translation.Carrier.Template, translation.Carrier.Params, callIDs...)
 		if catWrites {
 			writeShellCatSequence(&program, steps, commands, translation.Carrier.Params)
 		} else {
-			command, err := t.proxy.registry.execCarrierCommand(contribution, source, translation.Arguments, translation.Carrier.Template)
+			command, err := t.proxy.registry.execCarrierCommand(contribution, source, translation.Arguments, translation.Carrier.Template, callIDs...)
 			if err != nil {
 				return nil, toolplugin.Translation{}, fmt.Errorf("shell program %d: %w", index+1, err)
 			}

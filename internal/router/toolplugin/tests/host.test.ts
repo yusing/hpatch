@@ -456,3 +456,35 @@ test("bounds a stalled regex validator without retaining its child", async () =>
   expect(response.errors.join("\n")).toContain("cannot validate Rust regex grammar");
   expect(performance.now() - started).toBeLessThan(3_000);
 });
+
+for (const result of [
+  {exitCode: 0, failureClass: "not_found"},
+  {exitCode: 1, failureClass: "private /path stderr"},
+  {exitCode: 1, failureClass: null},
+  {exitCode: 1, failureClass: {code: "not_found"}},
+]) {
+  test(`rejects unsafe reader failure metadata ${JSON.stringify(result)}`, async () => {
+    const directory = await temporaryDirectory();
+    await writeFile(path.join(directory, "plugin.mjs"), pluginDeclaration().replace(
+      'return {stdout: "", exitCode: 0};', `return ${JSON.stringify(result)};`,
+    ));
+    const response = invokeHost(directory, {
+      operation: "execute", module: "plugin.mjs", index: 0, arguments: [], outputBudgetBytes: 1024,
+    });
+    expect(response.status).toBe(1);
+    expect(response.stderr).toContain("failureClass must be allowlisted with a nonzero exitCode");
+    expect(response.stderr).not.toContain("private /path stderr");
+  });
+}
+
+test("passes allowlisted failure metadata without changing command output", async () => {
+  const directory = await temporaryDirectory();
+  await writeFile(path.join(directory, "plugin.mjs"), pluginDeclaration().replace(
+    'return {stdout: "", exitCode: 0};', 'return {stdout: "", stderr: "original diagnostic", exitCode: 1, failureClass: "not_found"};',
+  ));
+  const response = invokeHost(directory, {
+    operation: "execute", module: "plugin.mjs", index: 0, arguments: [], outputBudgetBytes: 1024,
+  });
+  expect(response.status).toBe(0);
+  expect(JSON.parse(response.stdout)).toEqual({stdout: "", stderr: "original diagnostic", exitCode: 1, failureClass: "not_found"});
+});

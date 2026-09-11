@@ -421,12 +421,16 @@ func (t *mekugiResponseTransform) operationCommentaryMessage(id, text string) ma
 // Completed provider commentary is copied to the root without rewriting the
 // child's original message. Router-owned messages already have their own paths.
 func (t *mekugiResponseTransform) collectProviderCommentary(message map[string]json.RawMessage) {
-	if !t.subagentTurn || jsonString(message, "type") != "message" ||
+	if jsonString(message, "type") != "message" ||
 		jsonString(message, "role") != "assistant" || jsonString(message, "phase") != "commentary" ||
 		jsonString(message, "status") != "completed" {
 		return
 	}
 	id := jsonString(message, "id")
+	t.featureTrace.record("commentary", "provider_message", "authored", "observed", "", id)
+	if !t.subagentTurn {
+		return
+	}
 	if id == "" || len(id) > maxCommentaryPublicationBytes-len("provider-message\x00") || commentaryid.Generated(id) {
 		return
 	}
