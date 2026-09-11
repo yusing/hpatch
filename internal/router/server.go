@@ -212,6 +212,7 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 			return fmt.Errorf("initialize replay storage: %w", err)
 		}
 		mekugiCalls = newMekugiProxy(translator, registry, customizedInstructions, compactTokens != nil, titles)
+		mekugiCalls.commentary.debug = debug
 		mekugiCalls.replayStore = replayStore
 		defer func() {
 			runErr = errors.Join(runErr, mekugiCalls.Close())
@@ -591,8 +592,13 @@ func executeRequest(
 		}
 	}
 	if mekugiTransform != nil {
+		mekugiTransform.featureTrace = featureUsageTrace{
+			debug: debug, requestID: debugID,
+			threadID: codexThreadID(headers), sessionID: sessionID,
+		}
 		defer mekugiTransform.Close()
 	}
+
 	var bridge *subagentBridge
 	var compactTransform *ctp2ResponseTransform
 	bridgeProvider := provider

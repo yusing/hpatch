@@ -22,6 +22,7 @@ import (
 	"github.com/yusing/mekugi"
 	codexinstructions "github.com/yusing/mekugi/contrib/codex"
 	"github.com/yusing/mekugi/internal/router/toolplugin"
+	"github.com/yusing/mekugi/internal/shellsyntax"
 )
 
 const (
@@ -209,6 +210,7 @@ type mekugiPendingCall struct {
 }
 
 type mekugiResponseTransform struct {
+	featureTrace          featureUsageTrace
 	ctx                   context.Context
 	proxy                 *mekugiProxy
 	sessionID             string
@@ -1194,16 +1196,24 @@ func (t *mekugiResponseTransform) translateRegisteredTool(contribution toolContr
 	}
 	pathPrefix := t.shellDirectory + string(os.PathSeparator)
 	recovered := !t.nativeTools && shellCodeModeRecovery(contribution, input)
+	var batch []string
 	var translation toolplugin.Translation
 	var err error
 	effectiveInput := input
 	if !recovered && contribution.PluginID == builtinToolsPluginID && contribution.Name == "shell" {
 		effectiveInput, err = t.proxy.resolveShellInput(t.shellDirectory, input)
+		if err == nil {
+			var programs []string
+			programs, err = shellsyntax.Split(effectiveInput)
+			if err == nil && len(programs) > 1 {
+				batch, translation, err = t.prepareShellBatch(contribution, programs, pathPrefix)
+			}
+		}
 		if err != nil {
 			translation = toolplugin.Translation{Rejected: true, Diagnostic: err.Error()}
 		}
 	}
-	if !recovered && !translation.Rejected {
+	if !recovered && !translation.Rejected && len(batch) == 0 {
 		if contribution.PluginID == builtinToolsPluginID {
 			translation, err = t.proxy.registry.builtinTranslator.Translate(t.ctx, contribution.ModuleIndex, effectiveInput, pathPrefix)
 		} else {
@@ -1221,7 +1231,7 @@ func (t *mekugiResponseTransform) translateRegisteredTool(contribution toolContr
 			return mekugiHistory{}, fmt.Errorf("translate registered tool %s: %w", contribution.Name, err)
 		}
 	}
-	if !recovered && !translation.Rejected && shellTypeScriptMisuse(contribution, translation.Arguments) {
+	if !recovered && !translation.Rejected && len(batch) == 0 && shellTypeScriptMisuse(contribution, translation.Arguments) {
 		translation = toolplugin.Translation{Rejected: true, Diagnostic: shellTypeScriptDiagnostic}
 	}
 	var resultMetadata map[string]json.RawMessage
@@ -1243,7 +1253,7 @@ func (t *mekugiResponseTransform) translateRegisteredTool(contribution toolContr
 	name := t.codeModeToolName
 	payload := ""
 	diagnostic := translation.Diagnostic
-	catWriteCarrier := false
+	splitShellCarrier := false
 	var misuseWarnings []string
 	if recovered {
 		misuseWarnings = append(misuseWarnings, shellCodeModeRecoveryWarning)
@@ -1281,10 +1291,15 @@ func (t *mekugiResponseTransform) translateRegisteredTool(contribution toolContr
 			if err := t.carriers.require(name, kind); err != nil {
 				return mekugiHistory{}, fmt.Errorf("%s exec carrier: %w", contribution.Name, err)
 			}
+			if len(batch) != 0 {
+				payload = renderShellBatch(batch, resultMetadata)
+				splitShellCarrier = true
+				break
+			}
 			arguments := translation.Arguments
 			if splitPayload, ok := t.shellCatCarrier(contribution, kind, arguments, translation.Carrier.Template, translation.Carrier.Params, resultMetadata); ok {
 				payload = splitPayload
-				catWriteCarrier = true
+				splitShellCarrier = true
 				break
 			}
 			payload, err = t.proxy.registry.execCarrierPayload(
@@ -1325,7 +1340,7 @@ func (t *mekugiResponseTransform) translateRegisteredTool(contribution toolContr
 			)
 		}
 	}
-	if !translation.Rejected && !catWriteCarrier {
+	if !translation.Rejected && !splitShellCarrier {
 		for _, misuse := range shellInterpreterWrapperMisuses(contribution, input) {
 			misuseWarnings = append(misuseWarnings, shellInterpreterWrapperWarning(misuse))
 		}

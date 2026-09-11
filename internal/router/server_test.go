@@ -400,7 +400,7 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 		t.Fatalf("rewritten tools lost shell: %#v", forwardedTools)
 	}
 	shellDescription := jsonString(forwardedTools[shellIndex], "description")
-	for _, required := range []string{"Run one free-form script", "### `#!params`", "{ workdir?: string }"} {
+	for _, required := range []string{"Run free-form scripts", "### `#!params`", "{ workdir?: string }"} {
 		if !strings.Contains(shellDescription, required) {
 			t.Fatalf("shell description is missing %q: %q", required, shellDescription)
 		}

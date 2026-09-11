@@ -114,7 +114,10 @@ func TestInstructionsBindCommentaryToSupportedTools(t *testing.T) {
 
 func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 	for _, required := range []string{
-		"Submit one free-form program to `functions.shell`",
+		"Use separate shell calls for interactive programs",
+		"prefer one batch for ready, independent, noninteractive programs",
+		"#!params={\"yield_time_ms\":1000}\necho hello\n#!python3\nprint(\"hello\")",
+		"Submit free-form programs to `functions.shell`",
 		"Bash: write commands directly, without a shebang.",
 		"a shell heredoc such as `python3 - <<'PY'`",
 		"There is no closing delimiter.",

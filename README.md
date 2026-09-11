@@ -253,6 +253,31 @@ native execution and session facilities. Eligible literal `cat` heredoc writes
 are converted to patches so they appear in the usual diff UI; other scripts
 remain ordinary shell execution.
 
+With Code Mode available, a call can batch noninteractive programs in order:
+
+```text
+#!params={"yield_time_ms":1000}
+echo hello
+#!python3
+print("hello")
+#!params={"yield_time_ms":2000}
+echo goodbye
+```
+
+A column-one interpreter selector or `#!params=` after a body starts the next
+program. A params-only header selects Bash. Omitted params inherit the previous
+object; a supplied object replaces it, and `{}` clears it. Interpreters,
+command templates, and shell state do not carry over. These marker lines are
+reserved even inside strings and heredocs; indent literal markers or construct
+them without a literal marker line.
+
+Programs run sequentially, including waiting for long-running sessions, and
+continue after nonzero exits. The ordered `results` array contains each
+program's output and native result fields. A host error stops the batch while
+preserving completed results and partial output. Native-only clients require
+separate calls. Use separate calls for interactive programs too, so their
+prompts and session handles remain available for input.
+
 The following commands are available **inside the tool's Bash and POSIX
 programs**, not as standalone utilities in your terminal:
 
@@ -320,13 +345,38 @@ mekugi --debug codex
 Debug mode creates a private `mekugi-debug-*` directory in the system temporary
 directory. After Codex exits, it prints absolute paths to stderr for:
 
-- `router.jsonl`: router lifecycle and parsed-request outcomes, with safe failure codes and
-  diagnostic references matching the notices in Codex, without raw error text.
+- `router.jsonl`: router lifecycle, parsed-request outcomes, and feature-usage observations,
+  with safe failure codes and diagnostic references matching the notices in Codex,
+  without raw error text or feature payloads.
 
 - `capture.jsonl`: the same sanitized capture described above.
 - `metrics.json`: the final metrics snapshot.
 - `instructions.jsonl`: exact instruction text, developer messages, and tool declarations
   after request rewriting, with thread and request identifiers.
+
+To check whether agents used in-tool commentary, query the printed router log path:
+
+```sh
+jq -c 'select(.event == "feature_usage" and .feature == "commentary") |
+  {timestamp, source, stage, outcome, thread_id, request_id, call_id, message_id}' /path/to/router.jsonl
+```
+
+`tool_field / authored / observed` confirms a nonblank eligible commentary argument.
+`code_mode / lowering / prepared` confirms a recognized awaited call was wired to a
+publisher, not that it ran. `shell` or `code_mode / publication / accepted` confirms
+runtime progress reached the broker. Publication outcomes also distinguish blank text,
+oversized text, and capacity limits. `render / prepared` means a message was prepared
+for a response, not proof of client display. Automatic router notices are excluded.
+Shell commands that cannot reach a publisher remain unobserved.
+
+Count a single stage, not all events together. Deduplicate authored observations by
+thread and call ID, and rendering by `message_id`. Runtime publications have no original
+request or public session ID; shell publications also have no call ID. Join accepted
+publications to rendering by `message_id` for request/session correlation. The startup record
+advertises the feature schema and instrumented features. Older logs without that marker,
+interrupted logs, and logs with write failures cannot establish zero use. These events
+are debug-only; they do not appear in capture or metrics exports. See the
+[feature evidence contract](doc/spec/router.md#feature-usage-debug-evidence) for exact boundaries.
 
 The dump separates the local request projection (`scope: projected_responses_request`)
 from the prepared wire input. `developer_messages` and `additional_tools` include inherited

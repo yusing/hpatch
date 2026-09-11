@@ -57,6 +57,11 @@ func (t *mekugiResponseTransform) lowerCodeModeCommentary(callID, input string) 
 		t.proxy.commentary.bindActivity(token, t.threadID)
 		t.commentarySubscriptions = append(t.commentarySubscriptions, commentarySubscription{token: token, callID: callID})
 	}
+	outcome := "prepared"
+	if token == "" {
+		outcome = "unavailable"
+	}
+	t.featureTrace.record("commentary", "code_mode", "lowering", outcome, callID, "")
 	replacements := make([]string, len(calls))
 	for index := len(calls) - 1; index >= 0; index-- {
 		call := calls[index]

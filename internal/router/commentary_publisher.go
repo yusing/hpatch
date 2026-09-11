@@ -61,6 +61,7 @@ type threadCommentaryProvenance struct {
 }
 
 type commentaryBroker struct {
+	debug         *debugOutput
 	activity      *subagentActivity
 	threads       map[string]*threadCommentaryProvenance
 	threadIDCount int
@@ -160,13 +161,24 @@ func (b *commentaryBroker) publish(token, text string, complete bool) bool {
 	if route.author != "" && !hasCommentaryAuthor(text, route.author) {
 		renderedFits = renderedFits && len(commentaryCode(route.author))+3 <= maxCommentaryPublicationBytes-len(text)
 	}
-	if renderedFits && strings.TrimSpace(text) != "" && withinRouteCapacity && b.eventCount < maxCommentaryEvents {
+	outcome := "accepted"
+	switch {
+	case strings.TrimSpace(text) == "":
+		outcome = "blank"
+	case !renderedFits:
+		outcome = "oversized"
+	case !withinRouteCapacity || b.eventCount >= maxCommentaryEvents:
+		outcome = "capacity"
+	}
+	messageID := ""
+	if outcome == "accepted" {
 		route.nextID++
 		event := publishedCommentary{
 			callID:    route.callID,
 			messageID: commentaryMessageID(token + ":" + fmt.Sprint(route.nextID)),
 			text:      attributedCommentary(route.author, text),
 		}
+		messageID = event.messageID
 		if route.threadID != "" {
 			b.threads[route.threadID].ids[event.messageID] = struct{}{}
 			b.threadIDCount++
@@ -174,6 +186,18 @@ func (b *commentaryBroker) publish(token, text string, complete bool) bool {
 		b.activity.collect(route.originThread, event.messageID, "operation", event.text)
 		route.events = append(route.events, event)
 		b.eventCount++
+	}
+	// Empty completion signals are not authored progress. Only authenticated
+	// publications reach this point; never log their bearer capability or text.
+	if text != "" {
+		source := "code_mode"
+		if route.threadID != "" {
+			source = "shell"
+		}
+		// The broker's sessionID is an internal workspace/thread replay key,
+		// not a public routing session. Correlate with rendering by message ID.
+		trace := featureUsageTrace{debug: b.debug, threadID: route.originThread}
+		trace.record("commentary", source, "publication", outcome, route.callID, messageID)
 	}
 	if complete && len(route.events) == 0 {
 		delete(b.routes, token)

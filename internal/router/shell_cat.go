@@ -159,9 +159,9 @@ func shellCatLiteralParts(parts []syntax.WordPart, quoted bool) bool {
 	return true
 }
 
-func (t *mekugiResponseTransform) shellCatCarrier(contribution toolContribution, kind codeModeCarrierKind, arguments []string, template string, params, metadata map[string]json.RawMessage) (string, bool) {
+func (t *mekugiResponseTransform) shellCatPlan(contribution toolContribution, arguments []string, template string, params map[string]json.RawMessage) ([]shellCatStep, []string, bool) {
 	if contribution.PluginID != builtinToolsPluginID || contribution.Name != "shell" || template != "" || len(arguments) != 2 {
-		return "", false
+		return nil, nil, false
 	}
 	variant := syntax.LangBash
 	switch shellInterpreterName(arguments[0]) {
@@ -169,38 +169,46 @@ func (t *mekugiResponseTransform) shellCatCarrier(contribution toolContribution,
 	case "sh":
 		variant = syntax.LangPOSIX
 	default:
-		return "", false
+		return nil, nil, false
 	}
 	for key, value := range params {
 		switch key {
 		case "workdir", "max_output_tokens", "yield_time_ms":
 		case "login", "tty":
 			if string(value) != "false" {
-				return "", false
+				return nil, nil, false
 			}
 		default:
 			// Execution-scoped permissions and environments cannot be silently
 			// transferred to a different native tool.
-			return "", false
+			return nil, nil, false
 		}
 	}
 	directory := t.directory
 	if workdir, exists := params["workdir"]; exists {
 		if json.Unmarshal(workdir, &directory) != nil {
-			return "", false
+			return nil, nil, false
 		}
 	}
 	steps, ok := splitShellCatWrites(arguments[1], directory, variant)
 	if !ok {
-		return "", false
+		return nil, nil, false
 	}
 	commands := make([]string, len(steps))
 	for index, step := range steps {
 		command, err := t.proxy.registry.execCarrierCommand(contribution, step.command, []string{arguments[0], step.command}, "")
 		if err != nil {
-			return "", false
+			return nil, nil, false
 		}
 		commands[index] = command
+	}
+	return steps, commands, true
+}
+
+func (t *mekugiResponseTransform) shellCatCarrier(contribution toolContribution, kind codeModeCarrierKind, arguments []string, template string, params, metadata map[string]json.RawMessage) (string, bool) {
+	steps, commands, ok := t.shellCatPlan(contribution, arguments, template, params)
+	if !ok {
+		return "", false
 	}
 	if kind == codeModeCarrierFunction {
 		for index, step := range steps {
@@ -217,21 +225,25 @@ func (t *mekugiResponseTransform) shellCatCarrier(contribution toolContribution,
 	var program strings.Builder
 	program.WriteString(shellCatSequenceRuntime)
 	program.WriteString("try {\n")
-	for index, step := range steps {
-		encoded := string(mustMarshalJSON(execCommandArguments(commands[index], params)))
-		if step.patch == "" {
-			fmt.Fprintf(&program, "await run(%s);\n", encoded)
-			continue
-		}
-		guard := string(mustMarshalJSON(execCommandArguments(step.guard, params)))
-		fmt.Fprintf(&program, "if ((await finish(%s)).exit_code === 0) {\nawait tools.apply_patch(%s);\nlast = {output: '', exit_code: 0};\n} else { await run(%s); }\n", guard, mustMarshalJSON(step.patch), encoded)
-	}
+	writeShellCatSequence(&program, steps, commands, params)
 	// Keep prefix diagnostics even when a later tool refuses or fails. Finally
 	// does not catch the host error, advance the sequence, or retry a write.
 	program.WriteString("} finally {\ntext(JSON.stringify(Object.assign({}, last, {output}, ")
 	program.Write(mustMarshalJSON(metadata))
 	program.WriteString(")));\n}\n")
 	return program.String(), true
+}
+
+func writeShellCatSequence(program *strings.Builder, steps []shellCatStep, commands []string, params map[string]json.RawMessage) {
+	for index, step := range steps {
+		encoded := string(mustMarshalJSON(execCommandArguments(commands[index], params)))
+		if step.patch == "" {
+			fmt.Fprintf(program, "await run(%s);\n", encoded)
+			continue
+		}
+		guard := string(mustMarshalJSON(execCommandArguments(step.guard, params)))
+		fmt.Fprintf(program, "if ((await finish(%s)).exit_code === 0) {\nawait tools.apply_patch(%s);\nlast = {output: '', exit_code: 0};\n} else { await run(%s); }\n", guard, mustMarshalJSON(step.patch), encoded)
+	}
 }
 
 // Await host-owned sessions before the next statement, without exposing helper

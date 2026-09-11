@@ -15,9 +15,18 @@ const temporaryDirectories: string[] = [];
 const tool = plugin.tools[0];
 
 test("description stays call-local", () => {
-  expect(tool.specification.description).toBe(
-    "Run one free-form script. The selected interpreter receives the exact script body, and frontend standard input remains available as program data.",
-  );
+  for (const guidance of [
+    "Run free-form scripts.",
+    "Prefer batching ready, independent, noninteractive programs",
+    "use separate calls for interactive work",
+    "omission inherits the previous object",
+    "a supplied object replaces it",
+    "Batches require Code Mode",
+    "continue after nonzero exits",
+  ]) {
+    expect(tool.specification.description).toContain(guidance);
+  }
+
   for (const persistentGuidance of ["#!cmd=", "#!script=", "@shell/", "default interpreter"]) {
     expect(tool.specification.description).not.toContain(persistentGuidance);
   }

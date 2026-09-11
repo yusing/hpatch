@@ -5,7 +5,14 @@
 The opt-in debug artifact bundle is router-owned in `internal/router/debug.go`, not part
 of sanitized capture. It reuses capturer exports for capture and metrics, records a selected
 instruction snapshot after rewriting alongside the prepared wire instruction subset, and logs
-lifecycle/request outcomes without raw errors. Local projection is not proof of delivery;
+lifecycle/request outcomes without raw errors. `internal/router/feature_usage.go` owns
+the versioned, allowlisted operational feature-event envelope and safe correlation IDs.
+Feature owners report actual branch observations into that debug-only envelope, not
+capture callbacks or synthetic metrics. The commentary transformer observes authored
+fields, Code Mode lowering, and response preparation; its broker observes authenticated
+runtime publication with route identity. The broker never calls back into the proxy,
+and debug output never calls into a feature owner while holding its write lock.
+Local projection is not proof of delivery;
 cached-prefix reuse/replacement and request-less automatic successors are explicit in the dump.
 `cmd/mekugi/wrap.go` prints its paths only after the child and router exit.
 
