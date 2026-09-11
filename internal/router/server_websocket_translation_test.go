@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"strings"
 	"testing"
@@ -20,9 +21,7 @@ func TestResponsesWebSocketIncrementalTranslationAndVisibleSources(t *testing.T)
 	defer cancel()
 	headers := codexAuthHeaders()
 	headers.Set(sessionIDHeader, "socket-session")
-	for name, values := range serverMetadataHeaders(t, "turn", map[string]json.RawMessage{t.TempDir(): nil}) {
-		headers[name] = values
-	}
+	maps.Copy(headers, serverMetadataHeaders(t, "turn", map[string]json.RawMessage{t.TempDir(): nil}))
 	source := "a native output line that remains available on the same connection\n"
 	conn := testResponsesSocket(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstream, err := websocket.Accept(w, r, nil)

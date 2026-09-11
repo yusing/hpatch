@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -306,9 +307,7 @@ func mergeReplayHistory(old, next replayHistory) (replayHistory, error) {
 		return next, errors.New("conflicting durable replay translation")
 	}
 	merged := make(map[string]json.RawMessage, len(oldItem)+len(nextItem))
-	for k, v := range oldItem {
-		merged[k] = v
-	}
+	maps.Copy(merged, oldItem)
 	for k, v := range nextItem {
 		previous, exists := merged[k]
 		// Persistence compacts RawMessage whitespace. Compare that spelling,

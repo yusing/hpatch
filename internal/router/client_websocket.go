@@ -514,9 +514,7 @@ func (c *providerClient) forwardWebSocket(startCtx, responseCtx context.Context,
 			}
 			parsed, err := textproto.NewReader(bufio.NewReader(strings.NewReader(name + ": " + value + "\r\n\r\n"))).ReadMIMEHeader()
 			if err == nil {
-				for key, values := range parsed {
-					visibleHeaders[key] = values
-				}
+				maps.Copy(visibleHeaders, parsed)
 			}
 		}
 	}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -197,9 +198,7 @@ func TestDebugWebSocketInheritedInstructions(t *testing.T) {
 	t.Cleanup(server.Close)
 	headers := codexAuthHeaders()
 	headers.Set(sessionIDHeader, "debug-session")
-	for key, values := range serverMetadataHeaders(t, "turn", map[string]json.RawMessage{t.TempDir(): nil}) {
-		headers[key] = values
-	}
+	maps.Copy(headers, serverMetadataHeaders(t, "turn", map[string]json.RawMessage{t.TempDir(): nil}))
 	conn, _, err := websocket.Dial(ctx, server.URL, &websocket.DialOptions{HTTPHeader: headers})
 	if err != nil {
 		t.Fatal(err)

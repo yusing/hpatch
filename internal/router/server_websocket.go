@@ -11,6 +11,7 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -220,9 +221,9 @@ func (h *webSocketHistory) items() []json.RawMessage {
 		ancestry = append(ancestry, node)
 	}
 	var items []json.RawMessage
-	for i := len(ancestry) - 1; i >= 0; i-- {
-		items = append(items, ancestry[i].input...)
-		items = append(items, ancestry[i].output...)
+	for _, a := range slices.Backward(ancestry) {
+		items = append(items, a.input...)
+		items = append(items, a.output...)
 	}
 	return items
 }

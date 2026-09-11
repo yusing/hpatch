@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -66,9 +67,7 @@ func TestProviderWebSocketAncillaryResponseStatus(t *testing.T) {
 						return
 					}
 					defer response.Body.Close()
-					for name, values := range response.Header {
-						w.Header()[name] = values
-					}
+					maps.Copy(w.Header(), response.Header)
 					w.WriteHeader(response.StatusCode)
 					if _, err := io.Copy(w, response.Body); err != nil {
 						t.Error(err)

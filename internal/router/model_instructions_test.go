@@ -161,7 +161,7 @@ func TestRewriteAstraStockModelInstructions(t *testing.T) {
 					}
 					got = input[0].Content
 				}
-				for _, paragraph := range strings.Split(stock, "\n\n") {
+				for paragraph := range strings.SplitSeq(stock, "\n\n") {
 					if strings.Contains(paragraph, "commentary") || strings.Contains(paragraph, stockRGInstruction) {
 						continue // Displaced progress and tool rules are covered by the family fixtures below.
 					}

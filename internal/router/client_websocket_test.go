@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -564,9 +565,7 @@ func TestProviderWebSocketMekugiTranslationAndCapture(t *testing.T) {
 			})
 			request := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(parsed.originalBody))
 			request.Header = serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil})
-			for name, values := range codexAuthHeaders() {
-				request.Header[name] = values
-			}
+			maps.Copy(request.Header, codexAuthHeaders())
 			request.Header.Set(sessionIDHeader, "session")
 			handler := capture.Handler(responsesHandler(t.Context(), time.Minute, client, nil, proxy, mustCTP2Codec(t), nil))
 			output := httptest.NewRecorder()

@@ -31,7 +31,7 @@ func readFeatureUsage(t *testing.T, d *debugOutput) []map[string]any {
 		t.Fatal(err)
 	}
 	var events []map[string]any
-	for _, line := range bytes.Split(bytes.TrimSpace(data), []byte{'\n'}) {
+	for line := range bytes.SplitSeq(bytes.TrimSpace(data), []byte{'\n'}) {
 		if len(line) == 0 {
 			continue
 		}
@@ -387,7 +387,7 @@ func TestFeatureUsageProductionRequestCorrelation(t *testing.T) {
 		t.Fatal(err)
 	}
 	var requestID string
-	for _, line := range bytes.Split(bytes.TrimSpace(data), []byte{'\n'}) {
+	for line := range bytes.SplitSeq(bytes.TrimSpace(data), []byte{'\n'}) {
 		var event map[string]any
 		if err := json.Unmarshal(line, &event); err != nil {
 			t.Fatal(err)
