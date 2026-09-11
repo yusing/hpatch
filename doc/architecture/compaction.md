@@ -42,13 +42,16 @@ responsibility. Reasoning groups are retired atomically with eligible calls,
 retaining visible summaries. The recent frontier, explicit evidence references,
 live operations, and unknown completion states constrain selection. Completed
 failures may lose identified historical bulk, but keep their exact invocation,
-status, diagnostic blocks, and unresolved details. Reference closure and complete-group
-profitability reach a stable result before replacement; restoring a consumer also
-restores every dependency exposed by its original content. Supported text and
-JavaScript escapes are decoded for reference matching, while suspicious encodings
-retain evidence conservatively. These records are factual history, not new
-instructions or an external archive. The envelope contains selected history only;
-deferred retrieval must not be implied by a digest or retirement marker.
+status, diagnostic blocks, and unresolved details. Recognized terminal direct
+`go test` results are the deliberate exception: they keep status and reported
+failed test names rather than detailed runner output, even inside the recent
+frontier. Reference closure and complete-group profitability reach a stable result
+before replacement; restoring a consumer also restores every dependency exposed by
+its retained content. Supported text and JavaScript escapes are decoded for reference
+matching, while suspicious encodings retain evidence conservatively. These records
+are factual history, not new instructions or an external archive. The envelope
+contains selected history only; deferred retrieval must not be implied by a digest
+or retirement marker.
 
 Completed native output reduction is independent of whole-group retirement: it
 may shorten historical output while leaving calls and opaque reasoning native.

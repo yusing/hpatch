@@ -587,13 +587,12 @@ func compactionFailedOutput(raw json.RawMessage) (func(string) json.RawMessage, 
 	return nil, "", false
 }
 
-// Failed operations retain every unclassified line. Only corroborated runner
-// lines and unreferenced verified source rows are positively identified as
-// historical bulk and eligible for omission.
+// Failed operations retain every unclassified line. Unreferenced verified
+// source rows are the only historical bulk removed by the generic reducer.
 func compactionRetiredFailedText(text string, referenced map[string]bool, ranges [][2]string) string {
-	reduced, removed := compactionReduceGoTestOutput(text)
 	var result strings.Builder
-	for line := range strings.SplitAfterSeq(reduced, "\n") {
+	removed := 0
+	for line := range strings.SplitAfterSeq(text, "\n") {
 		if compactionCompleteSourceRow.MatchString(line) && !compactionTextReferencesRows(line, referenced, ranges) {
 			removed++
 			continue
@@ -603,7 +602,7 @@ func compactionRetiredFailedText(text string, referenced map[string]bool, ranges
 	if removed == 0 {
 		return text
 	}
-	return fmt.Sprintf("[mekugi: omitted %d positively identified runner/source lines from terminal failed output; failure remains unresolved]\n%s", removed, result.String())
+	return fmt.Sprintf("[mekugi: omitted %d unreferenced verified source rows from terminal failed output; failure remains unresolved]\n%s", removed, result.String())
 }
 
 func compactionRetiredTextKeepingRows(text string, referenced map[string]bool, ranges [][2]string) string {
@@ -679,6 +678,12 @@ func compactionRetiredOutputKeepingRows(raw json.RawMessage, operation compactio
 		return reduced, ok
 	}
 
+	if _, text, ok := contextCompactionOutput(raw); ok && strings.HasPrefix(text, contextCompactionGoTestSummaryPrefix) {
+		return raw, true
+	}
+	if _, text, ok := compactionFailedOutput(raw); ok && strings.HasPrefix(text, contextCompactionGoTestSummaryPrefix) {
+		return raw, true
+	}
 	if operation.patchReport == "" && operation.notice == nil {
 		if encode, text, ok := contextCompactionOutput(raw); ok {
 			return encode(compactionRetiredTextKeepingRows(text, referenced, ranges)), true

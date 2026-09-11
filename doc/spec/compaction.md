@@ -37,9 +37,11 @@ completion proves irrelevance.
 
 Before lossy retirement, evidence reducers can shorten redundant output:
 
-- Successful Go test results with a structured result or native Codex exec header can omit routine run, pause, and continue
-  progress lines. Test outcome lines, the exact call, exit status, package summaries,
-  and other output remain.
+- Terminal results from recognized direct `go test` calls retain pass/fail status
+  and the distinct failed test names reported by `--- FAIL:` lines. Detailed
+  runner output, diagnostics, package names, and successful test names are
+  discarded, including for recent or explicitly referenced completed results.
+  Live and unknown Go test results remain native.
 - Successful search listings from recognized `rg`, `hgrep`, or `find` calls can
   be replaced with a reference to a later retained read result containing the
   exact same complete listing. The original call and completion metadata stay.
@@ -54,8 +56,9 @@ Finished-operation retirement:
 - By default keep the newest eight tool invocations and their results. The
   budget policy below may relax this warm recency buffer, never the newest
   invocation/result, live/unmatched or duplicate identities, unknown completion
-  states, or explicitly referenced calls and retained-script producers. Referenced verified rows and
-  numeric ranges may survive exactly in factual records instead of pinning their
+  states, or explicitly referenced calls and retained-script producers. The
+  terminal Go test reduction above still applies inside this buffer. Referenced
+  verified rows and numeric ranges may survive exactly in factual records instead of pinning their
   whole successful group. Reference matching decodes nested argument/result
   envelopes and supported escaped text; suspicious encodings retain evidence.
 - Recognize native shell/exec calls, terminal stdin polls, static result-preserving
@@ -77,16 +80,17 @@ Finished-operation retirement:
 - Replace eligible calls/results with factual, versioned assistant-role records,
   not executable-looking truncated calls. Preserve relative timeline order;
   consecutive newly generated historical records may share explanatory framing.
-  Keep exact shell invocation arguments, call identity, observed completion
-  metadata, test outcome lines, and diagnostic excerpts. Standard Python
-  tracebacks preserve the entire remaining output because multiline exceptions
-  and notes have no reliable generic end marker.
+  Keep exact shell invocation arguments, call identity, and observed completion
+  metadata. Except for recognized terminal Go test results, keep test outcome lines
+  and diagnostic excerpts. Standard Python tracebacks preserve the entire remaining
+  output because multiline exceptions and notes have no reliable generic end marker.
 - A completed failed command is eligible for removal of positively identified,
-  unreferenced historical bulk, not removal of its failure. Keep its exact
-  invocation, exit status, error and diagnostic blocks, traceback chains,
-  unresolved details, and referenced evidence. Terminal completion is not
-  success or proof that a failure was resolved. Live and unknown completion
-  states remain protected.
+  unreferenced historical bulk, not removal of its failure. Except for recognized
+  terminal Go test results, keep its exact invocation, exit status, error and
+  diagnostic blocks, traceback chains, unresolved details, and referenced evidence.
+  A terminal Go test keeps its invocation and exit status plus reported failed test
+  names only. Terminal completion is not success or proof that a failure was resolved.
+  Live and unknown completion states remain protected.
 - For successfully applied translated patches, keep affected paths, operation
   kinds, a patch digest, and exact application facts, diagnostics, and referenced
   evidence. Unreferenced verified source rows in a successful report may shrink
@@ -104,8 +108,8 @@ Finished-operation retirement:
   reasoning in a blocked group. Whole-output references stay intact; referenced
   full or partial verified rows and numeric ranges remain exact. Live,
   unknown, and output inside the selected recent frontier is not made eligible
-  by this output-only pass; failed output obeys the diagnostic-preservation rule
-  above.
+  by this output-only pass except for recognized terminal Go test results;
+  failed output obeys the diagnostic-preservation rule above.
   Existing provider-owned compaction items remain untouched.
   Factual records use a compact versioned representation with exact invocation
   values, ordered output parts, and unknown metadata. Unreferenced transport item

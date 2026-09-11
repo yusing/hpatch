@@ -127,7 +127,15 @@ func reduceContextCompactionSourceWithFrontier(original, retained []json.RawMess
 					}
 				}, &unsafeEncoding)
 			}
-			compactionVisitReferenceStrings(fields["output"], visitOutput)
+			visited := false
+			mapCompactionCompletedOutput(retainedFields[index]["output"], func(text string) string {
+				visited = true
+				visitOutput(text)
+				return text
+			})
+			if !visited {
+				compactionVisitReferenceStrings(retainedFields[index]["output"], visitOutput)
+			}
 			continue
 		default:
 			references = append(references, fields["content"], fields["summary"])

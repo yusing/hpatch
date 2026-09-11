@@ -35,18 +35,23 @@ func TestContextCompactionPreservesIntentAndContinuation(t *testing.T) {
 		compactTestCall("last", "go test -v ./internal/router"),
 		compactTestOutput("last", "=== RUN   TestRoute\n--- PASS: TestRoute (0.01s)\nPASS\nok  example/router 0.1s\n", 0),
 	}
+
 	before := string(mustMarshalJSON(items))
 	got := reduceContextCompaction(items)
 	if len(got) != len(items) {
 		t.Fatal("compaction removed conversation items")
 	}
 	for index := range items {
-		if index != 2 && string(got[index]) != string(items[index]) {
+		if index != 2 && index != 7 && string(got[index]) != string(items[index]) {
 			t.Fatalf("protected item %d changed", index)
 		}
 	}
-	if string(got[2]) == string(items[2]) || !strings.Contains(string(got[2]), "ok  example/router") {
-		t.Fatalf("routine test detail was not reduced with package evidence retained: %s (command kind %q)", got[2], contextCompactionCommand("go test -v ./internal/router"))
+	for _, index := range []int{2, 7} {
+		if string(got[index]) == string(items[index]) ||
+			!strings.Contains(string(got[index]), "Go test passed") ||
+			strings.Contains(string(got[index]), "example/router") {
+			t.Fatalf("Go test result %d was not reduced to its outcome: %s", index, got[index])
+		}
 	}
 	if string(mustMarshalJSON(items)) != before {
 		t.Fatal("compaction modified the input")
@@ -61,7 +66,6 @@ func TestContextCompactionKeepsUncertainExecutionEvidence(t *testing.T) {
 		name, command, output string
 		exitCode              any
 	}{
-		{"failed", "go test -v ./...", "=== RUN   TestA\n--- FAIL: TestA (0.1s)\nassertion details\nFAIL\n", 1},
 		{"running", "go test -v ./...", "=== RUN   TestA\n", nil},
 		{"compound", "go test -v ./...; echo done", "=== RUN   TestA\n--- PASS: TestA (0.1s)\nPASS\n", 0},
 		{"pipeline", "go test -v ./... | tee result", "=== RUN   TestA\n--- PASS: TestA (0.1s)\nPASS\n", 0},
@@ -108,20 +112,53 @@ func TestContextCompactionHonorsCancellation(t *testing.T) {
 	}
 }
 
-func TestContextCompactionKeepsUnknownTestDiagnostics(t *testing.T) {
-	diagnostic := "--- PASS: retained diagnostic (0.1s)"
-	runnerLines := "=== RUN   TestA\n--- PASS: TestA (0.1s)\n"
-	items := []json.RawMessage{
-		compactTestCall("tests", "go test -v ./..."),
-		compactTestOutput("tests", strings.Repeat(runnerLines, 20)+diagnostic+"\n=== RUN   retained run diagnostic\n    test.go:10: important diagnostic\nPASS\nok  example 0.1s\n", 0),
-		compactTestCall("last", "pwd"), compactTestOutput("last", "/workspace\n", 0),
+func TestContextCompactionKeepsOnlyGoTestFailureNames(t *testing.T) {
+	tests := []struct {
+		name, output string
+		exitCode     int
+		want, omit   string
+	}{
+		{
+			name: "passed",
+			output: strings.Repeat("=== RUN   TestA\n--- PASS: TestA (0.1s)\n", 20) +
+				"--- PASS: test-written diagnostic (0.1s)\nimportant diagnostic\nPASS\nok  example 0.1s\n",
+			exitCode: 0,
+			want:     "Go test passed",
+			omit:     "important diagnostic",
+		},
+		{
+			name:     "failed",
+			output:   "=== RUN   TestBroken\nassertion detail\n--- FAIL: TestBroken (0.1s)\n--- FAIL: TestSuite/Subcase (0.2s)\nFAIL\n",
+			exitCode: 1,
+			want:     "failed tests: TestBroken, TestSuite/Subcase",
+			omit:     "assertion detail",
+		},
+		{
+			name:     "failed before test",
+			output:   "example.go:10: undefined: missing\nFAIL example [build failed]\n",
+			exitCode: 1,
+			want:     "no failed test name was reported",
+			omit:     "undefined: missing",
+		},
 	}
-	got := reduceContextCompaction(items)
-	if string(got[1]) == string(items[1]) || !strings.Contains(string(got[1]), diagnostic) ||
-		!strings.Contains(string(got[1]), "retained run diagnostic") ||
-		!strings.Contains(string(got[1]), "important diagnostic") ||
-		strings.Contains(string(got[1]), "--- PASS: TestA") {
-		t.Fatal("corroborated runner output was not reduced or unmatched diagnostic was removed")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			items := []json.RawMessage{
+				compactTestCall("tests", "go test -v ./..."),
+				compactTestOutput("tests", strings.Repeat(test.output, 20), test.exitCode),
+				compactTestCall("last", "pwd"),
+				compactTestOutput("last", "/workspace\n", 0),
+			}
+			got := reduceContextCompaction(items)
+			if string(got[1]) == string(items[1]) ||
+				!strings.Contains(string(got[1]), test.want) ||
+				strings.Contains(string(got[1]), test.omit) {
+				t.Fatalf("Go test output was not reduced to failed test names: %s", got[1])
+			}
+			if again := reduceContextCompaction(got); string(mustMarshalJSON(again)) != string(mustMarshalJSON(got)) {
+				t.Fatal("Go test reduction was not idempotent")
+			}
+		})
 	}
 }
 
@@ -144,22 +181,32 @@ func TestContextCompactionKeepsLiveHandlesAndAmbiguousCalls(t *testing.T) {
 func TestContextCompactionNativeExecOutput(t *testing.T) {
 	header := "Chunk ID: abc\nWall time: 1.2500 seconds\nProcess exited with code 0\nOriginal token count: 900\nOutput:\n"
 	log := strings.Repeat("=== RUN   TestNative\n--- PASS: TestNative (0.1s)\n", 30) + "PASS\nok  example 0.1s\n"
-	for _, prefix := range []string{header, strings.Replace(header, "code 0", "code 1", 1), strings.Replace(header, "Process exited with code 0", "Process running with session ID 42", 1)} {
-		result := mustMarshalJSON(map[string]any{"type": "function_call_output", "call_id": "tests", "output": prefix + log})
-		items := []json.RawMessage{compactTestCall("tests", "go test -v ./..."), result, compactTestCall("last", "pwd"), compactTestOutput("last", "/workspace\n", 0)}
-		got := reduceContextCompaction(items)
-		var fields map[string]json.RawMessage
-		_ = json.Unmarshal(got[1], &fields)
-		text := jsonString(fields, "output")
-		if !strings.HasPrefix(text, prefix) {
-			t.Fatal("native execution header changed")
-		}
-		if prefix == header {
-			if text == prefix+log || !strings.Contains(text, "ok  example") {
-				t.Fatal("native successful test output not reduced")
+	tests := []struct {
+		name, prefix, want string
+		changed            bool
+	}{
+		{name: "passed", prefix: header, want: "Go test passed", changed: true},
+		{name: "failed", prefix: strings.Replace(header, "code 0", "code 1", 1), want: "no failed test name was reported", changed: true},
+		{name: "running", prefix: strings.Replace(header, "Process exited with code 0", "Process running with session ID 42", 1)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := mustMarshalJSON(map[string]any{"type": "function_call_output", "call_id": "tests", "output": test.prefix + log})
+			items := []json.RawMessage{compactTestCall("tests", "go test -v ./..."), result, compactTestCall("last", "pwd"), compactTestOutput("last", "/workspace\n", 0)}
+			got := reduceContextCompaction(items)
+			var fields map[string]json.RawMessage
+			_ = json.Unmarshal(got[1], &fields)
+			text := jsonString(fields, "output")
+			if !strings.HasPrefix(text, test.prefix) {
+				t.Fatal("native execution header changed")
 			}
-		} else if string(got[1]) != string(result) {
-			t.Fatal("native failure or running output changed")
-		}
+			if test.changed {
+				if text == test.prefix+log || !strings.Contains(text, test.want) || strings.Contains(text, "example 0.1s") {
+					t.Fatal("terminal native Go test output was not reduced")
+				}
+			} else if string(got[1]) != string(result) {
+				t.Fatal("running output changed")
+			}
+		})
 	}
 }

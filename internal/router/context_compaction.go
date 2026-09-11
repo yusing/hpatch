@@ -119,7 +119,7 @@ func reduceContextCompactionPlan(ctx context.Context, input []json.RawMessage, p
 		if err := ctx.Err(); err != nil {
 			return original, err
 		}
-		if index == lastResult || protected[current.CallID] || (current.Type != "function_call_output" && current.Type != "custom_tool_call_output") {
+		if current.Type != "function_call_output" && current.Type != "custom_tool_call_output" {
 			continue
 		}
 		callIndex, exists := calls[current.CallID]
@@ -151,16 +151,21 @@ func reduceContextCompactionPlan(ctx context.Context, input []json.RawMessage, p
 		if kind == "" {
 			continue
 		}
+		if kind != "go-test" && (index == lastResult || protected[current.CallID]) {
+			continue
+		}
 		encode, text, ok := contextCompactionOutput(current.Output)
+		passed := ok
+		if !ok && kind == "go-test" {
+			encode, text, ok = compactionFailedOutput(current.Output)
+		}
 		if !ok {
 			continue
 		}
 		reduced := text
 		switch kind {
 		case "go-test":
-			if kept, removed := compactionReduceGoTestOutput(text); removed > 0 {
-				reduced = fmt.Sprintf("[mekugi: omitted %d corroborated Go test runner lines]\n%s", removed, kept)
-			}
+			reduced = contextCompactionGoTestSummary(text, passed)
 		case "search":
 			// A later byte-identical output is explicit replacement evidence,
 			// not an assumption that rerunning a search gives its old answer.
@@ -236,60 +241,30 @@ func contextCompactionOutput(raw json.RawMessage) (func(string) json.RawMessage,
 
 var contextCompactionNativeResult = regexp.MustCompile(`(?s)\A((?:Chunk ID: [^\r\n]+\n)?Wall time: [0-9]+(?:\.[0-9]+)? seconds\nProcess exited with code 0\n(?:Original token count: [0-9]+\n)?(?:Output|Final output):\n)(.*)\z`)
 
-var (
-	contextCompactionGoEvent   = regexp.MustCompile(`^=== (RUN|PAUSE|CONT) +(\S+)$`)
-	contextCompactionGoOutcome = regexp.MustCompile(`^[ \t]*--- (PASS|FAIL|SKIP): (\S+) \([0-9]+(?:\.[0-9]+)?s\)$`)
-)
+const contextCompactionGoTestSummaryPrefix = "[mekugi compaction: Go test "
 
-func compactionReduceGoTestOutput(text string) (string, int) {
-	type testRun struct {
-		runs, passes int
-		otherOutcome bool
+var contextCompactionGoFailure = regexp.MustCompile(`(?m)^[ \t]*--- FAIL: ([^ \t\r\n]+)(?: \([^)]+\))?[ \t]*\r?$`)
+
+func contextCompactionGoTestSummary(text string, passed bool) string {
+	if strings.HasPrefix(text, contextCompactionGoTestSummaryPrefix) {
+		return text
 	}
-	runs := make(map[string]*testRun)
-	state := func(name string) *testRun {
-		if runs[name] == nil {
-			runs[name] = new(testRun)
-		}
-		return runs[name]
-	}
-	for line := range strings.SplitAfterSeq(text, "\n") {
-		trimmed := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-		if match := contextCompactionGoEvent.FindStringSubmatch(trimmed); match != nil {
-			if match[1] == "RUN" {
-				state(match[2]).runs++
-			}
-			continue
-		}
-		if match := contextCompactionGoOutcome.FindStringSubmatch(trimmed); match != nil {
-			if match[1] == "PASS" {
-				state(match[2]).passes++
-			} else {
-				state(match[2]).otherOutcome = true
-			}
-		}
-	}
-	corroborated := func(name string) bool {
-		run := runs[name]
-		return run != nil && run.runs > 0 && run.runs == run.passes && !run.otherOutcome
+	if passed {
+		return contextCompactionGoTestSummaryPrefix + "passed; detailed output omitted]\n"
 	}
 
-	var kept strings.Builder
-	removed := 0
-	for line := range strings.SplitAfterSeq(text, "\n") {
-		trimmed := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-		if match := contextCompactionGoEvent.FindStringSubmatch(trimmed); match != nil && corroborated(match[2]) {
-			removed++
-			continue
+	seen := make(map[string]bool)
+	var failed []string
+	for _, match := range contextCompactionGoFailure.FindAllStringSubmatch(text, -1) {
+		if !seen[match[1]] {
+			seen[match[1]] = true
+			failed = append(failed, match[1])
 		}
-		if match := contextCompactionGoOutcome.FindStringSubmatch(trimmed); match != nil &&
-			match[1] == "PASS" && corroborated(match[2]) {
-			removed++
-			continue
-		}
-		kept.WriteString(line)
 	}
-	return kept.String(), removed
+	if len(failed) == 0 {
+		return contextCompactionGoTestSummaryPrefix + "failed; no failed test name was reported; detailed output omitted]\n"
+	}
+	return contextCompactionGoTestSummaryPrefix + "failed; failed tests: " + strings.Join(failed, ", ") + "; detailed output omitted]\n"
 }
 
 // Parse, never execute or expand dynamic shell syntax. Compound commands,

@@ -242,7 +242,7 @@ func TestCompactionRetirementRetiresCompletedFailedReasoningGroups(t *testing.T)
 func TestCompactionRetirementPinsFailureLiveAndReferencedEvidence(t *testing.T) {
 	items := retirementHistory()
 	items[3] = compactTestOutput("operation_00",
-		strings.Repeat("=== RUN   TestHistorical\n--- PASS: TestHistorical (0.1s)\n", 200)+"unique unresolved failure\n", 1)
+		strings.Join(compactionSourceTestRows("", 200), "")+"unique unresolved failure\n", 1)
 	items[6] = mustMarshalJSON(map[string]any{"type": "function_call_output", "call_id": "operation_01",
 		"output": string(mustMarshalJSON(map[string]any{"exit_code": 0, "session_id": 42, "output": "still running"}))})
 	items = append(items, mustMarshalJSON(map[string]any{"type": "message", "role": "assistant", "content": "The evidence in operation_02 is needed for the remaining investigation."}))

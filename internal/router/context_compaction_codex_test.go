@@ -140,10 +140,7 @@ func TestProbe(t *testing.T) {
 								consolidatedCompletion := strings.HasPrefix(text, "[mekugi historical facts v4;") &&
 									strings.Contains(text, "[i]\ncall=\"probe_go\"\ntool=\"exec_command\"") &&
 									strings.Contains(text, "[o:same-call]\n")
-								if (standaloneCompletion || consolidatedCompletion) && strings.Contains(text, "\nbody:\n") &&
-									strings.Contains(text, "Process exited with code 0\n") && strings.Contains(text, "compactionprobe") {
-									retiredGo = true
-								}
+								retiredGo = standaloneCompletion || consolidatedCompletion
 							}
 						}
 						if (recordType == "function_call" || recordType == "function_call_output") &&
@@ -151,7 +148,7 @@ func TestProbe(t *testing.T) {
 							nativeGo = true
 							if recordType == "function_call_output" && !probe.retirement {
 								output := jsonString(record, "output")
-								restored.Store(strings.Contains(output, "[mekugi: omitted") && strings.Contains(output, "compactionprobe"))
+								restored.Store(strings.Contains(output, "Go test passed") && !strings.Contains(output, "compactionprobe"))
 							}
 						}
 						if strings.HasPrefix(jsonString(record, "encrypted_content"), "mekugi.compaction.") {
