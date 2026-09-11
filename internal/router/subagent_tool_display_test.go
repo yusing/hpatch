@@ -19,6 +19,12 @@ func TestSubagentToolDisplay(t *testing.T) {
 	tests := []struct {
 		name, input, want string
 	}{
+		{"wait", `{"cell_id":"7","yield_time_ms":30000,"max_tokens":5000}`, "Still Running · operation unavailable"},
+		{"functions.wait", `{"cell_id":"7","terminate":false}`, "Still Running · operation unavailable"},
+		{"functions.wait", `{"cell_id":"7","terminate":true}`, "Stop · operation unavailable"},
+		{"wait", `{"cell_id":""}`, "Tool call: `wait`\n`{\"cell_id\":\"\"}`"},
+		{"wait", `{"cell_id":7}`, "Tool call: `wait`\n`{\"cell_id\":7}`"},
+		{"external.wait", `{"cell_id":"7"}`, "Tool call: `external.wait`\n`{\"cell_id\":\"7\"}`"},
 		{"shell", "cat 'a b.txt'", "Read `a b.txt`"},
 		{"shell", "skills-mgr get golang-best-practices", "Skill Read `golang-best-practices`"},
 		{"shell", "skills-mgr get writing-readme/references/cli.md", "Skill Reference Read `writing-readme/references/cli.md`"},

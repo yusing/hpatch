@@ -210,21 +210,22 @@ type mekugiPendingCall struct {
 }
 
 type mekugiResponseTransform struct {
-	featureTrace          featureUsageTrace
-	ctx                   context.Context
-	proxy                 *mekugiProxy
-	sessionID             string
-	shellThreadID         string // Runtime identity remains available when activity attribution is invalid.
-	shellDirectory        string
-	model                 string
-	visible               map[string]mekugiHistory
-	historySessionID      string
-	sessionActive         bool
-	threadID              string
-	activityStarted       time.Time
-	activityBytes         int
-	activityMessages      []map[string]json.RawMessage
-	activityShellSessions map[string]string
+	featureTrace           featureUsageTrace
+	ctx                    context.Context
+	proxy                  *mekugiProxy
+	sessionID              string
+	shellThreadID          string // Runtime identity remains available when activity attribution is invalid.
+	shellDirectory         string
+	model                  string
+	visible                map[string]mekugiHistory
+	historySessionID       string
+	sessionActive          bool
+	threadID               string
+	activityStarted        time.Time
+	activityBytes          int
+	activityMessages       []map[string]json.RawMessage
+	activityShellSessions  map[string]string
+	activityCellOperations map[string]string
 
 	originalTools             json.RawMessage
 	originalToolsPresent      bool

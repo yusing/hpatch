@@ -139,3 +139,86 @@ func TestShellBatchActivityExcerpt(t *testing.T) {
 		t.Fatalf("retained batch excerpt = %q", got)
 	}
 }
+
+func TestCellActivityCorrelation(t *testing.T) {
+	origin := map[string]any{"type": "custom_tool_call", "call_id": "origin", "name": "exec", "input": `text(await tools.exec_command({cmd:"go test ./internal/router"}));`}
+	wait := map[string]any{"type": "function_call", "call_id": "poll", "name": "wait", "arguments": `{"cell_id":"7"}`}
+	header := "Script running with cell ID 7\nWall time 30 seconds\nOutput:\n"
+	for _, output := range []any{header, []any{map[string]any{"type": "input_text", "text": header}}} {
+		t.Run("yield", func(t *testing.T) {
+			tr := &mekugiResponseTransform{}
+			input := []any{origin, map[string]any{"type": "custom_tool_call_output", "call_id": "origin", "output": output}, wait,
+				map[string]any{"type": "function_call_output", "call_id": "poll", "output": output}}
+			tr.prepareShellActivity(mustMarshalJSON(input))
+			if got := tr.activityCellOperations["7"]; got != "```bash\ngo test ./internal/router\n```" {
+				t.Fatalf("operation: %q", got)
+			}
+			input = append(input, map[string]any{"type": "function_call", "call_id": "done", "name": "wait", "arguments": `{"cell_id":"7"}`},
+				map[string]any{"type": "function_call_output", "call_id": "done", "output": "Script completed\nWall time 1 seconds\nOutput:\n"})
+			tr.prepareShellActivity(mustMarshalJSON(input))
+			if len(tr.activityCellOperations) != 0 {
+				t.Fatal("completed cell retained")
+			}
+			tr.prepareShellActivity([]byte(`[]`))
+			if len(tr.activityCellOperations) != 0 {
+				t.Fatal("inherited another request")
+			}
+		})
+	}
+	for _, output := range []any{
+		"Output:\n" + header,
+		[]any{map[string]any{"type": "input_text", "text": "Script completed\nWall time 1 seconds\nOutput:\n"}, map[string]any{"type": "input_text", "text": header}},
+	} {
+		tr := &mekugiResponseTransform{}
+		tr.prepareShellActivity(mustMarshalJSON([]any{origin, map[string]any{"type": "custom_tool_call_output", "call_id": "origin", "output": output}}))
+		if len(tr.activityCellOperations) != 0 {
+			t.Fatal("program output treated as cell metadata")
+		}
+	}
+}
+
+func TestCellActivityPreparedShellReplay(t *testing.T) {
+	transform, proxy, _, workspace := newMekugiTestTransform(t, testTranslator(t, new(int)))
+	upstream := continuationTestCall("shell", "shell-cell", "sleep 100")
+	response, err := transform.TransformJSON(mustMarshalJSON(map[string]any{"status": "completed", "output": []any{upstream}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var delivered struct{ Output []map[string]json.RawMessage }
+	if err := json.Unmarshal(response, &delivered); err != nil || len(delivered.Output) != 1 {
+		t.Fatalf("carrier: %s, %v", response, err)
+	}
+	request, err := parseResponsesRequest(mustMarshalJSON(map[string]any{
+		"model": "gpt-test", "tools": []any{}, "tool_choice": "auto", "input": []any{
+			testCodeModeAdditionalTools(testCodeModeDescription), delivered.Output[0],
+			continuationTestOutput("shell-cell", "Script running with cell ID 7\nWall time 30 seconds\nOutput:\n"),
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := proxy.prepareRequest(t.Context(), &request, "session-2", "thread-1", codexTurnMetadata{
+		RequestKind: "turn", SubagentKind: "thread_spawn", AgentName: "/root/worker",
+		ParentThreadID: "root-thread", Directories: map[string]json.RawMessage{workspace: nil},
+	}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer prepared.Close()
+	if got := prepared.activityCellOperations["7"]; got != "```bash\nsleep 100\n```" {
+		t.Fatalf("replayed origin: %q", got)
+	}
+}
+
+func TestCellActivityWrappedSessionPoll(t *testing.T) {
+	tr := &mekugiResponseTransform{}
+	tr.prepareShellActivity(mustMarshalJSON([]any{
+		continuationTestCall("exec_command", "run", `{"cmd":"go test ./internal/router"}`),
+		map[string]any{"type": "function_call_output", "call_id": "run", "output": `{"session_id":42}`},
+		continuationTestCall("exec", "poll", `text(await tools.write_stdin({session_id:42,chars:""}));`),
+		continuationTestOutput("poll", "Script running with cell ID 7\nWall time 30 seconds\nOutput:\n"),
+	}))
+	if got := tr.activityCellOperations["7"]; got != "`go test ./internal/router`" {
+		t.Fatalf("poll origin: %q", got)
+	}
+}

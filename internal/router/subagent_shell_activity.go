@@ -97,6 +97,21 @@ func (t *mekugiResponseTransform) shellActivityDisplay(item map[string]json.RawM
 	name, args, script := toolActivityShellCall(item, name, false)
 	label, excerpt := "", ""
 	switch name {
+	case "wait":
+		cell := jsonString(args, "cell_id")
+		if cell == "" {
+			return "", false
+		}
+		label = "Still Running"
+		var terminate bool
+		_ = json.Unmarshal(args["terminate"], &terminate)
+		if terminate {
+			label = "Stop"
+		}
+		if operation := t.activityCellOperations[cell]; operation != "" {
+			return label + "\n" + operation, true
+		}
+		return label + " · operation unavailable", true
 	case "write_stdin":
 		if jsonString(args, "chars") != "" {
 			return "", false
@@ -127,12 +142,48 @@ func (t *mekugiResponseTransform) prepareShellActivity(input json.RawMessage) {
 	}
 	calls := make(map[string]string)
 	t.activityShellSessions = make(map[string]string)
+	t.activityCellOperations = make(map[string]string)
+	type cellCall struct {
+		cell, operation string
+	}
+	cellCalls := make(map[string]cellCall)
 	for _, item := range items {
 		kind, callID := jsonString(item, "type"), jsonString(item, "call_id")
 		if callID == "" {
 			continue
 		}
 		if kind == "function_call" || kind == "custom_tool_call" {
+			qualifiedName := qualifiedToolName(jsonString(item, "namespace"), jsonString(item, "name"))
+			if len(cellCalls) < 1024 {
+				history, known := t.visible[callID]
+				name := strings.TrimPrefix(qualifiedName, "functions.")
+				// Replay restores the public tool identity (for example shell),
+				// but its recorded carrier still owns the host's cell metadata.
+				switch {
+				case name == "exec" || known && history.translationError == "" && history.effectiveCarrierKind() == codeModeCarrierCustom:
+					operation := strings.Join(subagentToolActivityTexts(item, qualifiedName, &history), "\n\n")
+					if display, ok := t.shellActivityDisplay(item, qualifiedName); ok {
+						operation = display
+					}
+					if history.toolName == "shell" && history.pluginID == builtinToolsPluginID &&
+						!history.replayCarrier && jsonString(history.upstreamItem, "name") == t.codeModeToolName {
+						operation = toolActivityShell(history.script)
+					}
+					operation = strings.TrimPrefix(strings.TrimPrefix(operation, "Run\n"), "Run JavaScript\n")
+					operation = strings.TrimPrefix(strings.TrimPrefix(operation, "Still Running\n"), "Running stored script\n")
+					if operation == "Still Running · command unavailable" || operation == "Running stored script · command unavailable" {
+						operation = ""
+					}
+					cellCalls[callID] = cellCall{operation: operation}
+				case name == "wait":
+					var args map[string]json.RawMessage
+					_ = json.Unmarshal([]byte(jsonString(item, "arguments")), &args)
+					cell := jsonString(args, "cell_id")
+					if cell != "" {
+						cellCalls[callID] = cellCall{cell: cell, operation: t.activityCellOperations[cell]}
+					}
+				}
+			}
 			if len(calls) >= 1024 {
 				continue
 			}
@@ -149,6 +200,17 @@ func (t *mekugiResponseTransform) prepareShellActivity(input json.RawMessage) {
 				calls[callID] = t.activityShellSessions[strings.TrimSpace(string(args["session_id"]))]
 			}
 		} else if kind == "function_call_output" || kind == "custom_tool_call_output" {
+			if call, ok := cellCalls[callID]; ok {
+				delete(cellCalls, callID)
+				if texts := executionOutputTexts(item["output"]); len(texts) > 0 {
+					status, cell, _ := codeModeExecutionHeader(texts[0])
+					if status == "running" && (call.cell == "" || call.cell == cell) && len(t.activityCellOperations) < 1024 {
+						t.activityCellOperations[cell] = call.operation
+					} else if status != "" && status != "running" {
+						delete(t.activityCellOperations, call.cell)
+					}
+				}
+			}
 			excerpt := calls[callID]
 			delete(calls, callID)
 			if excerpt != "" && len(t.activityShellSessions) < 1024 {

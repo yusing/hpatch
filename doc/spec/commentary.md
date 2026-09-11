@@ -130,6 +130,12 @@ establish shell-session result metadata. Dynamic arguments, control flow, runtim
 name shadowing, unknown tools, or unrelated executable statements retain the
 complete JavaScript preview, never a partially simplified subset. Rendering never
 evaluates a call or claims success, and collaboration display stays Codex-owned.
+Code Mode `wait` calls display `Still Running` with the originating operation or source,
+or `Stop` with that operation when `terminate` is true, without transport arguments.
+Cell identity comes only from a visible matched call/result pair with leading host execution
+metadata; subsequent waits preserve that association and terminal results retire it.
+Missing history is labelled `operation unavailable`, never inferred from another cell.
+Stop describes the requested operation, not successful termination.
 Simple literal `cat` and `hcat` calls display `Read <file>`. Literal bounded
 `sed -n 'START,ENDp' <file>` reads display `Read <file> START:END`, with positive decimal
 line numbers and an end not before the start. Only this single-file print form is classified;

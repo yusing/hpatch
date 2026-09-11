@@ -89,6 +89,15 @@ func subagentToolActivityTexts(item map[string]json.RawMessage, qualifiedName st
 		return []string{toolActivityShell(script)}
 	case "exec":
 		return []string{toolActivityJavaScript(input)}
+	case "wait":
+		if jsonString(arguments, "cell_id") != "" {
+			var terminate bool
+			_ = json.Unmarshal(arguments["terminate"], &terminate)
+			if terminate {
+				return []string{"Stop · operation unavailable"}
+			}
+			return []string{"Still Running · operation unavailable"}
+		}
 	case "view_image":
 		return []string{toolActivityDetail("View image", jsonString(arguments, "path"))}
 	case "write_stdin":
