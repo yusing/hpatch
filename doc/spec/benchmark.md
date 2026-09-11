@@ -80,12 +80,13 @@ and retain per-attempt exports. Only the trusted wrapper has provider egress. Th
 Codex MUST be launched with its explicit no-approval, no-sandbox execution option because the
 benchmark container owns the complete execution boundary. The executor MUST have a fixed, non-root
 primary group matching its writable workspace, no capabilities, no supplementary groups, no
-privilege elevation, private mount/PID namespaces, readable read-only dependency material, and
-read-only trusted capture/runtime/configuration mounts. IPv4/IPv6 firewall rules
+privilege elevation, private mount/PID namespaces, readable read-only dependency material, private
+writable and executable build storage, and read-only trusted capture/runtime/configuration mounts.
+IPv4/IPv6 firewall rules MUST permit only its assigned loopback listener and reject other
 destinations. The launcher MUST make the mounted Codex credential readable after capability removal
 without writing it into retained artifacts. Qualification MUST reject unreadable credentials or
-dependency material, an unwritable workspace, or an ineffective restriction before inference.
-Separate arm networks remain isolated.
+dependency material, an unwritable workspace, unusable build storage, or an ineffective restriction
+before inference. Separate arm networks remain isolated.
 
 The capturer-owned merger MUST verify each complete session snapshot against its
 raw records before creating combined arm exports. It MUST retain originals and

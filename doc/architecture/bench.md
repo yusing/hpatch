@@ -32,10 +32,10 @@ capabilities removed and privilege elevation disabled. The launcher rebinds the 
 credential through an ephemeral, root-owned copy before dropping capabilities; the copy never
 enters retained artifacts. Codex's own command sandbox and approval flow are explicitly bypassed
 because this outer boundary already owns execution isolation. Preloaded dependency material is
-readable but read-only; trusted runtime, capture, and configuration mounts are read-only to Codex.
-Qualification fails before inference if the credential, dependency material, or candidate workspace
-is unusable or if group changes, external access, capabilities, or writable trusted mounts are
-possible.
+readable but read-only. A private executable tmpfs owns transient build output and caches; trusted
+runtime, capture, and configuration mounts are read-only to Codex. Qualification fails before
+inference if the credential, dependency material, candidate workspace, or build storage is unusable,
+or if group changes, external access, capabilities, or writable trusted mounts are possible.
 
 The session's `--capture-output` and `--metrics-output` artifacts survive shutdown.
 The benchmark-only merger validates each session against its raw records and uses

@@ -180,9 +180,9 @@ Codex runs in private mount/PID namespaces with no capabilities or supplementary
 no privilege elevation. Its fixed, non-root primary group matches the writable candidate workspace
 and is allowed TCP access only to its own listener; IPv4 and IPv6 external traffic are rejected.
 Trusted capture/config/runtime mounts and the image filesystem are read-only to the executor.
-Preloaded dependencies remain readable but read-only. A fail-closed probe verifies credential and
-dependency access, candidate writability, and the restrictions before launching the real Codex
-binary.
+Preloaded dependencies remain readable but read-only. Private executable temporary storage holds
+build output and caches. A fail-closed probe verifies credential and dependency access, candidate
+writability, build execution, and the restrictions before launching the real Codex binary.
 
 Each attempt writes its own sanitized `capture.jsonl` and final `metrics.json`.
 The benchmark-only `mekugi-merge-captures` command validates each pair and uses the

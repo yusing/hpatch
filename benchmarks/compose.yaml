@@ -11,10 +11,12 @@ x-agent: &agent
   # Docker AppArmor blocks the trusted launcher from creating private mounts.
   # The executor instead has no capabilities, immutable groups and read-only mounts.
   security_opt: [no-new-privileges:true, apparmor:unconfined]
-  tmpfs: [/tmp, /root/.codex]
+  tmpfs: ["/tmp:exec,size=4g,mode=1777", /root/.codex]
   environment:
     GOPROXY: "off"
     GOSUMDB: "off"
+    GOCACHE: /tmp/mekugi-go-build
+    GOTMPDIR: /tmp
     GOTOOLCHAIN: "local"
     GOVCS: "*:off"
     PYTHONDONTWRITEBYTECODE: "1"

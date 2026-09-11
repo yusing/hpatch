@@ -2,6 +2,7 @@
 """Fail closed before inference if the benchmark executor can escape isolation."""
 import os
 import socket
+import subprocess
 import tempfile
 import sys
 from urllib.request import urlopen
@@ -47,6 +48,30 @@ try:
         next(modules, None)
 except OSError:
     fail("dependency cache is unreadable")
+go_cache = os.environ.get("GOCACHE")
+temp_executable = None
+try:
+    if not go_cache or not os.path.isabs(go_cache):
+        raise OSError
+    os.makedirs(go_cache, exist_ok=True)
+    with tempfile.TemporaryFile(dir=go_cache):
+        pass
+    with tempfile.NamedTemporaryFile("w", dir="/tmp", delete=False) as executable:
+        executable.write("#!/bin/sh\nexit 0\n")
+        temp_executable = executable.name
+    os.chmod(temp_executable, 0o700)
+    if subprocess.run(
+        [temp_executable], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
+    ).returncode:
+        raise OSError
+except OSError:
+    fail("private build storage is unusable")
+finally:
+    if temp_executable is not None:
+        try:
+            os.unlink(temp_executable)
+        except OSError:
+            pass
 for path in (os.environ["MEKUGI_RUNTIME_DIR"], os.environ["XDG_STATE_HOME"], os.environ["BENCH_ARTIFACT_DIR"], "/benchmark-agent-issue-reports", "/root/.config"):
     if not os.statvfs(path).f_flag & os.ST_RDONLY:
         fail("trusted artifacts are writable")
