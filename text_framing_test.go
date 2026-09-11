@@ -44,6 +44,18 @@ func TestTextFramingThroughPublicOperations(t *testing.T) {
 	}
 }
 
+func TestTextFrameSyntaxFailuresKeepValueRows(t *testing.T) {
+	root := t.TempDir()
+	script := "new file.go\ntype <<TEXT\n|package p\n|var =\nTEXT\n"
+	result, err := translateForHostAtTest(t, root, script, "")
+	if err == nil || len(result.Rejections) != 1 || result.Rejections[0].Command != 2 || result.Rejections[0].ValueLine != 2 {
+		t.Fatalf("rejections = %+v, error %v; want command 2 value row 2", result.Rejections, err)
+	}
+	if len(result.Patch) != 0 || len(readTree(t, root)) != 0 {
+		t.Fatalf("invalid text value produced effects: %+v", result)
+	}
+}
+
 func TestMalformedTextFrameRejectsWholeScript(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "old\n", 0o644)
@@ -56,4 +68,3 @@ func TestMalformedTextFrameRejectsWholeScript(t *testing.T) {
 		t.Fatalf("rejection changed tree: %v", tree)
 	}
 }
-

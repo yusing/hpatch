@@ -30,7 +30,7 @@ groups or an invalid baseline use nearest-edit attribution without subset replay
 changed `.py`, `.js`, and `.ts` files are syntax-checked with Tree-sitter and contribute all
 discovered failures to the same validation result. Parser
 cascades are collapsed when blanking an earlier repair line removes a later parser failure.
-Failures are deduplicated by originating command and physical heredoc value row, or by the
+Failures are deduplicated by originating command and physical multiline value row, or by the
 command's script row when no physical value row exists. Each retained location includes at
 most two generated lines before and after the failing line; neighboring lines are capped at
 64 runes and the failing line at 200. Supported baseline-aware indentation corrections are
@@ -214,7 +214,7 @@ a command depends on content introduced by another command, the diagnostic direc
 apply the prerequisite independently, reread, and submit a later invocation. A missing row or
 failure without a verified baseline does not choose repair context. Repair context is
 supplementary: it never changes the host outcome, mutation, or returned patch.
-When invalid generated source is localized to a fixed-heredoc mutation, each distinct rejection
+When invalid generated source is localized to a multiline mutation, each distinct rejection
 identity includes the non-sensitive `value_line`. Transient root diagnostics describe every
 bounded value-row context rather than mutation addresses. Routed target-only recovery diagnostics
 add current hashed `C...` handles only when every rejection is `row-stale`; other failures expose
@@ -255,8 +255,9 @@ Acceptance:
 8. Stale rows, incomplete literal targets, and edit conflicts emit verified repair context;
    a missing row fails without guessing, and a failure with no active baseline emits its
    diagnostic alone.
-9. Invalid Go localized inside a fixed `<<PATCH` value reports its physical body row in
-   bounded repair context and structured host rejection identity without retaining body text.
+9. Invalid Go localized inside a raw heredoc or line-framed text value reports its
+   physical body row in bounded repair context and structured host rejection identity
+   without retaining body text. Transport bars do not become source content.
 10. One syntax-validation rejection includes every distinct actionable repair location from
     all changed files, groups visible diagnostics once per originating command and path,
     deduplicates parser cascades by repair row, and exposes enough current rejected-script rows
