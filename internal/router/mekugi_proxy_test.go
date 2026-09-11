@@ -566,7 +566,7 @@ func TestMekugiPrepareRequestExposesEditToolsAndShell(t *testing.T) {
 	if exposed != testMekugiToolDescription {
 		t.Fatalf("standalone mekugi description = %q, want native tool help only", exposed)
 	}
-	if description := jsonString(topTools[3], "description"); !strings.HasPrefix(description, "Run one free-form script. The selected interpreter receives the exact script body, and frontend standard input remains available as program data.\n\n### `#!params`") ||
+	if description := jsonString(topTools[3], "description"); !strings.HasPrefix(description, "Run free-form scripts. The selected interpreter receives the exact script body, and frontend standard input remains available as program data. Prefer batching ready, independent, noninteractive programs; use separate calls for interactive work. Start each later program with a column-one interpreter selector or #!params= (implicit Bash). Each program may supply its own params object; omission inherits the previous object, while a supplied object replaces it. Batches require Code Mode, wait for each program to finish, continue after nonzero exits, and return an ordered results array.\n\n### `#!params`") ||
 		strings.Contains(description, "#!cmd=") || strings.Contains(description, "@shell/") {
 		t.Fatalf("standalone shell description = %q", description)
 	}

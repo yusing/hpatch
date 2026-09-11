@@ -253,6 +253,31 @@ native execution and session facilities. Eligible literal `cat` heredoc writes
 are converted to patches so they appear in the usual diff UI; other scripts
 remain ordinary shell execution.
 
+With Code Mode available, a call can batch noninteractive programs in order:
+
+```text
+#!params={"yield_time_ms":1000}
+echo hello
+#!python3
+print("hello")
+#!params={"yield_time_ms":2000}
+echo goodbye
+```
+
+A column-one interpreter selector or `#!params=` after a body starts the next
+program. A params-only header selects Bash. Omitted params inherit the previous
+object; a supplied object replaces it, and `{}` clears it. Interpreters,
+command templates, and shell state do not carry over. These marker lines are
+reserved even inside strings and heredocs; indent literal markers or construct
+them without a literal marker line.
+
+Programs run sequentially, including waiting for long-running sessions, and
+continue after nonzero exits. The ordered `results` array contains each
+program's output and native result fields. A host error stops the batch while
+preserving completed results and partial output. Native-only clients require
+separate calls. Use separate calls for interactive programs too, so their
+prompts and session handles remain available for input.
+
 The following commands are available **inside the tool's Bash and POSIX
 programs**, not as standalone utilities in your terminal:
 

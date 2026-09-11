@@ -29,7 +29,7 @@ lockstep adapter boundary.
 
 `internal/verifiedrow` owns hash and logical UTF-8 row mechanics; `internal/hpatchsyntax` owns compact
 quoted framing; `internal/sourcekind` owns portable source capabilities; `internal/golex` owns Go lexical
-questions; and `internal/shellsyntax` owns shell header and interpreter identity. Native Go callers import
+questions; and `internal/shellsyntax` owns shell headers, batch boundaries, params inheritance, and interpreter identity. Native Go callers import
 those packages directly. The reactor receives no preopened directory, inherited environment, or process
 capability. It reports UTF-8 byte coordinates only. Parser-specific UTF-16 coordinates, workspace
 canonicalization, retained-script reads, process execution, carrier policy, and stale-row resolution remain
@@ -62,6 +62,15 @@ replace, or persist the session, and plugin code receives no session-lifecycle c
 native continuation operation resumes the same host-owned session. JSON and SSE framing, history,
 and replay preserve this distinction without defining another result envelope or continuation
 protocol. Other contributed tools retain their declared output projections.
+
+For multi-program built-in shell input, the response transformer resolves retained input and
+uses the portable splitter before invoking the existing translator for each program. It validates
+the complete batch before rendering one Code Mode carrier with separate native exec arguments
+and sequential continuation waits. Each program keeps its own native result fields and output in
+the ordered results array; nonzero exits continue and host errors propagate with partial results.
+Only Codex owns execution parameters and session lifecycle. Native-only requests reject batches
+rather than projecting differing params onto a shared execution. Retention and replay remain
+one original call, without child call IDs or a new persistent session owner.
 
 The bounded syntax exception is the simple cat-write sequence in `REQ-SHELL-001`.
 The response transformer owns detection and lowering after built-in shell parsing and before

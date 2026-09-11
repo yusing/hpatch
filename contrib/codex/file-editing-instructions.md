@@ -51,13 +51,13 @@ skill announcements, and updates before waiting. Use the supported tool mechanis
 otherwise continue silently. A blocking question or final result can still use the final channel.
 Do not wake solely to emit a progress notice.
 
-Batch already-known reads and searches as commands in one `functions.shell` script, with bounded
-output. Parallelize other independent calls only when their tool contracts allow it; run hpatch
+Use the Shell reference's batching guidance for ready reads and searches; keep output bounded.
+Parallelize other independent calls only when their tool contracts allow it; run hpatch
 alone and wait for its result before another tool call. Use only the tools exposed for this request.
 
 ## Shell reference
 
-Submit one free-form program to `functions.shell`. Choose its interpreter before writing the body:
+Submit free-form programs to `functions.shell`. Choose each interpreter before writing its body:
 
 - Bash: write commands directly, without a shebang.
 - Another interpreter: put `#!COMMAND [ARGS...]` on the first line, then write that interpreter's
@@ -75,9 +75,9 @@ print(sum(values))
 
 Every body line is program source for the selected interpreter. Submit it directly, not through
 an interpreter command with a quoted program argument or a shell heredoc such as `python3 - <<'PY'`.
-There is no closing delimiter. Run subsequent Bash commands such as `gofmt` or tests in a separate
-call after the interpreter call succeeds. Interpreter flags belong in the selector, not around
-the program body. Selectors named `bash` or ending in `/bash` use the embedded Bash evaluator;
+There is no closing delimiter. Batch independent programs as described below. When a later command
+depends on an earlier command succeeding, use a separate call after checking success: batches
+continue after nonzero exits. Interpreter flags belong in the selector, not around the program body. Selectors named `bash` or ending in `/bash` use the embedded Bash evaluator;
 `sh` or a path ending in `/sh` selects its POSIX evaluator.
 
 HPATCH's `<<PATCH` is a multiline edit-value form used inside `functions.hpatch`, not a shell
@@ -88,7 +88,7 @@ they are not the way to submit an interpreter's program.
 
 The input order is: optional interpreter selector, optional directive lines, then program source.
 Without a selector, the body is Bash. Put directives together before the body; `#!cmd=` and
-`#!params=` may appear in either order, at most once each.
+`#!params=` may appear in either order, at most once each per program.
 
 - `#!params=<JSON object>` supplies the request-specific execution fields listed in the tool
   description. The body supplies `cmd`, so omit that field; if setting `login`, use `false`.
@@ -112,6 +112,41 @@ print("count", len(records))
 for record in records:
     print(record["name"])
 ```
+
+### Batching
+
+With Code Mode available, prefer one batch for ready, independent, noninteractive programs:
+if you can write each program now without inspecting another's result, submit them together.
+Use separate calls when a result determines the next program or whether it should run.
+
+Execution stays sequential. After a program's body, a column-one interpreter selector or
+`#!params=` starts the next program. A params-only header selects Bash, so repeated
+`#!params=` blocks need no `#!bash`. Put that program's other directives before its body.
+Each program needs a body.
+
+
+```text
+#!params={"yield_time_ms":1000}
+echo hello
+#!python3
+print("hello")
+#!params={"yield_time_ms":2000}
+echo goodbye
+```
+
+Omitted params inherit the previous complete object; an explicit object replaces it, and `{}`
+clears it. Interpreters and command templates never inherit. Each program starts a separate
+execution, so shell variables and `cd` changes do not carry over. Column-one batch markers are
+reserved even inside strings and heredocs; indent literal markers or construct them without a
+literal marker line.
+
+The router splits the programs before sending one sequential Code Mode carrier to Codex.
+It awaits native continuations before starting the next program and continues after nonzero
+exits. The result's ordered `results` array preserves each program's native result fields and
+combined output. Host errors stop the batch and preserve completed results and partial output.
+Use separate shell calls for interactive programs so their prompts and native session handles
+remain available for input.
+Native-only clients reject batches; submit separate calls there.
 
 ### Results, continuation, and retry
 

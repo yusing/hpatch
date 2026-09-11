@@ -233,7 +233,7 @@ export const shellTool = {
   specification: {
     type: "custom",
     name: "shell",
-    description: `Run one free-form script. The selected interpreter receives the exact script body, and frontend standard input remains available as program data.`,
+    description: `Run free-form scripts. The selected interpreter receives the exact script body, and frontend standard input remains available as program data. Prefer batching ready, independent, noninteractive programs; use separate calls for interactive work. Start each later program with a column-one interpreter selector or #!params= (implicit Bash). Each program may supply its own params object; omission inherits the previous object, while a supplied object replaces it. Batches require Code Mode, wait for each program to finish, continue after nonzero exits, and return an ordered results array.`,
   },
 
   parse(input, context) {

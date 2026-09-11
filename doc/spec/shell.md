@@ -9,6 +9,37 @@ through the canonical exec carrier from `REQ-PLUGIN-001`. The repository `make i
 regenerates that bundle and installs `mekugi` plus the fixed `shell` helper. It changes no Codex configuration,
 instruction file, or configured shell declaration.
 
+Before translating a built-in shell input, the router splits it into programs. After a program
+body begins, a column-one interpreter selector or params directive starts a new program.
+The canonical `#!params=` and tolerated params spellings are boundaries; a params-only header
+selects default Bash. Each program has its own leading directive block. Duplicate params within
+one block still reject. Later `#!cmd=` lines remain body data rather than boundaries.
+Column-one boundary markers are reserved even inside language strings and heredocs; indented
+markers remain body data. Splitting preserves every other body byte and line terminator.
+
+Omitted params inherit the preceding complete object. A supplied object replaces that object,
+including `{}` clearing inherited fields. Interpreters and command templates do not inherit.
+All programs are parsed and translated before any carrier is emitted; invalid later programs
+reject the entire batch without running its valid prefix. Batch programs require a nonempty
+body. A retained reference remains a sole `#!script=` call, and its resolved input may be a batch.
+
+Batches require Code Mode and are for noninteractive work. Agent guidance encourages batching
+ready, independent, noninteractive programs and directs interactive programs to separate calls
+so their prompts and native continuation handles remain available for input. The router prepares
+separate native exec arguments for each program
+before sending one ordered Code Mode carrier to Codex. Each native execution receives its own
+params and separate shell state. The carrier awaits terminal native results, using the existing
+continuation operation when needed, before starting the next program. Nonzero script exits do
+not stop later programs. The result contains an ordered `results` array, each element preserving
+one program's terminal native fields and concatenated output. A host error or refusal stops
+remaining execution and propagates after publishing completed results and current partial output,
+including any outstanding native continuation handle. No program is restarted or retried.
+Native-only clients reject batches with a Code Mode requirement diagnostic before execution.
+Batch retention selects the complete resolved batch, while replay restores the original call.
+Eligible cat-write projection applies independently within each program.
+
+The following interpreter and directive rules apply separately to each program.
+
 The tool treats the first logical line as a shebang when that line, after trimming only its
 leading and trailing ASCII spaces and tabs, starts with `#!`. It removes `#!`, trims the
 remaining selector, and separates the selector at ASCII spaces or tabs. A bare executable name
@@ -56,7 +87,7 @@ The router replaces `{.}` with the canonical independently quoted shell-helper c
 The command template then runs through the normal exec carrier shell. Without an interpreter
 shebang, the nested worker selects `bash`. Without an interpreter shebang or command template, an eligible simple external
 Bash command remains direct, including when exec parameters are supplied; every other body uses
-the worker command as the complete outer command. After the first body line, directive-like lines remain ordinary body data.
+the worker command as the complete outer command. After the first body line, directive-like lines remain ordinary body data except for the reserved batch boundaries above.
 
 When the worker carrier is selected, the executor starts the fixed helper once with the normalized
 interpreter fields and exact body.
@@ -116,7 +147,7 @@ contents not representable without byte changes remain shell commands. Interpret
 command templates, PTYs, and exec parameters other than workdir, output budget, yield timing,
 and false login/tty also keep the existing carrier. A known absolute workdir is required.
 
-The ordinary shell carrier forwards the complete native `exec_command` result defined by the owning Code
+The ordinary single-program shell carrier forwards the complete native `exec_command` result defined by the owning Code
 Mode contract rather than only its output field. A result containing the native continuation
 handle remains yielded rather than terminal, and the same host-owned continuation operation
 resumes that session. The router and shell plugin do not poll, resume, cancel, retry, replace, or
@@ -280,3 +311,16 @@ Acceptance:
     body; transformation adds no flags, connection details, credentials, or inline environment
     assignments. Thread-scoped commentary discovery preserves script output and exit status,
     and completion of one worker leaves concurrent workers' commentary available.
+
+21. One input containing a params-prefixed Bash body, a Python selector and body with omitted
+    params, and another params-prefixed Bash body yields one Code Mode carrier with three ordered
+    executions. Python inherits the first params object; the third program uses only its newly
+    supplied object. Multiple implicit Bash programs require no `#!bash`. Per-program bodies
+    preserve CR, LF, CRLF, whitespace, and absent final terminators.
+22. A yielded program reaches terminal state before the next starts. A nonzero exit remains
+    visible in its result and does not prevent later programs. Complete native result fields and
+    output remain associated with their program. Host exceptions preserve the completed prefix
+    and current partial output without running the suffix.
+23. Malformed or unsafe later headers, empty batch programs, and native-only batches reject
+    before any program executes. JSON and SSE carry one replayable call, and retained batch
+    reruns reapply splitting and params inheritance to the current retained source.
