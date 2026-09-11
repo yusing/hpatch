@@ -49,24 +49,54 @@ command sessions, and patch diff UI. No fork, no config edits, no daemon.
 
 ### AX
 
-- **Hashline edits.**
-  - `functions.hpatch` identifies existing text with `LINE:HASH` references and
-    writes the replacement once.
-  - Invalid scripts are rejected as a whole before Codex applies the generated patch.
-- **Direct execution.**
-  - `functions.shell` accepts a program in its native syntax, without a
-    JavaScript wrapper or nested command-string quoting.
+- **Edit by reference, not repeated patch context.**
+  - `functions.hpatch` accepts verified `LINE:HASH` rows, inclusive ranges,
+    and exact literal text, including text the agent already knows.
+  - Related edits across files share one validation pass before Codex applies
+    the generated patch. Invalid targets or conflicting edits reject the whole script.
+  - Successful reports return current row references for follow-up edits.
+    Unchanged saved rows remain reusable after line shifts when their hash
+    identifies exactly one row.
 - **Read only what the edit needs.**
-  - `hgrep` finds matching text, `hsymbol` locates definitions and references,
-    and `inspect_file` outlines a file without returning its full source.
-  - Their verified references can be used directly as edit targets; `hcat`
-    supplies source text when more context is needed.
-- **Correct without starting over.**
-  - Eligible shell programs can be retained, inspected, edited, and rerun
-    instead of emitted again.
-  - After an edit is rejected, the agent can repair its retained script without
-    repeating unrelated prepared changes. Stale-target shortcuts remain available;
-    other corrections use ordinary text edits before the complete script is retried.
+  - Inside `functions.shell`, `hgrep` searches with verified rows, `hsymbol`
+    finds semantic definitions and references, and `hcat` reads exact source ranges.
+  - `inspect_file` returns a structural outline with editable spans, or selected
+    declaration and JSON-value source in the same call with `--source`.
+  - `hcat --max-tokens N` and `hgrep --max-tokens N` set a strict output token
+    ceiling. Add `--preview-bytes N` for bounded long-line previews.
+    Omitted content is explicit; previews retain the complete row's verified identity.
+- **Catch supported syntax problems before applying edits.**
+  - Changed Go files are parsed and formatted automatically. Supported Python,
+    JavaScript, and TypeScript files receive syntax checks and indentation correction.
+  - Rejections include localized repair context; successful reports expose
+    newline and blank-separator advisories without treating them as errors.
+    These checks do not replace tests.
+- **Correct a rejected edit without starting over.**
+  - `functions.hpatch_recover` repairs the retained rejected script while
+    preserving unrelated prepared changes.
+  - Stale-target shortcuts replace only the rejected targets. Ordinary script-text
+    edits can repair values, paths, framing, or conflicting commands before the
+    complete script is reevaluated.
+- **Execute programs directly.**
+  - `functions.shell` accepts Bash or a selected interpreter's native source,
+    without a JavaScript wrapper or nested command-string quoting.
+  - Interpreter selectors, per-call execution options, and command templates
+    keep script source separate from standard-input data.
+- **Batch commands and resume running work.**
+  - With Code Mode available, one shell call can run separate noninteractive
+    programs sequentially, including different interpreters.
+  - Batches can continue after nonzero exits or stop before later programs start.
+    Results preserve each program's output and report started and unstarted counts.
+  - Recognized yielded results identify the next host continuation call, so the
+    agent can resume the existing process or Code Mode cell rather than restart it.
+- **Reuse executable source.**
+  - Eligible shell programs return thread-private `@shell/` references that the
+    agent can inspect, edit, and rerun without emitting the whole program again.
+  - Retention metadata states the expiry and temporary scope. Reads and edits do
+    not renew it; source that must survive belongs in a workspace file.
+
+See [how editing and execution work](#how-editing-and-execution-work) for usage
+and prerequisites.
 
 ### Token saving
 
