@@ -46,7 +46,7 @@ func TestSubagentToolDisplay(t *testing.T) {
 		{"shell", "cat a && rm b", "Run\n```bash\ncat a && rm b\n```"},
 		{"shell", "cat $(echo a)", "Run\n```bash\ncat $(echo a)\n```"},
 		{"shell", "cat *.go", "Run\n```bash\ncat *.go\n```"},
-		{"shell", "#!params={\"max_output_tokens\":20000}\ncat a\npwd", "Run\n```bash\n#!params={\"max_output_tokens\":20000}\ncat a\npwd\n```"},
+		{"shell", "#!params={\"max_output_tokens\":20000}\ncat a\npwd", "Read `a`\n\nRun `pwd`"},
 		{"shell", "echo a\n  echo b", "Run\n```bash\necho a\n  echo b\n```"},
 		{"exec_command", `{"cmd":"shell bash $'cat a\\n'","login":false}`, "Read `a`"},
 		{"shell", `{"command":["bash","-lc","cat a"]}`, "Read `a`"},
@@ -118,15 +118,15 @@ func TestSubagentInlineAwaitDisplay(t *testing.T) {
 	}{
 		{
 			`text(await tools.exec_command({cmd:"cat /home/ubuntu/.codex/IMPLEMENTATION.md; git diff --stat; git diff -- internal/router/subagent_tool_display.go doc/spec/commentary.md",max_output_tokens:11000}));`,
-			"Run\n```bash\ncat /home/ubuntu/.codex/IMPLEMENTATION.md; git diff --stat; git diff -- internal/router/subagent_tool_display.go doc/spec/commentary.md\n```",
+			"Read `/home/ubuntu/.codex/IMPLEMENTATION.md`\n\nRun `git diff --stat;`\n\nRun `git diff -- internal/router/subagent_tool_display.go doc/spec/commentary.md`",
 		},
 		{
 			`text(await tools.exec_command({cmd:"skills-mgr get golang-best-practices; sed -n '1,245p' internal/router/subagent_tool_display.go; sed -n '320,475p' internal/router/subagent_tool_display.go; git diff -- internal/router/subagent_tool_display_test.go",max_output_tokens:10100}));`,
-			"Run\n```bash\nskills-mgr get golang-best-practices; sed -n '1,245p' internal/router/subagent_tool_display.go; sed -n '320,475p' internal/router/subagent_tool_display.go; git diff -- internal/router/subagent_tool_display_test.go\n```",
+			"Skill Read `golang-best-practices`\n\nRead `internal/router/subagent_tool_display.go 1:245`\n\nRead `internal/router/subagent_tool_display.go 320:475`\n\nRun `git diff -- internal/router/subagent_tool_display_test.go`",
 		},
 		{
 			`text(await tools.exec_command({cmd:"gopls references internal/router/subagent_tool_display.go:17:6; sed -n '60,135p' doc/spec/commentary.md; sed -n '1,65p' internal/router/subagent_tool_display_test.go; sed -n '540,650p' internal/router/subagent_tool_display.go",max_output_tokens:5000}));`,
-			"Run\n```bash\ngopls references internal/router/subagent_tool_display.go:17:6; sed -n '60,135p' doc/spec/commentary.md; sed -n '1,65p' internal/router/subagent_tool_display_test.go; sed -n '540,650p' internal/router/subagent_tool_display.go\n```",
+			"Run `gopls references internal/router/subagent_tool_display.go:17:6;`\n\nRead `doc/spec/commentary.md 60:135`\n\nRead `internal/router/subagent_tool_display_test.go 1:65`\n\nRead `internal/router/subagent_tool_display.go 540:650`",
 		},
 		{
 			`text(await tools.write_stdin({session_id:23221,chars:"",yield_time_ms:1000,max_output_tokens:5000}));`,
@@ -252,6 +252,101 @@ func TestSubagentBuiltinToolDisplay(t *testing.T) {
 		if got := subagentToolActivityText(item, name); got != tt.want {
 			t.Fatalf("source %s: got %q, want %q", tt.source, got, tt.want)
 		}
+	}
+}
+
+func TestSubagentSedReadDisplay(t *testing.T) {
+	for _, tc := range []struct{ source, want string }{
+		{"sed -n '1,260p' source.go", "Read `source.go 1:260`"},
+		{"sed -n '261,520p' 'source file.go'", "Read `source file.go 261:520`"},
+	} {
+		if got := toolActivityShell(tc.source); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.source, got, tc.want)
+		}
+	}
+	for _, source := range []string{
+		"sed -n '1,260p;d' source.go",
+		"sed -i -n '1,260p' source.go",
+		"sed -n '1,$p' source.go",
+		"sed -n '0,260p' source.go",
+		"sed -n '260,1p' source.go",
+		"sed -n '+1,260p' source.go",
+		"sed -n '1,260p' -",
+		"sed -n '1,260p' --version",
+		"sed -n '1,260p' ''",
+		"sed -n '1,260p' a.go b.go",
+		"sed -n '1,260p' \"$file\"",
+		"sed -n '1,260p' source.go > copy.go",
+		"sed -n '1,260p' source.go && echo done",
+	} {
+		want := "Run\n" + toolActivityFenced("bash", source)
+		if got := toolActivityShell(source); got != want {
+			t.Errorf("%s: got %q, want raw source %q", source, got, want)
+		}
+	}
+}
+
+func TestSubagentSearchReadRunGrouping(t *testing.T) {
+	source := "rg -n 'func shellCatLiteral|func toolActivityGroup|toolActivityGroup\\(' internal/router\n" +
+		"sed -n '238,265p' internal/router/subagent_tool_display.go\n" +
+		"sed -n '140,170p' doc/spec/commentary.md\n" +
+		"git status --short"
+	item := map[string]json.RawMessage{"name": mustMarshalJSON("shell"), "input": mustMarshalJSON(source)}
+	want := "In `/root/review_sed_display`\n\n" +
+		"- Search `-n 'func shellCatLiteral|func toolActivityGroup|toolActivityGroup\\(' internal/router`\n\n" +
+		"- Read `internal/router/subagent_tool_display.go 238:265` `doc/spec/commentary.md 140:170`\n\n" +
+		"- Run `git status --short`"
+	if got := toolActivityGroup("[`/root/review_sed_display`] ", subagentToolActivityText(item, "shell")); got != want {
+		t.Fatalf("grouped display: got %q, want %q", got, want)
+	}
+}
+
+func TestSubagentMixedReadRunFallbacks(t *testing.T) {
+	for _, tc := range []struct{ source, want string }{
+		{"git status --short\ncat a", "Run `git status --short`\n\nRead `a`"},
+		{"cat a\nsed -n '1,$p' b", "Read `a`\n\nRun `sed -n '1,$p' b`"},
+		{"cat a\ncat \"$file\"", "Read `a`\n\nRun `cat \"$file\"`"},
+		{"cat a\ncat good -n", "Read `a`\n\nRun `cat good -n`"},
+		{"cat a\necho 'first\n\nlast'", "Read `a`\n\nRun\n```bash\necho 'first\n\nlast'\n```"},
+		{"cat a\n  printf '%s\\n' \\\n    value", "Read `a`\n\nRun\n```bash\n  printf '%s\\n' \\\n    value\n```"},
+		{"cat a;  printf '%s\\n' \\\n    value", "Read `a`\n\nRun\n```bash\nprintf '%s\\n' \\\n    value\n```"},
+		{"cat a\necho first\necho second", "Read `a`\n\nRun `echo first`\n\nRun `echo second`"},
+	} {
+		if got := toolActivityShell(tc.source); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.source, got, tc.want)
+		}
+	}
+	for _, source := range []string{
+		"cat a\ncat b > c",
+		"cat a\ncat b && echo done",
+		"cat a\nfor f in *.go; do cat \"$f\"; done",
+		"cat a\ncat b &",
+	} {
+		if got, want := toolActivityShell(source), "Run\n"+toolActivityFenced("bash", source); got != want {
+			t.Errorf("%s: got %q, want %q", source, got, want)
+		}
+	}
+	want := "In `/root/worker`\n\n- Read `a`\n\n- Run `echo first` `echo second`"
+	if got := toolActivityGroup("[`/root/worker`] ", toolActivityShell("cat a\necho first\necho second")); got != want {
+		t.Fatalf("adjacent runs: got %q, want %q", got, want)
+	}
+}
+
+func TestSubagentMixedSedReadGrouping(t *testing.T) {
+	source := "#!params={\"workdir\":\"/project\",\"yield_time_ms\":10000,\"max_output_tokens\":30000}\n" +
+		"cat /project/COLLABORATION.md\n" +
+		"skills-mgr get deltapath-go-common-patterns\n" +
+		"skills-mgr get golang-best-practices\n" +
+		"sed -n '1,260p' source.go\n" +
+		"sed -n '261,520p' 'source file.go'"
+	item := map[string]json.RawMessage{"name": mustMarshalJSON("shell"), "input": mustMarshalJSON(source)}
+	want := "In `/root/dect_evidence`\n\n" +
+		"- Read `/project/COLLABORATION.md`\n\n" +
+		"- Skill Read `deltapath-go-common-patterns` `golang-best-practices`\n\n" +
+		"- Read `source.go 1:260` `source file.go 261:520`"
+	got := toolActivityGroup("[`/root/dect_evidence`] ", subagentToolActivityText(item, "shell"))
+	if got != want {
+		t.Fatalf("grouped display: got %q, want %q", got, want)
 	}
 }
 

@@ -87,7 +87,7 @@ root calls. Known tools use operation labels rather than raw transport arguments
 and transparent, statically recognized Code Mode shell wrappers share a `Run` display.
 An `exec` call recovered through the built-in shell pipeline uses the shell display only
 after recovery is recorded, without changing its original replay identity.
-Nonempty `Run` previews use fenced code blocks even for single-line commands, tagged with
+Whole-script nonempty `Run` previews use fenced code blocks even for single-line commands, tagged with
 the selected interpreter language: default/Bash uses `bash`, Python/Python3 uses `python`,
 and Node/Bun/Deno uses `javascript`. Common executable aliases normalize to renderer language
 names: PyPy/Pythonw to `python`, QuickJS to `javascript`, ts-node/tsx to `typescript`,
@@ -114,8 +114,13 @@ Polls correlate only with visible call/result pairs that include execution metad
 same request; output-only Code Mode projections are not session evidence. Missing command
 history or unavailable stored source is labelled `command unavailable`, never guessed.
 These presentation rules do not change execution, validation, or replay payloads. Calls that send nonempty characters display `Send input`.
-Simple literal `cat` and `hcat` calls display `Read <file>`; `skills-mgr get <skill-name>`
-and reads of a named skill's `SKILL.md` display `Skill Read <skill-name>`.
+Simple literal `cat` and `hcat` calls display `Read <file>`. Literal bounded
+`sed -n 'START,ENDp' <file>` reads display `Read <file> START:END`, with positive decimal
+line numbers and an end not before the start. Only this single-file print form is classified;
+other sed programs, options, stdin operands, and dynamic commands retain their source.
+These reads can share a script with other classified operations without forcing a `Run` fallback.
+`skills-mgr get <skill-name>` and reads of a named skill's `SKILL.md` display
+`Skill Read <skill-name>`.
 `skills-mgr get <skill-name>/<reference-path>` displays `Skill Reference Read` with the
 full skill/reference operand. Optional read ranges remain visible for both forms.
 Simple listing, search, and structural inspection commands use `List`, `Search`, and `Inspect`
@@ -131,7 +136,13 @@ heading. Literal added, removed, and context lines remain intact. Unrecognized p
 retains the original source-level diff display. Display never executes or retranslates an edit.
 Rejected, unavailable, and already-satisfied translations retain a truthful source-level
 fallback rather than claiming a patch was applied.
-Unsupported compound or dynamic commands retain their source rather than claiming a simpler operation.
+Mixed scripts of simple commands classify each command independently. An unclassified command
+retains its source as a `Run` action without hiding neighboring `Search`, `Read`, or other
+classified operations. Single-line `Run` details in these mixed summaries use inline code;
+multiline details use fenced code blocks. Scripts with no classified commands retain the
+whole-script `Run` preview. Unsupported compound commands retain the complete script rather
+than splitting control flow into independent operations. Dynamic commands are never labelled
+as simpler operations.
 Multiline source previews preserve line breaks and indentation in fenced code blocks, including
 language-tagged fences and literal backticks. Transformed displays retain every operation and its
 full detail without preview truncation. Unknown tools retain their qualified name and full input.

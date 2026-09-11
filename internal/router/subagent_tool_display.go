@@ -298,89 +298,135 @@ func toolActivityReads(script string) (string, bool) {
 	if err != nil || len(program.Stmts) == 0 {
 		return "", false
 	}
-	var operations []struct{ label, detail string }
-	add := func(label, detail string) {
-		operations = append(operations, struct{ label, detail string }{label, detail})
-	}
-
+	var displays []string
+	classified := false
 	for _, statement := range program.Stmts {
 		call, ok := statement.Cmd.(*syntax.CallExpr)
 		if !ok || len(call.Args) == 0 || len(call.Assigns) != 0 || len(statement.Redirs) != 0 ||
 			statement.Background || statement.Negated || statement.Coprocess || statement.Disown {
 			return "", false
 		}
-		var argv []string
-		for _, arg := range call.Args {
-			value, literal := shellCatLiteral(arg)
-			if !literal {
-				return "", false
+		display, ok := toolActivityReadCommand(script, call)
+		if ok {
+			classified = true
+		} else {
+			start, end := int(statement.Pos().Offset()), int(statement.End().Offset())
+			source := script[start:end]
+			if strings.ContainsAny(source, "\r\n") {
+				// Retain leading indentation, but not an earlier command on
+				// the same line separated by a semicolon.
+				lineStart := strings.LastIndex(script[:start], "\n") + 1
+				if strings.Trim(script[lineStart:start], " \t") == "" {
+					source = script[lineStart:end]
+				}
+				display = "Run\n" + toolActivityFenced("bash", source)
+			} else {
+				display = "Run " + toolActivityCode(source)
 			}
-			argv = append(argv, value)
 		}
-		switch argv[0] {
-		case "cat", "hcat":
-			if len(argv) < 2 {
-				return "", false
-			}
-			paths, readRange := argv[1:], ""
-			if argv[0] == "hcat" {
-				if len(argv) != 2 && len(argv) != 3 {
-					return "", false
-				}
-				paths = argv[1:2]
-				if len(argv) == 3 {
-					readRange = " " + argv[2]
-				}
-			}
-			for _, path := range paths {
+		displays = append(displays, display)
+	}
+	// Preserve the complete source and transport headers when there is
+	// nothing to classify, rather than splitting an ordinary Run preview.
+	if !classified {
+		return "", false
+	}
+	return strings.Join(displays, "\n\n"), true
+}
 
-				if path == "" || strings.HasPrefix(path, "-") {
-					return "", false
-				}
-				label, value := "Read", path
-				if filepath.Base(path) == "SKILL.md" && filepath.Dir(path) != "." {
-					label, value = "Skill Read", filepath.Base(filepath.Dir(path))
-				}
-				add(label, value+readRange)
-			}
-		case "inspect_file":
-			if len(argv) != 2 {
-				return "", false
-			}
-			add("Inspect", argv[1])
-		case "ls":
-			if len(argv) > 2 || (len(argv) == 2 && strings.HasPrefix(argv[1], "-")) {
-				return "", false
-			}
-			path := "."
-			if len(argv) == 2 {
-				path = argv[1]
-			}
-			add("List", path)
-		case "rg", "hgrep", "grep":
-			if len(argv) < 2 {
-				return "", false
-			}
-			// Keep all search flags and operands visible; do not guess which
-			// operand is a query when an option may consume it.
-			add("Search", script[int(call.Args[1].Pos().Offset()):int(call.End().Offset())])
-		case "skills-mgr":
-			if (len(argv) != 3 && len(argv) != 4) || argv[1] != "get" {
-				return "", false
-			}
-			label := "Skill Read"
-			if strings.Contains(argv[2], "/") {
-				label = "Skill Reference Read"
-			}
-			detail := argv[2]
-			if len(argv) == 4 {
-				detail += " " + argv[3]
-			}
-			add(label, detail)
-
-		default:
+func toolActivityReadCommand(script string, call *syntax.CallExpr) (string, bool) {
+	var operations []struct{ label, detail string }
+	add := func(label, detail string) {
+		operations = append(operations, struct{ label, detail string }{label, detail})
+	}
+	var argv []string
+	for _, arg := range call.Args {
+		value, literal := shellCatLiteral(arg)
+		if !literal {
 			return "", false
 		}
+		argv = append(argv, value)
+	}
+	switch argv[0] {
+	case "cat", "hcat":
+		if len(argv) < 2 {
+			return "", false
+		}
+		paths, readRange := argv[1:], ""
+		if argv[0] == "hcat" {
+			if len(argv) != 2 && len(argv) != 3 {
+				return "", false
+			}
+			paths = argv[1:2]
+			if len(argv) == 3 {
+				readRange = " " + argv[2]
+			}
+		}
+		for _, path := range paths {
+
+			if path == "" || strings.HasPrefix(path, "-") {
+				return "", false
+			}
+			label, value := "Read", path
+			if filepath.Base(path) == "SKILL.md" && filepath.Dir(path) != "." {
+				label, value = "Skill Read", filepath.Base(filepath.Dir(path))
+			}
+			add(label, value+readRange)
+		}
+	case "sed":
+		// Only a literal, bounded print is a read preview, not arbitrary
+		// sed programs, in-place edits, or input from stdin.
+		if len(argv) != 4 || argv[1] != "-n" || argv[3] == "" || strings.HasPrefix(argv[3], "-") {
+			return "", false
+		}
+		addresses, printOnly := strings.CutSuffix(argv[2], "p")
+		start, end, hasRange := strings.Cut(addresses, ",")
+		if !printOnly || !hasRange || strings.Trim(start, "0123456789") != "" || strings.Trim(end, "0123456789") != "" {
+			return "", false
+		}
+		first, firstErr := strconv.Atoi(start)
+		last, lastErr := strconv.Atoi(end)
+		if firstErr != nil || lastErr != nil || first < 1 || last < first {
+			return "", false
+		}
+		add("Read", argv[3]+" "+start+":"+end)
+	case "inspect_file":
+		if len(argv) != 2 {
+			return "", false
+		}
+		add("Inspect", argv[1])
+	case "ls":
+		if len(argv) > 2 || (len(argv) == 2 && strings.HasPrefix(argv[1], "-")) {
+			return "", false
+		}
+		path := "."
+		if len(argv) == 2 {
+			path = argv[1]
+		}
+		add("List", path)
+	case "rg", "hgrep", "grep":
+		if len(argv) < 2 {
+			return "", false
+		}
+		// Keep all search flags and operands visible; do not guess which
+		// operand is a query when an option may consume it.
+		add("Search", script[int(call.Args[1].Pos().Offset()):int(call.End().Offset())])
+	case "skills-mgr":
+		if (len(argv) != 3 && len(argv) != 4) || argv[1] != "get" {
+			return "", false
+		}
+		label := "Skill Read"
+		if strings.Contains(argv[2], "/") {
+			label = "Skill Reference Read"
+		}
+		detail := argv[2]
+		if len(argv) == 4 {
+			detail += " " + argv[3]
+		}
+		add(label, detail)
+
+	default:
+		return "", false
 	}
 	var lines []string
 	for _, operation := range operations {
