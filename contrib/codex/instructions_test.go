@@ -220,3 +220,37 @@ func TestRecoveryGuidanceWithoutReferences(t *testing.T) {
 		t.Fatalf("RecoveryGuidance() = %q, want %q", got, want)
 	}
 }
+
+func TestInstructionsConsolidateDeliveredContracts(t *testing.T) {
+	for _, model := range []string{"gpt-6-astra", "gpt-5.6-sol"} {
+		for _, compact := range []bool{false, true} {
+			got := InstructionsForModel(model, compact)
+			for _, required := range []string{
+				"## Commentary\n",
+				"### Rejected-script recovery\n",
+				"Nonempty line and range `type` replacements preserve",
+				"Successful reports may include `advisory`",
+				"`<<TEXT` (keep final terminator)",
+				"`continuation` notice's `next_call`",
+				"`retention.scheduled_expiry`",
+				"`--preview-bytes N`",
+				"`inspect_file --source NAME PATH`",
+				"plain lines query the\ncurrent snapshot",
+				"For values, framing, paths, conflicting commands, or mixed corrections",
+			} {
+				if strings.Count(got, required) != 1 {
+					t.Errorf("model %q compact %v: contract %q must occur once", model, compact, required)
+				}
+			}
+			for _, obsolete := range []string{
+				"one complete ordinary script for non-target",
+				"after obtaining a verified selector row",
+				"selector lines are reserved even inside",
+			} {
+				if strings.Contains(got, obsolete) {
+					t.Errorf("model %q compact %v: superseded guidance %q", model, compact, obsolete)
+				}
+			}
+		}
+	}
+}

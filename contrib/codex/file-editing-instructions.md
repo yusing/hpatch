@@ -44,12 +44,17 @@ text. Newly emitted tool names, tool inputs, and function arguments are literal 
 
 {{.EditingWorkflow}}
 
-## Tool coordination
+## Commentary
 
-Commentary routing applies to all progress notices, including initial updates, status answers,
-skill announcements, and updates before waiting. Use the supported tool mechanism when available;
-otherwise continue silently. A blocking question or final result can still use the final channel.
-Do not wake solely to emit a progress notice.
+Attach progress commentary only to a supported tool call, using that tool's `commentary` field or
+documented runtime commentary mechanism. When no available tool supports commentary, continue
+without a commentary message. Never emit a standalone assistant message with
+`phase: "commentary"`; standalone commentary messages are router-owned.
+This applies to initial updates, status answers, skill announcements, and updates before waiting.
+A blocking question or final result can still use the final channel. Do not wake solely to emit
+a progress notice.
+
+## Tool coordination
 
 Use the Shell reference's batching guidance for ready reads and searches; keep output bounded.
 Parallelize other independent calls only when their tool contracts allow it; run hpatch
@@ -274,8 +279,20 @@ PATCH
 Literal targets own only their matched bytes. To delete a whole line, use a row target or
 include its terminator in the literal target; deleting text alone leaves the line terminator.
 For insertions, count separators already at the destination and include only the missing ones.
+Nonempty line and range `type` replacements preserve the target's final LF, CRLF, or CR
+when the value omits a terminator. Explicit terminators are authoritative. An empty
+target-bearing `type` value removes owned terminators. `add` inserts byte-exact values and
+does not synthesize newlines. A chomped body with only one empty line decodes to empty,
+so replacing a row with it deletes the row rather than making it blank.
 Authored spaces and blank lines are preserved except for language-aware formatting and
 indentation correction.
+
+Successful reports may include `advisory` lines describing newline ownership and
+decoded value endings against the immutable baseline. `preserves-ending`,
+`deletes`, `removes-ending`, `blank-before`/`blank-after`, and `joins-left` count
+affected spans. These are inspection aids, not errors: check whether the boundary
+matches your intent. They describe authored splices before neighboring edits or
+formatting; the engine does not silently adjust whitespace.
 
 An unindented heredoc body line beginning with `type ` or `add ` and ending with either
 heredoc marker is reserved as a nested opener when the marker is its sole operand or follows
@@ -299,28 +316,25 @@ relocates an exact hash only when it identifies one row. For a routed whole-line
 replacement, the router resolves that exact pre-edit target after the executor confirms
 application.
 
-Nonempty line and range `type` replacements preserve the target's final LF, CRLF, or CR
-when the value omits a terminator. Explicit terminators are authoritative. An empty
-target-bearing `type` value removes owned terminators. `add` inserts byte-exact values and
-does not synthesize newlines.
-
-Successful reports may include `advisory` lines describing newline ownership and
-decoded value endings against the immutable baseline. `preserves-ending`,
-`deletes`, `removes-ending`, `blank-before`/`blank-after`, and `joins-left` count
-affected spans. These are inspection aids, not errors: check whether the boundary
-matches your intent. They describe authored splices before neighboring edits or
-formatting; the engine does not silently adjust whitespace.
-
 Overlapping replacements or deletions and insertions strictly inside them reject. Boundary
 insertions are valid. Multiple insertions at the same boundary render in script order.
 
 Changed Go files are parsed and formatted before success. Supported Python, JavaScript, and
 TypeScript files are syntax-checked when Tree-sitter support is available; supported indentation
 corrections are automatic. Relative paths use the selected base directory when available; without
-one, relative paths reject; parents for `new` or `mv` must exist. A wholly row-stale routed
-rejection lists current `C...` command handles. Correct
-only those targets with `functions.hpatch_recover`, one handle and ordinary HPATCH/2 target per
-line:
+one, relative paths reject; parents for `new` or `mv` must exist.
+
+### Rejected-script recovery
+
+Use `functions.hpatch_recover` to repair the latest retained rejected script, preserving
+unrelated prepared edits. Choose one payload form:
+
+- For a wholly row-stale rejection, supply every listed current `C...` handle followed by
+  its corrected ordinary HPATCH/2 target.
+- For values, framing, paths, conflicting commands, or mixed corrections, use ordinary
+  target-bearing `type`/`add` mutations against retained-script text.
+
+Target-only example:
 
 ```text
 C2:abcd 37:8c2f
@@ -331,9 +345,7 @@ Put every listed target correction in one payload and use the current handles
 exactly. This shortcut preserves every other command field. Equivalent spellings
 of the same target reject before reevaluation.
 
-For values, framing, conflicting commands, or other fields, send ordinary
-target-bearing `type`/`add` mutations through `functions.hpatch_recover`. They edit
-the retained rejected-script text, not workspace files. Use the diagnostic's
+Script-text mutations edit the retained rejected script, not workspace files. Use the diagnostic's
 verified script rows or exact known literals; omit `in`, `new`, `mv`, and `rm`.
 All ordinary value forms are available, including line-framed text for protocol
 examples. For example, `type "bad value" "fixed value"` changes that exact retained

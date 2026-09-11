@@ -6,9 +6,9 @@ The root library boundary owns workspace authorization, evaluation diagnostics, 
 results, staged commit and rollback coordination, and translation for
 `REQ-GUIDE-001` and `REQ-OUTPUT-001`. Persistent Codex edit, shell, read, search, and inspection
 guidance and CTP/2 representation guidance use `contrib/codex/file-editing-instructions.md` as their
-shared reference template. The adjacent Astra and default editing-workflow files own model-specific
-editing, commentary-routing, shell-submission, planning, target-reuse, and target-acquisition
-guidance. General task autonomy, prose style, and validation policy remain host- and task-owned.
+shared reference template, including commentary routing. The adjacent Astra and default
+editing-workflow files own model-specific editing, shell-submission, planning, target-reuse,
+and target-acquisition guidance. General task autonomy, prose style, and validation policy remain host- and task-owned.
 `contrib/codex/instructions.go` renders
 the selected workflow; the router supplies each request's model and configured transport.
 Tool descriptions retain only call-local contracts and request-specific schemas. The router
@@ -103,8 +103,10 @@ Shell quoting owns whitespace and metacharacters in paths. Hcat has no multi-fil
 batch result format; the model batches reads as separate commands in one shell script.
 Rendering streams fixed-size chunks, validates UTF-8 across the complete regular file,
 and buffers only selected lines. The shared verified-row accumulator counts exact formatted
-current output with the pinned GPT-5 tokenizer, admits through the 15,000-token soft limit with
-one complete-row overshoot through 15,500, and retains current and stock rows as one pair.
+current output with the pinned GPT-5 tokenizer. Its default admits through the 15,000-token
+soft limit with one complete-row overshoot through 15,500; an explicit token budget is strict.
+Reader preview mode bounds displayed UTF-8 prefixes without changing full-source row identities.
+The accumulator retains current and stock rows as one pair.
 An omitted row seals output growth while hcat continues the existing stream for file and range
 validation.
 
@@ -117,26 +119,27 @@ pipelines, redirection, and command composition. Hgrep uses the same verified-ro
 after result deduplication and terminates ripgrep when the accumulator rejects a row.
 
 The hsymbol built-in owns verified language-token selection and verified-row rendering around one
-installed semantic query. It canonicalizes the executor cwd as its workspace, confines input and
-returned files to that workspace, and uses the same pinned parsers as inspect_file to select an
+installed semantic query. It canonicalizes the explicit workspace, or executor cwd when omitted,
+confines input and returned files to that workspace, and accepts current line numbers or verified
+rows. It uses the same pinned parsers as inspect_file to select an
 exact token before invoking the resolver. Gopls owns Go resolution at a UTF-8 byte offset;
 TypeScript 7's `tsc --lsp --stdio` owns JavaScript, TypeScript, and JSON resolution; and
 `pyright-langserver --stdio` owns Python resolution. The shared LSP client owns one process-scoped
 initialize, document-open, query, and cleanup lifecycle with UTF-16 positions. Hsymbol deduplicates
-returned rows by canonical path and line and renders canonical targets relative to the workspace
-before applying the shared verified-row accumulator. It provides the same query's semantic response
+returned rows by canonical path and line and renders canonical targets as absolute paths for an
+explicit workspace, otherwise relative to the workspace, before applying the shared verified-row accumulator. It provides the same query's semantic response
 as stock metric evidence. Definition expansion reuses inspect_file's language outline projection
 and requires the returned definition selection to match an exact supported declared-name token;
 every other definition remains one line.
 
-The inspect_file built-in owns bounded structural inspection of one workspace-relative regular
-file. It canonicalizes the executor cwd and symlink target, uses pinned Lezer parsers for Go,
-Python, Markdown, JSON, and every stable TypeScript 7 source format, and projects only navigation
-metadata. Outline `line` and `line_end` are shared verified-row identities for the inclusive span
-and are copyable HPATCH targets; the renderer still omits source text. Unsupported extensions stop after
-file metadata. A concise result shape schema supplies the embedded private guidance.
-The renderer owns the 64 KiB complete-document budget and truncates only at outline-entry
-boundaries; parser recovery remains an independent result flag.
+The inspect_file built-in owns bounded structural inspection of one regular file with ordinary
+absolute or executor-cwd-relative path resolution; Codex owns permissions. It uses pinned Lezer
+parsers for Go, Python, Markdown, JSON, and every stable TypeScript 7 source format. Outline
+`line` and `line_end` are shared verified-row identities for the inclusive span and are copyable
+HPATCH targets. The default projection contains navigation metadata; explicit source selection
+adds bounded exact syntax for matching names or JSON pointers. Unsupported extensions stop after
+file metadata. The renderer owns the 64 KiB complete-document budget, per-source byte bounds,
+and explicit truncation; parser recovery remains an independent result flag.
 
 The generated built-in JavaScript and runtime host are materialized inside the authenticated
 process snapshot. The directly launched shell child verifies that snapshot before loading an
