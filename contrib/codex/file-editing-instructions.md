@@ -160,6 +160,13 @@ Native-only clients reject batches; submit separate calls there.
 A runtime failure may leave earlier statements' effects in place. Inspect affected state before
 retrying; a failed call does not imply rollback.
 
+A retained reference is thread-private, not a durable workspace artifact. Its
+`retention.scheduled_expiry` is the original UTC timer deadline; router shutdown
+can end its lifetime sooner. Reads and edits do not renew it. Active read/edit
+operations may delay deletion, not grant a new lifetime. Save source as an ordinary
+workspace file when it must survive the thread. Replay evidence is not an executable
+retained reference.
+
 A retained result includes `retained: true` and a `script_ref`. Read the source with
 `hcat @shell/<reference>`, edit it with hpatch, or rerun its current content with a shell call
 containing only `#!script=@shell/<reference>`. A HPATCH script using an `@shell/` path must use

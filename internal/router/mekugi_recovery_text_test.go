@@ -118,7 +118,7 @@ func TestTextRecoveryThroughRouterTranslationAndAncestry(t *testing.T) {
 
 func TestTextRecoveryUsesPrivateRetainedShellDispatch(t *testing.T) {
 	transform, proxy, _, _ := newMekugiTestTransform(t, newInProcessMekugiTranslator(t.TempDir()))
-	if _, ok := proxy.retainShell(transform.shellDirectory, "prepared", "printf old\n"); !ok {
+	if _, _, ok := proxy.retainShell(transform.shellDirectory, "prepared", "printf old\n"); !ok {
 		t.Fatal("retain shell")
 	}
 	first, err := transform.translate("original", "in @shell/prepared\ntype \"missing\" \"new\"\n", nil)

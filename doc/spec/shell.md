@@ -226,6 +226,22 @@ Missing, cyclic, traversing, and symlink-escaping references reject without exec
 Invalid retention IDs or existing artifact names yield `retained: false` without overwriting
 files or changing execution of an otherwise valid shell call.
 
+When retention succeeds, the same result includes `retention` metadata:
+`scope: "thread"`, `durable: false`, an RFC 3339 UTC `scheduled_expiry`,
+`ends_on_router_shutdown: true`, and `reads_or_edits_extend_lifetime: false`.
+The timestamp is the actual timer deadline set when the router retains the source,
+not a fresh lifetime beginning when execution finishes or output is delivered.
+Expiry may defer physical deletion for active router-side read/edit leases.
+A delayed result can therefore describe a reference whose scheduled expiry has
+already passed. Replaying a call preserves that deadline rather than renewing it.
+
+These are executable-source conveniences, not durable workspace artifacts.
+Saving source as an ordinary workspace file uses the normal file-editing workflow
+and is independent of thread cleanup. Durable replay may retain original call
+evidence, but that does not keep an expired `@shell/` reference executable. A new
+rerun can retain another artifact with its own deadline; reads and edits do not
+renew the old artifact. Failed or unrequested retention exposes no expiry metadata.
+
 Thread runtime locators are flat `mekugi-runtime-<thread-id>` symlinks below the runtime
 directory. The PATH-installed helper follows that name. Active retained scripts occupy sibling
 `mekugi-scripts-<thread-id>` directories.
@@ -413,3 +429,8 @@ Acceptance:
 27. A stop-on-nonzero batch waits for the first program's terminal exit and leaves
     later programs unstarted; ordinary batches still continue. Both report policy
     and exact started/unstarted counts, including host failures and retained reruns.
+
+28. Successful retention reports the original timer deadline and thread-private,
+    non-durable scope alongside the existing reference, without changing native
+    fields. Replay keeps the deadline; reads do not renew it; failed retention
+    supplies no fabricated expiry.

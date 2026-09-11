@@ -330,9 +330,11 @@ and omitted-byte counts. Without preview mode, rows remain exact. A caller's
 token ceiling is strict; omitted records are reported as incomplete, not silently
 cut. See the [reader contract](doc/spec/read.md) for ranges and bounds.
 
-Retained programs use thread-local `@shell/` references and expire after one
-hour by default. They are not workspace files and are removed on router
-shutdown. See the [shell reference](doc/spec/shell.md) for retention, editing,
+Retained programs use thread-local `@shell/` references. Their result metadata
+reports the original scheduled expiry and non-durable scope. They expire after
+one hour by default or on router shutdown; reads and edits do not renew them.
+Active operations can delay cleanup. Save source as an ordinary workspace file
+when it needs to survive the thread. See the [shell reference](doc/spec/shell.md) for retention, editing,
 reruns, and interpreter selection.
 
 ## Metrics

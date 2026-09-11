@@ -1242,9 +1242,15 @@ func (t *mekugiResponseTransform) translateRegisteredTool(contribution toolContr
 	if translation.Carrier.RetainInput != nil {
 		resultMetadata = map[string]json.RawMessage{"retained": mustMarshalJSON(false)}
 		if *translation.Carrier.RetainInput {
-			reference, retained := t.proxy.retainShell(t.shellDirectory, callID, effectiveInput)
+			reference, expiresAt, retained := t.proxy.retainShell(t.shellDirectory, callID, effectiveInput)
 			resultMetadata["retained"] = mustMarshalJSON(retained)
 			if retained {
+				resultMetadata["retention"] = mustMarshalJSON(map[string]any{
+					"scope": "thread", "durable": false,
+					"scheduled_expiry":               expiresAt.UTC().Format(time.RFC3339Nano),
+					"ends_on_router_shutdown":        true,
+					"reads_or_edits_extend_lifetime": false,
+				})
 				resultMetadata["script_ref"] = mustMarshalJSON(reference)
 			}
 		}

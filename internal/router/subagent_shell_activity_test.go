@@ -19,7 +19,7 @@ func TestSubagentShellExcerptsJSONAndSSE(t *testing.T) {
 				map[string]any{"type": "function_call_output", "call_id": "run", "output": "Chunk ID: abc\nWall time: 1 seconds\nProcess running with session ID 26369\nFinal output:\n"},
 			}
 			child, _ := prepareActivityTest(t, proxy, "child", "c", "r", "/root/worker", input)
-			if _, ok := proxy.retainShell(child.shellDirectory, "stored", command); !ok {
+			if _, _, ok := proxy.retainShell(child.shellDirectory, "stored", command); !ok {
 				t.Fatal("retain source")
 			}
 			calls := []map[string]any{
@@ -132,7 +132,7 @@ func TestShellBatchActivityExcerpt(t *testing.T) {
 		t.Fatalf("batch excerpt exposes framing instead of source: %q", got)
 	}
 	transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
-	if _, ok := proxy.retainShell(transform.shellDirectory, "batch-excerpt", source); !ok {
+	if _, _, ok := proxy.retainShell(transform.shellDirectory, "batch-excerpt", source); !ok {
 		t.Fatal("retain batch")
 	}
 	if got := transform.shellActivityExcerpt("#!script=@shell/batch-excerpt"); got != "printf one…" {
