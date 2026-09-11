@@ -281,6 +281,11 @@ Acceptance:
 12. Central model instructions keep agent-authored progress on supported tool calls and reserve
     standalone assistant commentary messages for router output.
 
+Explicit in-tool use has debug-only [feature evidence](router.md#feature-usage-debug-evidence).
+Authored fields, Code Mode lowering, runtime acceptance, and response preparation are separate
+observations. Replay provenance, generated-looking IDs, automatic notices, and enabled runtime
+descriptors alone do not establish authored use.
+
 ### Critical session errors
 
 Router failures that block work or require action produce bounded, actionable

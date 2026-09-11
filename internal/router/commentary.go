@@ -235,7 +235,18 @@ func (t *mekugiResponseTransform) transformStructuredCommentary(item map[string]
 		commentaryMessageIDs: messageIDs,
 	})
 	item["arguments"] = mustMarshalJSON(extracted.arguments)
-	return t.operationCommentaryMessage(messageID, extracted.text), nil
+	if extracted.text != "" {
+		t.featureTrace.record("commentary", "tool_field", "authored", "observed", callID, messageID)
+	}
+	message := t.operationCommentaryMessage(messageID, extracted.text)
+	if extracted.text != "" {
+		outcome := "suppressed"
+		if message != nil {
+			outcome = "prepared"
+		}
+		t.featureTrace.record("commentary", "tool_field", "render", outcome, callID, messageID)
+	}
+	return message, nil
 }
 
 func (p *mekugiProxy) drainCommentarySession(sessionID, threadID string) []publishedCommentary {
@@ -323,10 +334,22 @@ func (p *mekugiProxy) addCommentaryMessageID(sessionID, threadID, callID, messag
 	return p.rememberBatch(sessionID, map[string]mekugiHistory{callID: history}) == nil
 }
 
-func (t *mekugiResponseTransform) runtimeCommentaryMessage(publication publishedCommentary) map[string]json.RawMessage {
+func (t *mekugiResponseTransform) runtimeCommentaryMessage(publication publishedCommentary) (message map[string]json.RawMessage) {
 	if publication.text == "" {
 		return nil
 	}
+	defer func() {
+		source := "shell"
+		if publication.callID != "" {
+			source = "code_mode"
+		}
+		outcome := "suppressed"
+		if message != nil {
+			outcome = "prepared"
+		}
+		t.featureTrace.record("commentary", source, "render", outcome, publication.callID, publication.messageID)
+	}()
+
 	if t.proxy.replayStore != nil && publication.callID != "" {
 		// A completed call may have left the bounded memory cache while its
 		// authenticated progress subscription is still alive.
@@ -342,7 +365,7 @@ func (t *mekugiResponseTransform) runtimeCommentaryMessage(publication published
 		history.commentaryMessageIDs = append(history.commentaryMessageIDs, publication.messageID)
 		t.local[publication.callID] = history
 	}
-	message := assistantCommentaryMessage(publication.messageID, publication.text)
+	message = assistantCommentaryMessage(publication.messageID, publication.text)
 	if len(t.retainCommentary(message)) == 0 {
 		return nil
 	}

@@ -67,10 +67,70 @@ for automatic successors. A prepared snapshot does not claim successful provider
 Grok records precede Chat Completions conversion. No ordinary user messages,
 tool call bodies, or authentication headers are exported. Router diagnostics record lifecycle
 and parsed-request outcome/phase/status, plus a safe diagnostic code and the notice's diagnostic
-reference for failures. Forwarding failures classify known wrapped transport errors without
+reference for failures. They also record versioned, allowlisted feature observations as specified
+below, without retaining feature payloads. Forwarding failures classify known wrapped transport errors without
 exporting addresses, URLs, WebSocket close reasons, or arbitrary error text. Debug files remain
 separate from sanitized metrics/capture. Initialization failure prevents launch; subsequent
 debug write failures are surfaced on exit without changing request execution.
+
+### Feature-usage debug evidence
+
+`router.jsonl` MUST support `event: "feature_usage"` with `schema_version: 1`, fixed
+`feature`, `source`, `stage`, and `outcome` categories, and a UTC timestamp. The
+`router_start` event MUST advertise `feature_usage_schema: 1` and
+`feature_usage_features: ["commentary"]`. Missing coverage markers in older logs mean
+unobserved, not zero use. An interrupted log or a debug write failure cannot establish
+complete coverage.
+
+Feature records MAY include `request_id`, `thread_id`, `session_id`, `call_id`, and
+`message_id` for correlation. Each retained identity MUST be at most 256 ASCII letters,
+digits, `-`, `_`, `.`, `:`, or `/`, and MUST NOT contain `://`. Unsafe identities MUST
+be omitted without affecting execution. No feature text, argument, script, token, URL, header, arbitrary attribute,
+or error may enter these records. Category combinations MUST be allowlisted by the
+debug owner. Future features extend that allowlist and the advertised coverage, not
+the raw-data surface or capture metrics.
+
+The first instrumented feature is `commentary`:
+
+- `source: tool_field`, `stage: authored`, `outcome: observed`: a new eligible call
+  contains a valid nonblank authored commentary field. Omitted, blank, invalid, and
+  non-router-owned fields do not count. Repeated completed-item/terminal observations
+  within one response transform MUST NOT produce new authored records. Normal
+  provider-bound input replay emits no usage records. If a provider re-emits a call in
+  a later response, it is another observation of that call, not proof of another use;
+  consumers deduplicate authored observations by thread and call ID.
+
+- `source: code_mode`, `stage: lowering`: a new carrier contains a recognized reserved
+  awaited commentary call. `prepared` means a publisher route was created;
+  `unavailable` means lowering used the existing no-op fallback. This records one
+  observation per carrier, not per expression, and does not prove expression execution.
+- `source: shell` or `code_mode`, `stage: publication`: an authenticated nonempty
+  runtime submission reached the broker. Outcomes are `accepted`, `blank` (whitespace),
+  `oversized` (rendered size), or `capacity`. Empty completion signals are excluded.
+  Malformed, oversized HTTP bodies and unauthorized requests never reach this boundary
+  and MUST NOT count as feature usage. Shell commands that cannot discover or reach
+  a publisher remain unobserved. Successful HTTP status alone is not acceptance.
+- `stage: render`, with the originating source: `prepared` means commentary passed
+  provenance checks and was prepared for a response; `suppressed` means it did not.
+  Accepted publications and prepared messages share `message_id`. Neither stage proves
+  that the client received or displayed the message.
+
+Request-bound observations use the same request ID as the existing debug request log.
+Runtime publication has no inferred originating request or public routing-session ID;
+shell publications also have no inferred tool-call ID. Runtime records use the route's
+originating thread when known. The broker's internal replay key is not a public session
+and MUST NOT be exported. Rendering uses the consuming request's identity, including
+its public routing session, and joins accepted publications through message ID. Consumers
+MUST select a stage rather than summing stages as independent feature uses. Rendering
+can be reconsidered during response reconstruction, so consumers MUST deduplicate it
+by message ID. Automatic usage reports, subagent activity copies, critical notices, and
+standalone provider commentary MUST NOT be classified as explicit in-tool usage.
+
+Evidence is opt-in through `--debug`, remains in the existing operational log, and
+shares its serialized writes and shutdown error reporting. It MUST NOT add a capture
+callback, metric counter, new listener, or execution dependency. Tests MUST cover JSON
+and SSE, runtime publication, repeated observations, excluded content, suppression,
+and auxiliary write failure.
 
 Acceptance:
 

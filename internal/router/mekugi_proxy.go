@@ -210,6 +210,7 @@ type mekugiPendingCall struct {
 }
 
 type mekugiResponseTransform struct {
+	featureTrace          featureUsageTrace
 	ctx                   context.Context
 	proxy                 *mekugiProxy
 	sessionID             string
