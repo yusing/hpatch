@@ -114,19 +114,26 @@ func TestChildProviderCommentaryForwardsWithoutChangingHistory(t *testing.T) {
 				"content": []any{map[string]any{"type": "output_text", "text": "Substantive child answer"}}}
 			payload := mustTestJSON(t, map[string]any{"status": "completed", "output": []any{progress, answer}})
 			if stream {
-				for _, item := range []any{progress, answer} {
+				for i, item := range []any{progress, answer} {
 					event := mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": item})
 					events, err := child.TransformSSE(event)
-					if err != nil || len(events) != 1 || !bytes.Equal(events[0], event) {
+					// Progress remains live; the answer waits for the terminal.
+					if err != nil || len(events) != 1-i || i == 0 && !bytes.Equal(events[0], event) {
 						t.Fatalf("child event changed: %s, %v", events, err)
 					}
+
 				}
 				events, err := child.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.completed", "response": json.RawMessage(payload)}))
-				if err != nil || len(events) != 1 {
+				if err != nil || len(events) != 2 {
 					t.Fatalf("child terminal changed: %s, %v", events, err)
 				}
+				answerEvent := mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": answer})
+				if !bytes.Equal(events[0], answerEvent) {
+					t.Fatalf("buffered child answer changed: %s", events[0])
+				}
+
 				var terminal struct{ Response json.RawMessage }
-				if err := json.Unmarshal(events[0], &terminal); err != nil || !bytes.Equal(terminal.Response, payload) {
+				if err := json.Unmarshal(events[1], &terminal); err != nil || !bytes.Equal(terminal.Response, payload) {
 					t.Fatalf("child terminal result changed: %s, %v", events, err)
 				}
 			} else {

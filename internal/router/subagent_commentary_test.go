@@ -111,45 +111,6 @@ func TestTokenUsageCommentaryUsesSharedObservationWithoutReplacingTerminalMessag
 	}
 }
 
-func TestSubagentStreamingUsageDoesNotBecomeAStandaloneResult(t *testing.T) {
-	metadata := codexTurnMetadata{SubagentKind: threadSpawnSubagentKind}
-	transform, _, _ := newSubagentCommentaryTestTransformWithMetadata(t, nil, metadata)
-	terminal := mustTestJSON(t, map[string]any{
-		"type": "response.completed",
-		"response": map[string]any{
-			"id": "resp-child", "status": "completed",
-			"output": []any{map[string]any{
-				"type": "message", "id": "msg-child-final", "role": "assistant", "status": "completed",
-				"content": []any{map[string]any{"type": "output_text", "text": "child result"}},
-			}},
-			"usage": map[string]any{
-				"input_tokens": 20, "output_tokens": 5,
-				"input_tokens_details":  map[string]any{"cached_tokens": 12},
-				"output_tokens_details": map[string]any{"reasoning_tokens": 3},
-			},
-		},
-	})
-	observeTestResponseUsage(t, transform, terminal, true)
-	events, err := transform.TransformSSE(terminal)
-	if err != nil || len(events) != 1 {
-		t.Fatalf("terminal events = %q, error = %v", events, err)
-	}
-	var envelope struct {
-		Response struct {
-			Output []map[string]json.RawMessage `json:"output"`
-		} `json:"response"`
-	}
-	if err := json.Unmarshal(events[0], &envelope); err != nil || len(envelope.Response.Output) != 2 {
-		t.Fatalf("terminal event = %s, error = %v", events[0], err)
-	}
-	if text := commentaryText(t, envelope.Response.Output[0]); text != "Tokens:\nInput: `20`\nCached input: `12`\nOutput: `5`\nReasoning: `3`" {
-		t.Fatalf("usage commentary = %q", text)
-	}
-	if jsonString(envelope.Response.Output[1], "id") != "msg-child-final" {
-		t.Fatalf("terminal message = %s", events[0])
-	}
-}
-
 func TestSubagentResponseCommentaryDoesNotRepeat(t *testing.T) {
 	responseText := "result"
 	agentMessage := map[string]any{

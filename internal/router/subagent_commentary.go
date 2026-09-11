@@ -132,13 +132,78 @@ func subagentResponse(item map[string]json.RawMessage) (text, sender string, ok 
 
 // tokenUsageCommentary reports usage only alongside a completed substantive answer.
 func tokenUsageCommentary(response []byte, counts tokenCounts, observed bool, terminalStatus string) map[string]json.RawMessage {
+	var body struct {
+		Output []map[string]json.RawMessage `json:"output"`
+	}
+	if json.Unmarshal(response, &body) != nil {
+		return nil
+	}
+	substantive := false
+	for _, item := range body.Output {
+		if blocksTokenUsage(item) {
+			return nil
+		}
+		substantive = substantive || isSubstantiveAnswer(item)
+	}
+	return formatTokenUsageCommentary(response, counts, observed, terminalStatus, substantive)
+}
+
+func isFinalAnswerMessage(item map[string]json.RawMessage) bool {
+	phase := jsonString(item, "phase")
+	return jsonString(item, "type") == "message" && jsonString(item, "role") == "assistant" &&
+		(phase == "" || phase == "final_answer")
+}
+
+func isSubstantiveAnswer(item map[string]json.RawMessage) bool {
+	if !isFinalAnswerMessage(item) {
+		return false
+	}
+	if status := jsonString(item, "status"); status != "" && status != "completed" {
+		return false
+	}
+	var content []map[string]json.RawMessage
+	if json.Unmarshal(item["content"], &content) != nil {
+		return false
+	}
+	for _, part := range content {
+		if jsonString(part, "type") == "output_text" && strings.TrimSpace(jsonString(part, "text")) != "" ||
+			jsonString(part, "type") == "refusal" && strings.TrimSpace(jsonString(part, "refusal")) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// Client dispatches and unfinished hosted calls are not final-answer turns.
+func blocksTokenUsage(item map[string]json.RawMessage) bool {
+	switch jsonString(item, "type") {
+	case "function_call", "custom_tool_call", "computer_call", "local_shell_call", "apply_patch_call", "mcp_approval_request":
+		return true
+	case "tool_search_call":
+		if jsonString(item, "execution") != "server" {
+			return true
+		}
+	case "shell_call":
+		var environment map[string]json.RawMessage
+		if json.Unmarshal(item["environment"], &environment) != nil || jsonString(environment, "type") != "container_reference" {
+			return true
+		}
+	}
+	if strings.HasSuffix(jsonString(item, "type"), "_call") {
+		status := jsonString(item, "status")
+		return status != "completed" && status != "failed"
+	}
+	return false
+}
+
+func formatTokenUsageCommentary(response []byte, counts tokenCounts, observed bool, terminalStatus string, substantive bool) map[string]json.RawMessage {
+
 	if !observed {
 		return nil
 	}
 	var identity struct {
-		ID     string                       `json:"id"`
-		Status string                       `json:"status"`
-		Output []map[string]json.RawMessage `json:"output"`
+		ID     string `json:"id"`
+		Status string `json:"status"`
 	}
 
 	if json.Unmarshal(response, &identity) != nil || identity.ID == "" {
@@ -150,49 +215,6 @@ func tokenUsageCommentary(response []byte, counts tokenCounts, observed bool, te
 	}
 	if status != "completed" {
 		return nil
-	}
-	substantive := false
-	for _, item := range identity.Output {
-		// Client tool items are dispatch requests even when their item status is
-		// completed. Hosted tools can finish before the accompanying final answer.
-		switch jsonString(item, "type") {
-		case "function_call", "custom_tool_call", "computer_call", "local_shell_call", "apply_patch_call", "mcp_approval_request":
-			return nil
-		case "tool_search_call":
-			if jsonString(item, "execution") != "server" {
-				return nil
-			}
-		case "shell_call":
-			var environment map[string]json.RawMessage
-			if json.Unmarshal(item["environment"], &environment) != nil || jsonString(environment, "type") != "container_reference" {
-				return nil
-			}
-		}
-		if strings.HasSuffix(jsonString(item, "type"), "_call") {
-			if callStatus := jsonString(item, "status"); callStatus != "completed" && callStatus != "failed" {
-				return nil
-			}
-		}
-
-		if jsonString(item, "type") != "message" || jsonString(item, "role") != "assistant" {
-			continue
-		}
-		if phase := jsonString(item, "phase"); phase != "" && phase != "final_answer" {
-			continue
-		}
-		if itemStatus := jsonString(item, "status"); itemStatus != "" && itemStatus != "completed" {
-			continue
-		}
-		var content []map[string]json.RawMessage
-		if json.Unmarshal(item["content"], &content) != nil {
-			continue
-		}
-		for _, part := range content {
-			if jsonString(part, "type") == "output_text" && strings.TrimSpace(jsonString(part, "text")) != "" ||
-				jsonString(part, "type") == "refusal" && strings.TrimSpace(jsonString(part, "refusal")) != "" {
-				substantive = true
-			}
-		}
 	}
 	if !substantive {
 		return nil

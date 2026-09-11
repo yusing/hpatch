@@ -114,12 +114,17 @@ accumulate by stable originating thread, independently of routing-session and co
 Root and child totals remain separate, and repeated terminal observations within a request count once.
 `thread_usage.go` owns bounded, non-evicting totals until router shutdown; ancestry and author
 metadata do not own token attribution. The
-projection precedes provider-authored output so it cannot replace a collaboration result. The
-streaming path does not emit a later standalone usage item for a subagent turn because the Codex
-collaboration runtime selects the last completed assistant item as the child result. The provider
-usage object remains authoritative; the projection remains in the terminal response object and
-does not participate in model-origin output accounting. It remains present in transport byte
-and token totals. `internal/commentaryid` owns the reserved operation/runtime and subagent/usage
+projection precedes the provider-authored final answer so it cannot replace a collaboration result. The
+streaming path buffers final-answer events in `final_answer_stream.go`, while tools and progress
+continue streaming. Completed streamed items determine eligibility independently of the terminal
+output snapshot. At successful completion, standalone usage precedes the unchanged buffered answer
+and terminal, because Codex selects the last completed assistant item as the child result.
+Missing usage and failed completion release the answer without a notice. The transport drains
+buffered events on EOF or failure, including through composed transforms. The 64 MiB response
+buffer limit disables auxiliary usage and releases output rather than rejecting a large answer.
+The provider usage object remains authoritative; the streaming terminal output is not augmented
+with usage, and the projection does not participate in model-origin output accounting. It remains
+present in transport byte and token totals. `internal/commentaryid` owns the reserved operation/runtime and subagent/usage
 message ID namespaces shared by rendering, replay, and capture classification; message text and
 phase do not establish generated provenance.
 

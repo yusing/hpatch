@@ -217,26 +217,31 @@ func TestChildThreadCommentaryPreservesSubstantiveStreamResult(t *testing.T) {
 	transform, proxy := newRuntimeCommentaryTransform(t)
 	transform.subagentTurn = true
 	answer := map[string]any{"type": "message", "id": "answer", "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": "Final answer."}}}
-	if events, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": answer})); err != nil || len(events) != 1 {
+	if events, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": answer})); err != nil || len(events) != 0 {
 		t.Fatalf("answer delivery = %s, %v", events, err)
 	}
 	token := proxy.commentary.subscribeThread(transform.historySessionID, transform.shellThreadID, "")
 	proxy.commentary.publish(token, "child progress", false)
 	events, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.completed", "response": map[string]any{"status": "completed", "output": []any{answer}}}))
-	if err != nil || len(events) != 1 {
+	if err != nil || len(events) != 2 {
 		t.Fatalf("terminal emitted standalone commentary: %s, %v", events, err)
 	}
+	answerEvent := mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": answer})
+	if !bytes.Equal(events[0], answerEvent) {
+		t.Fatalf("buffered answer changed: %s", events[0])
+	}
+
 	var terminal struct {
 		Type     string `json:"type"`
 		Response struct {
 			Output []map[string]json.RawMessage `json:"output"`
 		} `json:"response"`
 	}
-	if err := json.Unmarshal(events[0], &terminal); err != nil {
+	if err := json.Unmarshal(events[1], &terminal); err != nil {
 		t.Fatal(err)
 	}
 	if terminal.Type != "response.completed" || len(terminal.Response.Output) != 2 || jsonString(terminal.Response.Output[1], "id") != "answer" || !bytes.Contains(terminal.Response.Output[0]["content"], []byte("child progress")) {
-		t.Fatalf("child terminal order = %s", events[0])
+		t.Fatalf("child terminal order = %s", events[1])
 	}
 }
 

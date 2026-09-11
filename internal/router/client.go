@@ -87,6 +87,31 @@ func (chain responseTransformerChain) TransformSSE(payload []byte) ([][]byte, er
 	return transformed, nil
 }
 
+// Optional draining keeps transforms without buffered answer events unchanged.
+func flushResponseSSE(transformer responseTransformer) ([][]byte, error) {
+	if flusher, ok := transformer.(interface{ FlushSSE() ([][]byte, error) }); ok {
+		return flusher.FlushSSE()
+	}
+	return nil, nil
+}
+
+func (chain responseTransformerChain) FlushSSE() ([][]byte, error) {
+	pending, err := flushResponseSSE(chain.first)
+	if err != nil {
+		return nil, err
+	}
+	var visible [][]byte
+	for _, payload := range pending {
+		events, err := chain.second.TransformSSE(payload)
+		if err != nil {
+			return visible, err
+		}
+		visible = append(visible, events...)
+	}
+	tail, err := flushResponseSSE(chain.second)
+	return append(visible, tail...), err
+}
+
 func (chain responseTransformerChain) Finish(streamEvent bool) error {
 	return errors.Join(chain.first.Finish(streamEvent), chain.second.Finish(streamEvent))
 }
@@ -545,8 +570,23 @@ func copyJSONTransformed(writer io.Writer, reader io.Reader, transformer respons
 	return terminalState, nil
 }
 
-func copySSETransformed(writer io.Writer, reader io.Reader, transformer responseTransformer, observeUsage func(tokenCounts)) (responseTerminalState, error) {
+func copySSETransformed(writer io.Writer, reader io.Reader, transformer responseTransformer, observeUsage func(tokenCounts)) (state responseTerminalState, resultErr error) {
+	defer func() {
+		if errors.Is(resultErr, errResponseWrite) {
+			return // The downstream is no longer writable.
+		}
+		pending, err := flushResponseSSE(transformer)
+		resultErr = errors.Join(resultErr, err)
+		for _, payload := range pending {
+			_, err := writeSSEEvent(writer, []string{"data: " + string(payload) + "\n"}, "\n", nil, nil)
+			if err != nil {
+				resultErr = errors.Join(resultErr, err)
+				return
+			}
+		}
+	}()
 	buffered := bufio.NewReader(reader)
+
 	if err := consumeOptionalUTF8BOM(buffered); err != nil {
 		return responseTerminalUnknown, err
 	}

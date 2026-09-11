@@ -181,7 +181,7 @@ tool outputs, and inter-agent messages. A response already accompanied by its de
 commentary is not projected again.
 
 A completed root-agent or subagent final answer with provider usage includes one commentary
-message before the provider-authored output. It uses a `Tokens:` heading followed by separate
+message before the provider-authored final answer. It uses a `Tokens:` heading followed by separate
 `Input:`, `Cached input:`, `Output:`, and `Reasoning:` lines, with each numeric value formatted
 as inline code. Labels are written in full, not abbreviated. Intermediate tool-call responses, commentary-only responses,
 and failed or incomplete responses do not report tokens. A final answer uses the `final_answer`
@@ -193,9 +193,17 @@ these totals without producing notices. Root and child threads remain separate; 
 routing-session changes do not reset totals. Repeated terminal observations within one request
 count once. Totals remain in memory until router shutdown, with at most 256 tracked threads;
 capacity exhaustion preserves existing totals and suppresses new-thread reports. Arithmetic
-overflow suppresses reporting for the affected thread rather than showing a partial total. A streamed subagent response carries usage
-in its terminal response object without emitting a later standalone item that collaboration
-could mistake for the child result. Usage commentary cannot become the terminal substantive result.
+overflow suppresses reporting for the affected thread rather than showing a partial total.
+For root and subagent streams, final-answer item events are buffered until the terminal.
+A successful completion emits usage as `response.output_item.done`, then the unchanged buffered
+answer events, then the terminal event. Eligibility comes from streamed completed items, even
+when the terminal `response.output` is empty. Streaming notices require a Codex-consumable text
+answer; unsupported content such as refusal parts passes through without a token notice.
+The terminal output snapshot is not augmented with usage. Tool calls and progress commentary continue streaming normally. Missing usage, failed or
+incomplete completion, and upstream interruption flush the buffered answer without a token notice.
+Buffering is capped at 64 MiB per response; exceeding that budget flushes the answer and disables
+usage commentary for that response without rejecting provider output.
+Usage commentary cannot become the terminal substantive result.
 
 Child operation and runtime commentary carries a ``[`/root/worker`] `` prefix from the request’s
 canonical `agent_name` when `subagent_kind` identifies a child. Root and older unnamed clients
@@ -262,7 +270,7 @@ Acceptance:
 5. Router-authored messages are removed from every later provider request and are not repeated when
    the matching message is already present in Codex history.
 6. A completed root-agent or subagent final answer with provider usage reports input, cached input,
-   output, and reasoning tokens exactly once before provider-authored output, using full labels
+   output, and reasoning tokens exactly once before provider-authored final-answer output, using full labels
    on separate lines and inline-code numeric values. Intermediate tool calls and commentary,
    failed responses, and incomplete responses remain silent. The terminal substantive result,
    provider usage object, and captured metrics remain unchanged.
