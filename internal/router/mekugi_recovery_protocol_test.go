@@ -44,6 +44,21 @@ func TestRecoveryCommandsBindCompleteFramesAndBaseline(t *testing.T) {
 	}
 }
 
+func TestRecoveryCommandsRejectTruncatedDigestCollision(t *testing.T) {
+	// These different baselines collide under the former four-hex-digit binding.
+	old := recoveryCommands("in file255.txt\ntype 1:ffff \"new\"\n")
+	fresh := recoveryCommands("in file397.txt\ntype 1:ffff \"new\"\n")
+	if old[1].handle[:7] != fresh[1].handle[:7] {
+		t.Fatal("fixture no longer exercises a short-digest collision")
+	}
+	if _, err := resolveRecoveryCommand(fresh, old[1].handle); err == nil {
+		t.Fatal("accepted handle from a different baseline with a colliding prefix")
+	}
+	if _, err := resolveRecoveryCommand(fresh, fresh[1].handle); err != nil {
+		t.Fatalf("current handle rejected: %v", err)
+	}
+}
+
 func TestRecoverScriptRetargetsBatchAndPreservesOtherFields(t *testing.T) {
 	script := "in first.go\n" +
 		"add 1:aaaa <<PATCH\n" +
@@ -254,6 +269,7 @@ func TestRecoveryGrammarContainsHandleAndOrdinaryTarget(t *testing.T) {
 	for _, want := range []string{
 		`start: _blank_line* (corrections | mutations) _blank_line*`,
 		`recovery: HANDLE SP target`,
+		`HANDLE: /C[1-9][0-9]*:[0-9a-f]{64}/`,
 	} {
 		if !strings.Contains(mekugiRecoveryGrammar, want) {
 			t.Fatalf("recovery grammar does not contain %q", want)

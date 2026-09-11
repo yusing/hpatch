@@ -176,7 +176,7 @@ func TestInstructionsAcquireAndReuseVerifiedTargets(t *testing.T) {
 		"unchanged saved rows remain valid even when edits shifted their line numbers",
 		"On later calls, target previously changed content with a returned final-state row, a\nconfirmed mapping, or exact unanchored current text; never reconstruct a row or range endpoint.",
 		`type "return oldResult, nil" "return newResult, nil"`,
-		`C3:bcde "return oldResult, nil"`,
+		`C3:bcde0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab "return oldResult, nil"`,
 		"exact known target text spans logical lines or includes a trailing LF",
 	} {
 		if !strings.Contains(InstructionsForModel("", true), required) {

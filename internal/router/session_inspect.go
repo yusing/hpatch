@@ -67,6 +67,7 @@ type sessionInspectionItem struct {
 	Type      string          `json:"type"`
 	CallID    string          `json:"call_id"`
 	Name      string          `json:"name"`
+	Namespace string          `json:"namespace"`
 	Input     string          `json:"input"`
 	Arguments string          `json:"arguments"`
 	Output    json.RawMessage `json:"output"`
@@ -280,6 +281,7 @@ func readSessionInspection(ctx context.Context, path string, observations *sessi
 			if json.Unmarshal(envelope.Payload, &metadata) != nil {
 				return nil, fmt.Errorf("session line %d: invalid workspace metadata", line)
 			}
+			// id matches CODEX_THREAD_ID; session_id may instead name a fork's root thread.
 			if envelope.Type == "session_meta" && observations != nil && metadata.ID != "" {
 				if observations.ThreadID != "" && observations.ThreadID != metadata.ID {
 					return nil, errors.New("session has conflicting thread identities")
@@ -331,6 +333,7 @@ func readSessionInspection(ctx context.Context, path string, observations *sessi
 		call := &calls[index]
 		if isCall {
 			if call.hasCall && (call.item.Type != item.Type || call.item.Name != item.Name ||
+				call.item.Namespace != item.Namespace ||
 				call.item.Input != item.Input || call.item.Arguments != item.Arguments) {
 				return nil, fmt.Errorf("session line %d: conflicting call identity", line)
 			}
@@ -345,7 +348,7 @@ func readSessionInspection(ctx context.Context, path string, observations *sessi
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, errors.New("cannot read session or line exceeds 32 MiB")
+		return nil, fmt.Errorf("cannot read session (maximum line size %d bytes): %w", maxReplayRecordBytes, err)
 	}
 	if reader.N == 0 {
 		return nil, errors.New("session exceeds 64 MiB")
@@ -355,7 +358,7 @@ func readSessionInspection(ctx context.Context, path string, observations *sessi
 
 func inspectSessionCall(call sessionInspectionCall, record replayRecord, found bool, field string, limit int) (inspectedCall, error) {
 	result := inspectedCall{
-		CallID: call.item.CallID, Tool: call.item.Name, Replay: "missing",
+		CallID: call.item.CallID, Tool: qualifiedToolName(call.item.Namespace, call.item.Name), Replay: "missing",
 		Outcome: "unavailable", Text: make(map[string]inspectedText),
 	}
 	values := map[string]string{"script": sessionInspectionPayload(call.item)}
@@ -379,9 +382,11 @@ func inspectSessionCall(call sessionInspectionCall, record replayRecord, found b
 			kind := history.effectiveCarrierKind()
 			carrierMatches := call.item.Type == carrierItemType(kind) &&
 				call.item.Name == history.carrierName &&
+				call.item.Namespace == jsonString(history.upstreamItem, "namespace") &&
 				sessionInspectionPayload(call.item) == history.carrierInput()
 			originalMatches := call.item.Type == jsonString(history.upstreamItem, "type") &&
 				call.item.Name == jsonString(history.upstreamItem, "name") &&
+				call.item.Namespace == jsonString(history.upstreamItem, "namespace") &&
 				sessionInspectionPayload(call.item) == jsonString(history.upstreamItem, carrierPayloadFieldForItem(call.item.Type))
 			if !carrierMatches && !originalMatches {
 				return result, fmt.Errorf("call %q: replay payload does not match session", call.item.CallID)
@@ -411,7 +416,7 @@ func inspectSessionCall(call sessionInspectionCall, record replayRecord, found b
 		}
 		// Use the same exact report confirmation as request-visible replay.
 		// A translated patch alone is not evidence that the host applied it.
-		if history.translationError == "" && history.report != "" {
+		if history.translationError == "" && !history.applied && !history.alreadySatisfied && history.report != "" {
 			for _, output := range call.outputs {
 				var text string
 				if output.Type == carrierOutputItemType(history.effectiveCarrierKind()) &&

@@ -1,9 +1,11 @@
 package router
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -203,6 +205,8 @@ func TestSessionInspectionOutcomeEvidence(t *testing.T) {
 		{name: "exact", output: "report", want: "confirmed"},
 		{name: "applied", applied: true, want: "applied"},
 		{name: "satisfied", satisfied: true, want: "already_satisfied"},
+		{name: "applied with report", applied: true, output: "report", want: "applied"},
+		{name: "satisfied with report", satisfied: true, output: "report", want: "already_satisfied"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -278,6 +282,69 @@ func TestSessionInspectionOutputOnlyAndOriginalCalls(t *testing.T) {
 	}
 }
 
+func TestSessionInspectionNamespaceIdentity(t *testing.T) {
+	for _, kind := range []string{"original", "carrier", "duplicate", "native"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			h := mekugiHistory{toolName: "shell", root: root, script: "echo safe",
+				carrierName: "exec", carrierKind: codeModeCarrierFunction, carrierPayload: "{}",
+				upstreamItem: map[string]json.RawMessage{
+					"type": mustTestJSON(t, "function_call"), "name": mustTestJSON(t, "shell"),
+					"namespace": mustTestJSON(t, "functions"), "arguments": mustTestJSON(t, "echo safe"),
+				}}
+			call := inspectionFixture(t, root, "call", h)
+			call["namespace"] = "functions"
+			if kind == "original" {
+				call["name"], call["arguments"] = "shell", "echo safe"
+			}
+			if kind == "native" {
+				call["call_id"] = "native"
+			}
+			result, code, diagnostic := inspectFixture(t, root, writeInspectionSession(t, root, call))
+			if code != 0 {
+				t.Fatalf("matching namespace rejected: %s", diagnostic)
+			}
+			if kind == "native" && result.Calls[0].Tool != "functions.exec" {
+				t.Fatalf("native namespace lost: %+v", result.Calls[0])
+			}
+			changed := map[string]any{"type": call["type"], "call_id": call["call_id"],
+				"name": call["name"], "arguments": call["arguments"], "namespace": "other"}
+			items := []map[string]any{changed}
+			if kind == "duplicate" || kind == "native" {
+				items = append([]map[string]any{call}, items...)
+			}
+			_, code, _ = inspectFixture(t, root, writeInspectionSession(t, root, items...))
+			if code != 1 {
+				t.Fatal("accepted conflicting namespace")
+			}
+		})
+	}
+}
+
+func TestSessionInspectionThreadIdentity(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		metadata string
+		want     string
+	}{
+		{"thread ID preferred", `{"id":"thread","session_id":"root"}`, "thread"},
+		{"legacy ID", `{"id":"thread"}`, "thread"},
+		{"root session ID alone cannot attribute a thread", `{"session_id":"root"}`, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			session := filepath.Join(root, "rollout.jsonl")
+			if err := os.WriteFile(session, []byte(`{"type":"session_meta","payload":`+test.metadata+"}\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			result, code, diagnostic := inspectFixture(t, root, session, "--ax")
+			if code != 0 || result.AX == nil || result.AX.ThreadID != test.want {
+				t.Fatalf("result %+v code %d: %s", result, code, diagnostic)
+			}
+		})
+	}
+}
+
 func TestSessionInspectionArgumentAndFileLimits(t *testing.T) {
 	for _, args := range [][]string{
 		{}, {"--session", "x", "--workspace", "x", "--limit", "0"},
@@ -301,6 +368,25 @@ func TestSessionInspectionArgumentAndFileLimits(t *testing.T) {
 	file.Close()
 	if _, err := readSessionInspection(t.Context(), file.Name(), nil); err == nil {
 		t.Fatal("oversized file accepted")
+	}
+}
+
+func TestSessionInspectionPreservesScannerError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "long-line.jsonl")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(maxReplayRecordBytes); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, err = readSessionInspection(t.Context(), path, nil)
+	if !errors.Is(err, bufio.ErrTooLong) || !strings.Contains(err.Error(), strconv.Itoa(maxReplayRecordBytes)) {
+		t.Fatalf("scanner error or configured limit lost: %v", err)
 	}
 }
 

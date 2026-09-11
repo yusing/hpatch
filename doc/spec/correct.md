@@ -7,8 +7,9 @@ independent embedded Lark grammar. Recovery is unavailable from root public APIs
 `tool_grammar.lark`, and ordinary `functions.hpatch`. Recovery interpretation is
 selected only by the dedicated tool, never by inspecting ordinary hpatch payloads.
 
-Each rejected-script command has a `C<number>:<hash>` handle bound to its complete
-attributable command frame and the entire retained baseline. Changing a preceding
+Each rejected-script command has a `C<number>:<hash>` handle with a full 64-digit
+lowercase SHA-256 binding to its complete attributable command frame and the entire
+retained baseline. Changing a preceding
 path or another command invalidates old handles even if a mutation's bytes survive. The target-only shortcut has one form per line:
 `C<number>:<hash> TARGET`. `TARGET` uses
 the ordinary HPATCH/2 row, range, anchored-literal, or unanchored-literal target syntax and must

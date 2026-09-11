@@ -254,7 +254,7 @@ func resolveRecoveryCommand(
 		return nil, fmt.Errorf("invalid command handle %q", handle)
 	}
 	indexText, hash, ok := strings.Cut(handle[1:], ":")
-	if !ok || len(hash) != 4 || !recoveryLowerHex(hash) || !recoveryPositiveDecimal(indexText) {
+	if !ok || len(hash) != sha256.Size*2 || !recoveryLowerHex(hash) || !recoveryPositiveDecimal(indexText) {
 		return nil, fmt.Errorf("invalid command handle %q", handle)
 	}
 	index, err := strconv.Atoi(indexText)
@@ -368,7 +368,7 @@ func recoveryToken(value string) (string, string) {
 
 func recoveryHash(value string) string {
 	sum := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(sum[:2])
+	return hex.EncodeToString(sum[:])
 }
 
 func recoveryTerminatorSuffix(value string) string {

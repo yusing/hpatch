@@ -106,6 +106,30 @@ func TestAXRuntimeReadJournal(t *testing.T) {
 		t.Fatal("journal retained source details")
 	}
 }
+func TestAXReadAcceptsBackwardWallClock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "reads.jsonl")
+	start := axReadEvent{Schema: "mekugi.ax.read.v1", ID: "id", ThreadID: "thread",
+		Tool: "hcat", Phase: "start", At: time.Date(2026, 9, 11, 0, 0, 0, 0, time.UTC)}
+	finish := start
+	finish.Phase, finish.At = "finish", start.At.Add(-time.Second)
+	finish.DurationNS, finish.Succeeded = new(int64(123)), new(true)
+	first, err := json.Marshal(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last, err := json.Marshal(finish)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(append(first, '\n'), append(last, '\n')...), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := ReadAXReads(t.Context(), path, "thread")
+	if err != nil || result.Completed != 1 || result.Succeeded != 1 || result.DurationNS != 123 {
+		t.Fatalf("read metrics = %+v, %v", result, err)
+	}
+}
+
 func TestAXReadConcurrentWriters(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "reads.jsonl")
 	var workers sync.WaitGroup

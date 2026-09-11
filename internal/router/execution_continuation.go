@@ -218,7 +218,7 @@ func nativeExecutionSession(text string) int64 {
 		_, rest, _ = strings.Cut(rest, "\n")
 		line, _, ok = strings.Cut(rest, "\n")
 	}
-	if !ok || line != "Output:" {
+	if !ok || (line != "Output:" && line != "Final output:") {
 		return 0
 	}
 	value, err := strconv.ParseInt(id, 10, 64)

@@ -409,6 +409,9 @@ func TestNativeExecutionMetadataBoundary(t *testing.T) {
 	}{
 		{"Chunk ID: abc\nWall time: 0.1000 seconds\nProcess running with session ID 42\nOutput:\nhello", 42},
 		{"Wall time: 0.1000 seconds\nProcess running with session ID 43\nOriginal token count: 500\nOutput:\nhello", 43},
+		{"Chunk ID: abc\nWall time: 0.1000 seconds\nProcess running with session ID 42\nFinal output:\nhello", 42},
+		{"Wall time: 0.1000 seconds\nProcess running with session ID 43\nOriginal token count: 500\nFinal output:\nhello", 43},
+		{"Wall time: 0.1000 seconds\nProcess exited with code 0\nFinal output:\nProcess running with session ID 42\n", 0},
 		{"Wall time: 0.1000 seconds\nProcess exited with code 0\nOutput:\nProcess running with session ID 42\n", 0},
 		{"Process running with session ID 42\nOutput:\n", 0},
 		{"Wall time: 0.1000 seconds\nProcess running with session ID -1\nOutput:\n", 0},

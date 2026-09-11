@@ -2756,12 +2756,13 @@ func TestMekugiFailedRecoveryPreservesEvaluatedBaseline(t *testing.T) {
 	if _, err := transform.translate("call-1", base, nil); err != nil {
 		t.Fatal(err)
 	}
-	failed, err := transform.translateRecovery("call-2", "C2:ffff 2:bbbb\n", nil)
+	staleHandle := "C2:" + strings.Repeat("f", 64)
+	failed, err := transform.translateRecovery("call-2", staleHandle+" 2:bbbb\n", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !failed.unevaluated || failed.correlationID != "call-1" || failed.attempt != 2 ||
-		!strings.Contains(failed.translationError, `command handle "C2:ffff" is stale`) || calls != 1 {
+		!strings.Contains(failed.translationError, `command handle "`+staleHandle+`" is stale`) || calls != 1 {
 		t.Fatalf("failed recovery = %+v, translations %d", failed, calls)
 	}
 	payload := recoveryCommands(base)[1].handle + " 2:bbbb\n"

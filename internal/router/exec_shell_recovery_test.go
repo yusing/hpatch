@@ -272,9 +272,7 @@ func TestExecShellRecoveryPreservesCodeMode(t *testing.T) {
 func TestExecShellRecoveryRequiresBuiltinShell(t *testing.T) {
 	for _, configured := range []bool{false, true} {
 		transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
-		registry := *proxy.registry
-		registry.byName = maps.Clone(registry.byName)
-		proxy.registry = &registry
+		proxy.registry = &toolRegistry{byName: maps.Clone(proxy.registry.byName)}
 		if configured {
 			contribution := proxy.registry.byName["shell"]
 			contribution.PluginID = "configured"

@@ -36,7 +36,7 @@ func prepareAXSessionFixture(t *testing.T) (session, journal, assessments string
 	var data bytes.Buffer
 	encoder := json.NewEncoder(&data)
 	for _, record := range []map[string]any{
-		{"type": "session_meta", "payload": map[string]any{"id": "thread", "cwd": workspace}},
+		{"type": "session_meta", "payload": map[string]any{"id": "thread", "session_id": "root-thread", "cwd": workspace}},
 		{"timestamp": "2026-09-11T00:00:00Z", "type": "event_msg", "payload": map[string]any{"type": "task_started", "turn_id": "turn"}},
 		{"type": "response_item", "payload": map[string]any{"type": "function_call", "call_id": "edit", "name": "exec", "arguments": "{}"}},
 		{"type": "response_item", "payload": map[string]any{"type": "function_call_output", "call_id": "edit", "output": "report"}},
@@ -50,6 +50,13 @@ func prepareAXSessionFixture(t *testing.T) (session, journal, assessments string
 		t.Fatal(err)
 	}
 	journal = filepath.Join(t.TempDir(), "reads.jsonl")
+	rootRead, err := capturer.StartAXRead(journal, "root-thread", "hgrep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rootRead.Finish(true); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv(capturer.AXReadOutputEnvironment, journal)
 	t.Setenv("CODEX_THREAD_ID", "thread")
 	input := filepath.Join(workspace, "read.txt")
@@ -141,6 +148,34 @@ func TestDebugAXRejectsAmbiguousRollouts(t *testing.T) {
 	found, err := discoverDebugRollouts(t.Context(), []string{"thread"})
 	if err != nil || len(found["thread"]) != 2 {
 		t.Fatalf("discovery = %v, %v", found, err)
+	}
+}
+
+func TestDebugAXDiscoveryRejectsUnreadableSubtree(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read mode-000 directories")
+	}
+	root := t.TempDir()
+	t.Setenv("CODEX_HOME", root)
+	unreadable := filepath.Join(root, "sessions", "unreadable")
+	if err := os.MkdirAll(unreadable, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sessions", "rollout-thread.jsonl"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(unreadable, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(unreadable, 0700); err != nil {
+			t.Error(err)
+		}
+	})
+	// The unreadable subtree could contain a second match. A partial discovery
+	// must not certify the visible rollout as the unique source for this thread.
+	if _, err := discoverDebugRollouts(t.Context(), []string{"thread"}); err == nil {
+		t.Fatal("unreadable subtree silently accepted as complete discovery")
 	}
 }
 

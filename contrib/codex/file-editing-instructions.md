@@ -337,8 +337,8 @@ unrelated prepared edits. Choose one payload form:
 Target-only example:
 
 ```text
-C2:abcd 37:8c2f
-C3:bcde "return oldResult, nil"
+C2:abcd0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab 37:8c2f
+C3:bcde0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab "return oldResult, nil"
 ```
 
 Put every listed target correction in one payload and use the current handles

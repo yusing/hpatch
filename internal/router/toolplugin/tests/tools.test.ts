@@ -1517,6 +1517,19 @@ describe("inspect_file language projections", () => {
 });
 
 describe("inspect_file source selection", () => {
+  test("preserves the colon in frontmatter entries with omitted values", async () => {
+    const directory = await temporaryDirectory("inspect-null-source-");
+    process.chdir(directory);
+    await writeFile("meta.md", "---\ndraft:\n---\n");
+    const tool = createInspectFileTool("test", "");
+    const result = await tool.execute(["--source", "draft", "meta.md"], executionContext);
+    expect(result.exitCode).toBe(0);
+    const entry = JSON.parse(result.stdout!).data.outline[0];
+    expect(entry.source).toEqual({text: "draft:", source_bytes: 6, omitted_bytes: 0});
+    expect(entry.line).toBe(`2:${hashLine("draft:")}`);
+    expect(entry.line_end).toBe(entry.line);
+  });
+
   test("reads absolute, parent-relative and outside symlink paths like hcat", async () => {
     const directory = await temporaryDirectory("inspect-paths-");
     const outside = await temporaryDirectory("inspect-outside-");

@@ -216,7 +216,8 @@ func ReadAXReads(ctx context.Context, path, threadID string) (AXReadMetrics, err
 			continue
 		}
 		start, exists := starts[event.ID]
-		if !exists || finished[event.ID] || start.ThreadID != event.ThreadID || start.Tool != event.Tool || event.At.Before(start.At) {
+		// Wall timestamps may move backward; elapsed time is recorded monotonically.
+		if !exists || finished[event.ID] || start.ThreadID != event.ThreadID || start.Tool != event.Tool {
 			return result, errors.New("unpaired AX read finish")
 		}
 		finished[event.ID] = true
