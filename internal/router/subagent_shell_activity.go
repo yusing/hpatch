@@ -129,6 +129,11 @@ func (t *mekugiResponseTransform) prepareShellActivity(input json.RawMessage) {
 				continue
 			}
 			name, args, script := toolActivityShellCall(item, qualifiedToolName(jsonString(item, "namespace"), jsonString(item, "name")), true)
+			if history, ok := t.visible[callID]; ok &&
+				history.toolName == "shell" && history.pluginID == builtinToolsPluginID &&
+				!history.replayCarrier && jsonString(history.upstreamItem, "name") == t.codeModeToolName {
+				name, script = "shell", history.script
+			}
 			switch name {
 			case "shell", "shell_command", "exec_command":
 				calls[callID] = t.shellActivityExcerpt(script)

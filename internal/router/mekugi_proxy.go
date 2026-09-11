@@ -1381,6 +1381,11 @@ func (t *mekugiResponseTransform) translateRegisteredTool(contribution toolContr
 		}
 	}
 
+	if contribution.PluginID == builtinToolsPluginID && contribution.Name == "shell" &&
+		jsonString(upstreamItem, "name") == t.codeModeToolName && !translation.Rejected {
+		payload = misuseWarningProjection(execShellRecoveryWarning) + payload
+	}
+
 	history := mekugiHistory{
 		toolName:         contribution.Name,
 		pluginID:         contribution.PluginID,
@@ -1972,6 +1977,21 @@ func (t *mekugiResponseTransform) transformOutputItem(item *responsesItem) (bool
 		var originalInput string
 		if item.Input != nil {
 			originalInput = *item.Input
+		}
+		if contribution, ok := t.proxy.registry.contribution("shell"); ok &&
+			contribution.PluginID == builtinToolsPluginID && !t.nativeTools {
+			retained, exists := t.local[callID]
+			if exists && retained.toolName == "shell" || execShellRecovery(originalInput) {
+				if callID == "" {
+					return false, errors.New("Code Mode call has no call ID")
+				}
+				history, err := t.translateRegisteredTool(contribution, callID, originalInput, item.cloneFields())
+				if err != nil {
+					return false, err
+				}
+				item.renderCarrier(history.effectiveCarrierKind(), history.carrierName, history.carrierInput())
+				return true, nil
+			}
 		}
 		if retained, exists := t.local[callID]; exists && retained.toolName == codeModeCommentaryHistoryTool {
 			if retained.script != originalInput {

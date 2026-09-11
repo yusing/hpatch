@@ -333,7 +333,11 @@ curl -sS "${MEKUGI_BASE_URL%/v1}/api/metrics" |
 shows whether custom instructions were configured. A `shell-typescript-misuse` diagnostic means
 a Bash submission was rejected as valid TypeScript/JavaScript before execution, not silently
 rerouted. `shell-code-mode-recovered` instead identifies an established Code Mode call recovered
-with a warning to use `functions.exec` directly. Missing fields mean the evidence was not recorded. Export capture or metrics before
+with a warning to use `functions.exec` directly. In the other direction, `exec-shell-recovered`
+in a tool result means an interpreter script sent to `functions.exec` was routed through
+the normal shell pipeline before execution. Recovery requires an explicit, valid shell header
+and invalid JavaScript; valid JavaScript and ambiguous bare commands are left unchanged.
+Missing fields mean the evidence was not recorded. Export capture or metrics before
 shutdown if you need to investigate later; neither export contains raw prompts or scripts.
 
 To record the patched instructions for new requests, use:
