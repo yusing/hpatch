@@ -39,6 +39,58 @@ func runShellWorkerTest(
 	return stdoutBuffer.String(), stderrBuffer.String(), exitCode
 }
 
+func TestShellRunnerJoinsIndependentBackgroundJobsAndPreservesFailure(t *testing.T) {
+	registry := sharedProxyTestRegistry(t)
+	for _, interpreter := range []string{"bash", "sh"} {
+		t.Run(interpreter, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			// Each job needs the other's marker, so sequential execution fails
+			// instead of passing a timing-only assertion. Polling is bounded.
+			script := `
+check_one() {
+	: > first.started
+	attempt=0
+	until test -f second.started; do
+		attempt=$((attempt + 1))
+		test "$attempt" -lt 250 || return 90
+		sleep 0.02
+	done
+	printf 'first finished\n'
+	return 7
+}
+check_two() {
+	: > second.started
+	attempt=0
+	until test -f first.started; do
+		attempt=$((attempt + 1))
+		test "$attempt" -lt 250 || return 91
+		sleep 0.02
+	done
+	printf 'second finished\n'
+}
+check_one &
+first_check_pid=$!
+check_two &
+second_check_pid=$!
+checks_status=0
+wait "$first_check_pid" || checks_status=$?
+wait "$second_check_pid" || checks_status=$?
+printf 'joined both\n'
+exit "$checks_status"
+`
+			stdout, stderr, exitCode := runShellWorkerTest(t, registry, interpreter, nil, script, nil)
+			if exitCode != 7 || stderr != "" {
+				t.Fatalf("exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+			}
+			if !strings.HasSuffix(stdout, "joined both\n") ||
+				strings.Count(stdout, "first finished\n") != 1 ||
+				strings.Count(stdout, "second finished\n") != 1 {
+				t.Fatalf("jobs were not both joined: %q", stdout)
+			}
+		})
+	}
+}
+
 func TestShellRunnerUsesInterpreterBasenameForLanguageVariant(t *testing.T) {
 	registry := sharedProxyTestRegistry(t)
 

@@ -9,6 +9,43 @@ with shell write tricks or Python when hpatch is sufficient.
 Use `functions.shell` for command execution. Before submitting a program, follow the shared
 Shell reference below for interpreter selection, input format, execution options, and continuation.
 
+For ready commands sharing an interpreter and execution options, use one multiline shell
+script. Put commands on successive lines, without batch headers or separator programs:
+
+```bash
+hcat first.go 1:40
+hcat second.go 1:40
+```
+
+This is one execution. Do not create separate executions merely because reads are independent.
+Keep short reads and searches together; use a later call when earlier output must determine it.
+Reserve explicit batches for separate interpreters, execution options, or isolated shell state.
+
+For slower independent commands that may safely share output, run background jobs with `&`
+inside one shell script and wait for every job. Preserve each failure rather than allowing a
+successful last job to hide it:
+
+```bash
+check_one &
+first_check_pid=$!
+check_two &
+second_check_pid=$!
+checks_status=0
+wait "$first_check_pid" || checks_status=$?
+wait "$second_check_pid" || checks_status=$?
+exit "$checks_status"
+```
+
+Do not overlap dependent commands, edits, or jobs that share mutable state. This is shell-level
+concurrency, not permission to call tools in parallel contrary to their contracts.
+
+For meaningful progress, use the runtime mechanism even when the tool has no `commentary`
+field. Put `commentary 'Checked the inputs; processing the remaining items.'` inside the
+Bash/POSIX script doing the work, or use
+`await commentary("Checked the inputs; processing the remaining items.");` in Code Mode.
+Do not make a commentary-only call, narrate every command, or replace these supported
+mechanisms with standalone assistant commentary.
+
 ## Edit planning
 
 When inspected files are ready, submit every known related edit
@@ -28,6 +65,10 @@ significant.
 
 On later calls, target previously changed content with a returned final-state row, a
 confirmed mapping, or exact unanchored current text; never reconstruct a row or range endpoint.
+Copy both range endpoints as complete `LINE:HASH` pairs from the same acquired span.
+A nearby brace's hash is not interchangeable with the endpoint's hash: indentation is part
+of the row. A stale-target correction must still select the complete intended replacement
+span; changing the hash alone does not fix an incomplete declaration boundary.
 For exact content you just authored in a new file, use an unanchored literal target in the later
 invocation instead of inventing a row hash or rereading the file. Use focused hcat or hgrep only
 when none of those forms identifies the target.

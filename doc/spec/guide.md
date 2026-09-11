@@ -9,7 +9,9 @@ for request model `gpt-6-astra` or IDs beginning `gpt-6-astra-`, and from
 eligible request, including model switches and inherited marked prompts, independently of
 native versus CTP/2 transport. Only the selected workflow is injected; shared tool syntax,
 atomicity, recovery, and commentary-routing rules are unchanged. Both workflow files cover file
-editing, shell submission, edit planning, target reuse, and target acquisition.
+editing, shell submission, edit planning, target reuse, and target acquisition. Astra keeps
+concise execution guidance; the default workflow supplies the multiline-shell and
+background-job examples, progress usage guidance, and detailed range-endpoint checks.
 Commentary routing is defined once in the shared source.
 Model-specific phrasing does not alter the shared reference contracts. Guidance includes effective
 use of tool capabilities: batching related edits against immutable baselines, reusing verified
@@ -36,7 +38,8 @@ and unrestricted parallelization fragments outside the owned section. Progress u
 tool commentary, known reads and searches batch in a shell script, and parallelism respects tool
 contracts with hpatch running alone. Unrelated instructions, including authorization, validation,
 and shell-safety rules, are preserved. These rewrites cover the GPT-6 Astra and shared GPT-5.6
-Sol/Terra/Luna templates and the active Codex prompt. At startup,
+Sol/Terra/Luna templates and the active Codex prompt, including its “To reduce round trips”
+batching prefix and line-wrapped status-reply instruction. At startup,
 the router reads `$CODEX_HOME/config.toml`, falling back to `~/.codex/config.toml`, only to
 snapshot whether the top-level `model_instructions_file` key is set. A configured custom prompt
 without recognized stock or marked guidance receives the central guidance by append; without that setting,
@@ -65,13 +68,15 @@ leave it unchanged. Neither form requires re-emitting unrelated prepared edits.
 Both model variants point to shared references rather than repeat submission syntax.
 The shared guidance must make these choices directly available in native and CTP modes:
 
-1. **Execution:** direct interpreter source, explicit batch separators and failure policies,
-   parameter inheritance, and host-provided continuation actions under
+1. **Execution:** one multiline script for ready commands sharing execution options; shell
+   background jobs with explicit waits and failure preservation for slower independent work;
+   explicit sequential batches only for separate execution contexts; and host-provided
+   continuation actions under
    [REQ-SHELL-001](shell.md). Retained references include lifetime limits and remain distinct
    from durable workspace files. A failed execution is not a rollback.
 2. **Acquisition:** reuse known literals, verified rows, and confirmed mappings first.
-   Otherwise select fixed-string hgrep, bounded hcat, structural inspection with optional
-   source, or semantic lookup with a current line or verified row. Explain preview and
+   Otherwise select fixed-string hgrep, bounded hcat, structural inspection, or semantic
+   lookup with a current line or verified row. Explain preview and
    truncation limits before using partial source as an exact target.
    Reader contracts remain in [read.md](read.md), [grep.md](grep.md),
    [inspect.md](inspect.md), and [symbol.md](symbol.md).
@@ -85,6 +90,11 @@ The shared guidance must make these choices directly available in native and CTP
 5. **Recovery:** choose a payload form in one shared section, using the current rejected
    baseline rather than workspace rows. Follow [REQ-CORRECT-001](correct.md) for atomic
    reevaluation, ancestry, and invalid corrections.
+
+Shared commentary guidance includes the actual Bash/POSIX `commentary 'text'` command
+and Code Mode `await commentary("text")` form, alongside the optional field for eligible
+structured tools, and distinguishes these paths from other interpreters. The default
+workflow supplies usage examples; Astra points to the shared syntax without that tutorial.
 
 The shared source supplies complete call syntax because it is injected into other workspaces;
 it must not require the model to open this repository's specifications. Those specifications

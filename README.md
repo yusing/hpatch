@@ -297,7 +297,17 @@ It distinguishes an outer Code Mode cell from a native process session and keeps
 the original output intact. Following that call resumes existing work rather than
 starting the script again.
 
-With Code Mode available, a call can batch noninteractive programs in order:
+Commands sharing an interpreter and execution options normally belong in one multiline
+script, without a batch header. Independent background jobs can use shell `&` and `wait`;
+wait for every job and preserve failures. Short reads generally do not need background jobs.
+
+Bash and POSIX scripts can include `commentary 'Checked the inputs; processing the remaining items.'`
+to publish progress without mixing it into command output. Code Mode supports
+`await commentary("Checked the inputs; processing the remaining items.");`. Other interpreters
+do not support the shell commentary command.
+
+When programs need separate interpreters, execution options, or isolated shell state,
+Code Mode can run an explicit sequential batch:
 
 ```text
 #!batch=NEXT_PROGRAM
@@ -324,7 +334,8 @@ Programs run sequentially, including waiting for long-running sessions, and
 continue after nonzero exits by default. Use `#!batch-stop=SEPARATOR` to leave
 later programs unstarted after a nonzero terminal exit, with the same params
 inheritance and all-program validation. The ordered `results` array contains each
-program's output and native result fields. A host error stops the batch while
+program's output and native result fields after the batch finishes; batches do not run in
+parallel. A host error stops the batch while
 preserving completed results and partial output. The `batch` summary reports the
 policy, started/unstarted counts, and stop reason. Native-only clients require
 separate calls. Use separate calls for interactive programs too, so their

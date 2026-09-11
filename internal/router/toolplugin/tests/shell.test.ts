@@ -18,7 +18,9 @@ test("description stays call-local", () => {
   for (const guidance of [
     "Run free-form scripts",
     "#!batch=SEPARATOR",
-    "Batches require Code Mode",
+    "Multiline commands share one execution",
+    "shell & and wait support independent background jobs",
+    "Explicit sequential batches require Code Mode",
     "#!batch= continues after nonzero exits",
     "#!batch-stop= stops before later programs",
   ]) {

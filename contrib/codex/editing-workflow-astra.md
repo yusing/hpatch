@@ -9,6 +9,11 @@ can express the edit.
 Use `functions.shell` for command execution. Before submitting a program, follow the shared
 Shell reference below for interpreter selection, input format, execution options, and continuation.
 
+Group ready reads and searches in one multiline script. For slower independent work, use
+shell `&` and wait for every job, preserving failures; do not overlap edits or shared mutable
+state. Reserve explicit sequential batches for separate interpreters or execution contexts.
+Attach meaningful progress to the work using the shared Commentary syntax.
+
 ## Edit planning
 
 Group all ready, related edits into one atomic

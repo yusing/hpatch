@@ -50,6 +50,9 @@ Attach progress commentary only to a supported tool call, using that tool's `com
 documented runtime commentary mechanism. When no available tool supports commentary, continue
 without a commentary message. Never emit a standalone assistant message with
 `phase: "commentary"`; standalone commentary messages are router-owned.
+Bash/POSIX scripts support `commentary 'text'`; Code Mode supports `await commentary("text")`.
+Both publish user-only progress without adding text to command output. Other interpreters
+do not support the shell commentary command.
 A blocking question or final result can still use the final channel. Do not wake solely to emit
 a progress notice.
 
@@ -118,8 +121,8 @@ for record in records:
 
 ### Batching
 
-With Code Mode available, prefer one batch for ready, independent, noninteractive programs.
-Use separate calls when a result determines the next program or whether it should run.
+Explicit batches require Code Mode and run sequentially, with separate shell state per program.
+Their combined result arrives after the batch finishes; batches do not provide parallelism.
 
 Start a batch with `#!batch=SEPARATOR`, choosing a nonempty separator line absent
 from every program's source and without surrounding whitespace. Put that exact line
