@@ -53,8 +53,10 @@ snapshot from the same capturer. The destinations must be distinct.
 
 `--debug` is a boolean flag requiring no argument. It creates a private, unique
 `mekugi-debug-*` directory in the system temporary directory, with router diagnostics,
-sanitized capture, final metrics, and an instruction dump. Explicit capture and metrics
-destinations retain precedence. The wrapper prints all four absolute artifact paths to
+sanitized capture, final metrics, an instruction dump, runtime read journal, and AX report.
+Debug implies AX instrumentation: the wrapper supplies the journal path to the executor.
+Explicit capture, metrics, and `MEKUGI_AX_OUTPUT` destinations retain precedence.
+The wrapper prints all six absolute artifact paths to
 stderr only on exit, after the child and router have stopped; it never prints debug paths
 over the active Codex UI. Startup failures after debug initialization also report the paths.
 The files survive shutdown. Default files use mode 0600 and the directory uses mode 0700.
@@ -77,6 +79,17 @@ below, without retaining feature payloads. Forwarding failures classify known wr
 exporting addresses, URLs, WebSocket close reasons, or arbitrary error text. Debug files remain
 separate from sanitized metrics/capture. Initialization failure prevents launch; subsequent
 debug write failures are surfaced on exit without changing request execution.
+
+The AX report uses [REQ-AX-001](ax.md) calculations. At router shutdown it discovers
+local Codex rollout filenames for at most 256 observed thread identities under
+`$CODEX_HOME/sessions` and `archived_sessions`, or the default `~/.codex` location.
+Discovery is bounded to 100000 entries and five seconds. The inspector validates
+rollout identity and infers per-call workspace metadata. Missing, ambiguous, incomplete,
+or mismatched evidence receives a fixed state code; available runtime read counts remain
+visible even when rollout-dependent measurements are unavailable. The report contains metrics and
+coverage, not scripts or command output; missing defect assessments stay unassessed.
+It describes whole-rollout evidence available at shutdown, not just calls from this
+router lifetime. These files are separate from sanitized transport metrics.
 
 ### Feature-usage debug evidence
 

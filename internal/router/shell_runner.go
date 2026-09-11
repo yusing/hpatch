@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/yusing/mekugi/capturer"
 	"github.com/yusing/mekugi/internal/router/toolplugin"
 	"github.com/yusing/mekugi/internal/shellruntime"
 	"github.com/yusing/mekugi/internal/shellsyntax"
@@ -86,12 +87,23 @@ func executeShellTool(
 	defer cancel()
 	capture := newShellOutputCapture(cancel)
 	middleware := func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
-		return func(handlerCtx context.Context, command []string) error {
+		return func(handlerCtx context.Context, command []string) (runErr error) {
 			contribution, private := privateTools[command[0]]
 			if !private {
 				return next(handlerCtx, command)
 			}
 			handler := interp.HandlerCtx(handlerCtx)
+			observation, observationErr := capturer.StartAXRead(
+				handler.Env.Get(capturer.AXReadOutputEnvironment).String(),
+				handler.Env.Get(shellruntime.ThreadIDEnvironment).String(), contribution.Name)
+			if observationErr != nil {
+				_, _ = io.WriteString(handler.Stderr, "shell: AX read evidence unavailable\n")
+			}
+			defer func() {
+				if err := observation.Finish(runErr == nil); err != nil {
+					_, _ = io.WriteString(handler.Stderr, "shell: AX read evidence incomplete\n")
+				}
+			}()
 			arguments := command[1:]
 			input, _ := handler.Stdin.(*os.File)
 			var retained *os.File

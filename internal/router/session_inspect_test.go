@@ -299,7 +299,7 @@ func TestSessionInspectionArgumentAndFileLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 	file.Close()
-	if _, err := readSessionInspection(t.Context(), file.Name()); err == nil {
+	if _, err := readSessionInspection(t.Context(), file.Name(), nil); err == nil {
 		t.Fatal("oversized file accepted")
 	}
 }

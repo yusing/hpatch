@@ -11,7 +11,7 @@ func TestSessionInspectionRejectsFIFOWithoutWriter(t *testing.T) {
 	if err := syscall.Mkfifo(path, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readSessionInspection(t.Context(), path); err == nil {
+	if _, err := readSessionInspection(t.Context(), path, nil); err == nil {
 		t.Fatal("FIFO accepted")
 	}
 }

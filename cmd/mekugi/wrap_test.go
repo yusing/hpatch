@@ -418,3 +418,28 @@ func TestWrapCodexStartupFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestWrapDebugPassesAXJournalToCodex(t *testing.T) {
+	directory, debugDirectory := t.TempDir(), t.TempDir()
+	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TMPDIR", debugDirectory)
+	t.Setenv("MEKUGI_AX_OUTPUT", "")
+	marker := filepath.Join(directory, "ax-path")
+	stub := "#!/bin/sh\n" +
+		"test -n \"$MEKUGI_AX_OUTPUT\" && test -f \"$MEKUGI_AX_OUTPUT\" || exit 93\n" +
+		"printf '%s' \"$MEKUGI_AX_OUTPUT\" > " + strconv.Quote(marker) + "\n"
+	if err := os.WriteFile(filepath.Join(directory, "codex"), []byte(stub), 0700); err != nil {
+		t.Fatal(err)
+	}
+	code, err := wrapCodex(t.Context(), []string{"--debug", "--mode", "passthrough"}, nil)
+	if err != nil || code != 0 {
+		t.Fatalf("debug wrap = %d, %v", code, err)
+	}
+	path, err := os.ReadFile(marker)
+	if err != nil || !filepath.IsAbs(string(path)) {
+		t.Fatalf("AX journal was not inherited: %q, %v", path, err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(string(path)), "ax.json")); err != nil {
+		t.Fatalf("automatic report missing: %v", err)
+	}
+}

@@ -16,6 +16,7 @@ pjdoc:
     - plugin.md
     - diagnose.md
     - shell.md
+    - ax.md
     - session.md
     - metrics.md
     - script.md
@@ -46,6 +47,7 @@ Each listed file owns one requirement. Related facts are cited by stable ID or l
 - [`REQ-PLUGIN-001`](plugin.md): router-local custom tools and Code Mode carrier translation
 - [`REQ-DIAGNOSE-001`](diagnose.md): opt-in agent issue reports
 - [`REQ-SHELL-001`](shell.md): installable free-form script tool and interpreter selection
+- [`REQ-AX-001`](ax.md): runtime reads and evidence-backed AX reporting
 - [`REQ-SESSION-001`](session.md): offline logical session inspection
 - [`REQ-METRICS-001`](metrics.md): in-process captured Responses metrics
 - [`REQ-SCRIPT-001`](script.md): HPATCH/2 grammar and target forms

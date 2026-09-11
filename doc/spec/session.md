@@ -52,3 +52,6 @@ Acceptance:
 3. Native/function and custom carriers work without decoding carrier source.
 4. Text selection, UTF-8 bounds, pagination, duplicate handling, and invalid input are tested.
 5. Inspection leaves session, replay records, and directory permissions unchanged.
+
+`--ax`, `--read-log`, and `--defects` add whole-rollout AX reporting under
+[REQ-AX-001](ax.md); table selection and pagination do not narrow its evidence scope.

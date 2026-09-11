@@ -40,7 +40,7 @@ func newRouterFlags(stderr io.Writer) routerFlags {
 		grokAuthFile:         flags.String("grok-auth-file", "", "Grok OAuth credential file (default ~/.grok/auth.json)"),
 		metricsOutput:        flags.String("metrics-output", "", "optional final metrics JSON path"),
 		captureOutput:        flags.String("capture-output", "", "optional sanitized capture JSONL path"),
-		debug:                flags.Bool("debug", false, "record diagnostics, capture, metrics, and instructions; print artifact paths on exit"),
+		debug:                flags.Bool("debug", false, "record diagnostics, capture, metrics, instructions, runtime reads, and AX report; print artifact paths on exit"),
 	}
 }
 

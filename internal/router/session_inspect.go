@@ -12,7 +12,10 @@ import (
 	"path/filepath"
 	"slices"
 	"syscall"
+	"time"
 	"unicode/utf8"
+
+	"github.com/yusing/mekugi/capturer"
 )
 
 const maxSessionInspectionBytes = 64 << 20
@@ -36,12 +39,28 @@ type inspectedCall struct {
 }
 
 type sessionInspection struct {
-	Schema            string          `json:"schema"`
-	WorkspaceOverride string          `json:"workspace_override,omitempty"`
-	TotalCalls        int             `json:"total_calls"`
-	Offset            int             `json:"offset"`
-	NextOffset        *int            `json:"next_offset,omitempty"`
-	Calls             []inspectedCall `json:"calls"`
+	AX                *sessionAXReport `json:"ax,omitempty"`
+	Schema            string           `json:"schema"`
+	WorkspaceOverride string           `json:"workspace_override,omitempty"`
+	TotalCalls        int              `json:"total_calls"`
+	Offset            int              `json:"offset"`
+	NextOffset        *int             `json:"next_offset,omitempty"`
+	Calls             []inspectedCall  `json:"calls"`
+}
+
+type sessionAXInput struct {
+	ThreadID   string
+	Completion capturer.AXCompletionAccumulator
+}
+
+type sessionAXReport struct {
+	Scope          string                       `json:"scope"`
+	ThreadID       string                       `json:"thread_id"`
+	Edits          capturer.AXEditMetrics       `json:"edits"`
+	Reads          capturer.AXReadMetrics       `json:"reads"`
+	Completion     capturer.AXCompletionMetrics `json:"completion"`
+	Defects        capturer.AXDefectMetrics     `json:"defect_assessments"`
+	UnmatchedCalls uint64                       `json:"unmatched_calls"`
 }
 
 type sessionInspectionItem struct {
@@ -68,6 +87,9 @@ func RunSessionInspection(ctx context.Context, args []string, stdout, stderr io.
 	session := flags.String("session", "", "Codex rollout JSONL file (required)")
 	workspace := flags.String("workspace", "", "override workspace inferred from rollout metadata")
 	replayDir := flags.String("replay-dir", "", "replay directory (default platform state directory)")
+	ax := flags.Bool("ax", false, "include whole-rollout AX measurements, independent of call pagination")
+	readLog := flags.String("read-log", "", "runtime AX read journal; implies --ax")
+	defects := flags.String("defects", "", "JSON defect assessments with evidence paths; implies --ax")
 	callID := flags.String("call-id", "", "select one call identity")
 	offset := flags.Int("offset", 0, "skip this many matching logical calls")
 	limit := flags.Int("limit", 50, "maximum calls returned (1-500)")
@@ -115,12 +137,14 @@ func RunSessionInspection(ctx context.Context, args []string, stdout, stderr io.
 	// read validates record size, identity and version. Atomic store replacement
 	// permits lock-free inspection without creating store.lock or changing modes.
 	store := &mekugiReplayStore{directory: *replayDir}
-	calls, err := readSessionInspection(ctx, *session)
+	var observations sessionAXInput
+	calls, err := readSessionInspection(ctx, *session, &observations)
 	if err != nil {
 		return fail(err)
 	}
+	allCalls := calls
 	if *callID != "" {
-		calls = slices.DeleteFunc(calls, func(call sessionInspectionCall) bool { return call.item.CallID != *callID })
+		calls = slices.DeleteFunc(slices.Clone(calls), func(call sessionInspectionCall) bool { return call.item.CallID != *callID })
 	}
 	result := sessionInspection{
 		Schema: "mekugi.session.v1", WorkspaceOverride: override, TotalCalls: len(calls),
@@ -128,7 +152,20 @@ func RunSessionInspection(ctx context.Context, args []string, stdout, stderr io.
 	}
 	start := min(*offset, len(calls))
 	end := min(len(calls), start+*limit)
-	for _, call := range calls[start:end] {
+	withAX := *ax || *readLog != "" || *defects != ""
+	inspected := calls[start:end]
+	selected := make(map[string]bool, len(inspected))
+	for _, call := range inspected {
+		selected[call.item.CallID] = true
+	}
+	var edits capturer.AXEditAccumulator
+	editCalls := make(map[string]bool)
+	if withAX {
+		inspected = allCalls
+		result.AX = &sessionAXReport{Scope: "entire supplied rollout; edit metrics require matched replay",
+			ThreadID: observations.ThreadID, Completion: observations.Completion.Result()}
+	}
+	for _, call := range inspected {
 		if err := ctx.Err(); err != nil {
 			return fail(err)
 		}
@@ -147,7 +184,11 @@ func RunSessionInspection(ctx context.Context, args []string, stdout, stderr io.
 				return fail(fmt.Errorf("call %q: %w", call.item.CallID, err))
 			}
 		}
-		projected, err := inspectSessionCall(call, record, found, *field, *textBytes)
+		selectedField := ""
+		if selected[call.item.CallID] {
+			selectedField = *field
+		}
+		projected, err := inspectSessionCall(call, record, found, selectedField, *textBytes)
 		if err != nil {
 			return fail(err)
 		}
@@ -155,7 +196,30 @@ func RunSessionInspection(ctx context.Context, args []string, stdout, stderr io.
 		if root == "" {
 			projected.Replay = "workspace_unavailable"
 		}
-		result.Calls = append(result.Calls, projected)
+		if withAX {
+			if !found {
+				result.AX.UnmatchedCalls++
+			} else if projected.Tool == mekugiToolName || projected.Tool == mekugiRecoveryToolName {
+				editCalls[call.item.CallID] = true
+				edits.Observe(record.History.Script, record.History.Attempt > 1,
+					projected.Outcome == "rejected",
+					projected.Outcome == "unconfirmed" || projected.Outcome == "translated_unconfirmed")
+			}
+		}
+		if selected[call.item.CallID] {
+			result.Calls = append(result.Calls, projected)
+		}
+	}
+	if withAX {
+		result.AX.Edits = edits.Metrics
+		result.AX.Reads, err = capturer.ReadAXReads(ctx, *readLog, observations.ThreadID)
+		if err != nil {
+			return fail(err)
+		}
+		result.AX.Defects, err = capturer.ReadAXDefects(*defects, editCalls)
+		if err != nil {
+			return fail(err)
+		}
 	}
 	if end < len(calls) {
 		result.NextOffset = new(end)
@@ -168,7 +232,7 @@ func RunSessionInspection(ctx context.Context, args []string, stdout, stderr io.
 	return 0
 }
 
-func readSessionInspection(ctx context.Context, path string) ([]sessionInspectionCall, error) {
+func readSessionInspection(ctx context.Context, path string, observations *sessionAXInput) ([]sessionInspectionCall, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
@@ -201,21 +265,43 @@ func readSessionInspection(ctx context.Context, path string) ([]sessionInspectio
 			return nil, err
 		}
 		var envelope struct {
-			Type    string          `json:"type"`
-			Payload json.RawMessage `json:"payload"`
+			Timestamp string          `json:"timestamp"`
+			Type      string          `json:"type"`
+			Payload   json.RawMessage `json:"payload"`
 		}
 		if !utf8.Valid(scanner.Bytes()) || json.Unmarshal(scanner.Bytes(), &envelope) != nil {
 			return nil, fmt.Errorf("session line %d: invalid JSON or UTF-8", line)
 		}
 		if envelope.Type == "session_meta" || envelope.Type == "turn_context" {
 			var metadata struct {
+				ID  string `json:"id"`
 				Cwd string `json:"cwd"`
 			}
 			if json.Unmarshal(envelope.Payload, &metadata) != nil {
 				return nil, fmt.Errorf("session line %d: invalid workspace metadata", line)
 			}
+			if envelope.Type == "session_meta" && observations != nil && metadata.ID != "" {
+				if observations.ThreadID != "" && observations.ThreadID != metadata.ID {
+					return nil, errors.New("session has conflicting thread identities")
+				}
+				observations.ThreadID = metadata.ID
+			}
 			if metadata.Cwd != "" {
 				workspace = metadata.Cwd
+			}
+		}
+		if envelope.Type == "event_msg" && observations != nil {
+			var event struct {
+				Type   string `json:"type"`
+				TurnID string `json:"turn_id"`
+			}
+			if json.Unmarshal(envelope.Payload, &event) != nil {
+				return nil, fmt.Errorf("session line %d: invalid event", line)
+			}
+			switch event.Type {
+			case "task_started", "turn_started", "task_complete", "turn_complete":
+				at, _ := time.Parse(time.RFC3339Nano, envelope.Timestamp)
+				observations.Completion.Observe(event.Type, event.TurnID, at)
 			}
 		}
 		if envelope.Type != "response_item" {
