@@ -378,8 +378,12 @@ as a complete definition or reference set.
 Use `inspect_file PATH` for bounded metadata and a structural outline. Each outline entry's
 `line` and `line_end` are copyable `LINE:HASH` identities for that inclusive span. Copy a
 single-line span as a row target and a multi-line span as `line..line_end` with no spaces.
-Inspect_file never returns source bodies; use hcat only when replacement needs unseen text
-rather than to obtain the target.
+To obtain a known declaration or value in the same call, use
+`inspect_file --source NAME PATH` with an exact name or JSON pointer (empty for
+the JSON root). All matches include `source: {text,source_bytes,omitted_bytes}`;
+`--source-bytes N` selects a UTF-8 prefix bound from 1–8192. Default inspection
+remains outline-only. Paths have ordinary absolute or working-directory-relative
+meaning like hcat; Codex owns permissions.
 It returns one JSON envelope shaped as follows:
 
 ```text
@@ -390,6 +394,7 @@ outline entries: import, constant, variable, type, class, function, method, head
                  frontmatter, or JSON pointer records with LINE:HASH span identities
 ```
 
-Inspect_file never returns raw excerpts, bodies, field definitions, frontmatter values, or
-JSON scalar values.
+Selected source is exact syntax, not a decoded JSON/YAML value. Check both per-entry
+`omitted_bytes` and envelope `truncated` before treating it as complete. Use hcat
+only for still-missing context, not to reacquire identities already supplied.
 <!-- mekugi-model-instructions:end -->

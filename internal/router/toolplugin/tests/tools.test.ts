@@ -1185,7 +1185,7 @@ describe("inspect_file built-in plugin", () => {
       inspectFileDescription.indexOf(marker) + marker.length,
     ));
     expect(schema.success.data.outline).toBe("outline_entry[]");
-    expect(schema.failure.error.code).toContain("outside_workspace");
+    expect(schema.selected_entry_source.omitted_bytes).toBe("integer");
     for (const persistent of ["hcat", "before editing", "Reason carefully"]) {
       expect(inspectFileDescription).not.toContain(persistent);
     }
@@ -1447,7 +1447,94 @@ describe("inspect_file language projections", () => {
   });
 });
 
-describe("inspect_file bounds and confinement", () => {
+describe("inspect_file source selection", () => {
+  test("reads absolute, parent-relative and outside symlink paths like hcat", async () => {
+    const directory = await temporaryDirectory("inspect-paths-");
+    const outside = await temporaryDirectory("inspect-outside-");
+    await writeFile(path.join(outside, "value.json"), '{"value":42}\n');
+    process.chdir(directory);
+    await symlink(path.join(outside, "value.json"), "linked.json");
+    const tool = createInspectFileTool("test", "");
+    for (const input of [path.join(outside, "value.json"), path.relative(directory, path.join(outside, "value.json")), "linked.json"]) {
+      const result = await tool.execute([input], executionContext);
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout!).data.outline).toHaveLength(2);
+    }
+    const directoryResult = await tool.execute([outside], executionContext);
+    expect(JSON.parse(directoryResult.stdout!).error.code).toBe("not_regular");
+  });
+
+  test("returns matching declaration source and minified JSON value without a second read", async () => {
+    const directory = await temporaryDirectory("inspect-source-");
+    process.chdir(directory);
+    const source = "package p\r\nfunc Pick() {\r\n\tprintln(\"🙂\")\r\n}\r\nfunc Other() {}\r\n";
+    await writeFile("sample.go", source);
+    await writeFile("value.json", '{"a/b":{"~x":"🙂value"},"other":"not-selected"}');
+    await writeFile("meta.md", "---\nsummary: |\n  multiline value\n---\n# Title\n");
+    const tool = createInspectFileTool("test", "");
+    const code = await tool.execute(["--source", "Pick", "sample.go"], executionContext);
+    const data = JSON.parse(code.stdout!).data;
+    expect(data.selection).toBe("Pick");
+    expect(data.outline).toHaveLength(1);
+    expect(data.outline[0].source).toEqual({
+      text: 'func Pick() {\r\n\tprintln("🙂")\r\n}',
+      source_bytes: Buffer.byteLength('func Pick() {\r\n\tprintln("🙂")\r\n}'),
+      omitted_bytes: 0,
+    });
+    expect(data.outline[0].line).toBe(`2:${hashLine("func Pick() {")}`);
+    expect(data.outline[0].line_end).toBe(`4:${hashLine("}")}`);
+
+    const value = await tool.execute(["--source", "/a~1b/~0x", "--source-bytes", "3", "value.json"], executionContext);
+    const entry = JSON.parse(value.stdout!).data.outline[0];
+    expect(entry.source.text).toBe('"');
+    expect(entry.source.source_bytes).toBe(Buffer.byteLength('"🙂value"'));
+    expect(entry.source.omitted_bytes).toBe(Buffer.byteLength('"🙂value"') - 1);
+    expect(entry.line).toBe(`1:${hashLine('{"a/b":{"~x":"🙂value"},"other":"not-selected"}')}`);
+    const root = await tool.execute(["--source", "", "value.json"], executionContext);
+    expect(JSON.parse(root.stdout!).data.outline[0].source.text).toBe('{"a/b":{"~x":"🙂value"},"other":"not-selected"}');
+    const yaml = await tool.execute(["--source", "summary", "meta.md"], executionContext);
+    expect(JSON.parse(yaml.stdout!).data.outline[0].source.text).toContain("multiline value");
+    expect(JSON.parse(yaml.stdout!).data.outline[0].line_end).toBe(`3:${hashLine("  multiline value")}`);
+    const missing = await tool.execute(["--source", "NoSuchName", "sample.go"], executionContext);
+    expect(JSON.parse(missing.stdout!).data.outline).toEqual([]);
+  });
+
+  test("keeps duplicate selections, bounded prefixes, and output-envelope truncation explicit", async () => {
+    const directory = await temporaryDirectory("inspect-selected-bound-");
+    process.chdir(directory);
+    await writeFile("long.json", `{${Array.from({length: 40}, () => `"same":"${"x".repeat(10_000)}"`).join(",")}}`);
+    const tool = createInspectFileTool("test", "");
+    const result = await tool.execute(["--source", "/same", "long.json"], executionContext);
+    expect(result.exitCode).toBe(0);
+    expect(Buffer.byteLength(result.stdout!)).toBeLessThanOrEqual(65_536);
+    const parsed = JSON.parse(result.stdout!);
+    expect(parsed.truncated).toBe(true);
+    expect(parsed.data.outline.length).toBeGreaterThan(1);
+    expect(parsed.truncation.after_entries).toBe(parsed.data.outline.length);
+    for (const entry of parsed.data.outline) {
+      expect(entry.source.source_bytes).toBe(10_002);
+      expect(entry.source.omitted_bytes).toBe(10_002 - 8192);
+    }
+    for (const args of [
+      ["--source-bytes", "1", "long.json"],
+      ["--source", "/same", "--source-bytes", "8193", "long.json"],
+      ["--source", "/same", "--source", "/same", "long.json"],
+    ]) {
+      const rejected = await tool.execute(args, executionContext);
+      expect(rejected.exitCode).toBe(1);
+      expect(JSON.parse(rejected.stdout!).error.code).toBe("usage");
+    }
+  });
+
+  test("parses quoted names and paths in source selections", async () => {
+    const tool = createInspectFileTool("test", "");
+    expect(await tool.parse('--source "A name" "path with spaces.md"', {})).toEqual([
+      "--source", "A name", "path with spaces.md",
+    ]);
+  });
+});
+
+describe("inspect_file bounds and paths", () => {
 
   test("emits LINE:HASH span identities without source bodies", async () => {
     const directory = await temporaryDirectory("inspect-file-hash-");

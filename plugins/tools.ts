@@ -12,7 +12,7 @@ const hcatDescription = `Read one UTF-8 file or inclusive logical-line range and
 const hcatPath = `(?:"(?:\\\\(?:["\\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\\x00-\\x1F"\\\\]|\\t)*"|[^\\x00-\\x20"]+)`;
 const hcatReadSpec = `${hcatPath}(?: (?:0|[1-9][0-9]*):[1-9][0-9]*)?`;
 const hcatRegex = `\\A(?:(?:--max-tokens|--preview-bytes) [1-9][0-9]* )*${hcatReadSpec}\\z`;
-const inspectFileRegex = `\\A${hcatPath}\\z`;
+const inspectFileRegex = `\\A(?:(?:--source ${hcatPath}|--source-bytes [1-9][0-9]*) )*${hcatPath}\\z`;
 
 const hgrepDescription = `Search files with supported ripgrep arguments and emit verified complete rows as \`"PATH":LINE:HASH TEXT\`. ${readerOptionsDescription} ${verifiedRowLimitDescription}`;
 

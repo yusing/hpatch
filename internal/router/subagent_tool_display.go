@@ -466,10 +466,14 @@ func toolActivityReadCommand(script string, call *syntax.CallExpr) (string, bool
 		}
 		add("Read", argv[3]+" "+start+":"+end)
 	case "inspect_file":
-		if len(argv) != 2 {
+		pathIndex := 1
+		for pathIndex+1 < len(argv) && (argv[pathIndex] == "--source" || argv[pathIndex] == "--source-bytes") {
+			pathIndex += 2
+		}
+		if len(argv)-pathIndex != 1 {
 			return "", false
 		}
-		add("Inspect", argv[1])
+		add("Inspect", argv[pathIndex])
 	case "ls":
 		if len(argv) > 2 || (len(argv) == 2 && strings.HasPrefix(argv[1], "-")) {
 			return "", false

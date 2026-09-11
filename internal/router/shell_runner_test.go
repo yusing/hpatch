@@ -2,6 +2,7 @@ package router
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -130,6 +131,36 @@ func TestShellRunnerEvaluatesPrivateToolsWithoutFrontends(t *testing.T) {
 		if exitCode != 0 || stdout != "row:1:8ed3 alpha\nrecovered" || stderr != "" {
 			t.Fatalf("%s: exit %d, stdout %q, stderr %q", interpreter, exitCode, stdout, stderr)
 		}
+	}
+}
+
+func TestShellRunnerInspectsSelectedOutsideSource(t *testing.T) {
+	registry := sharedProxyTestRegistry(t)
+	workspace := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "value.json")
+	if err := os.WriteFile(outside, []byte(`{"answer":{"nested":42},"other":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(workspace)
+	stdout, stderr, status := runShellWorkerTest(t, registry, "/bin/sh", nil,
+		fmt.Sprintf("inspect_file --source /answer %q", outside), nil)
+	var result struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Outline []struct {
+				Source struct {
+					Text    string `json:"text"`
+					Omitted int    `json:"omitted_bytes"`
+				} `json:"source"`
+			} `json:"outline"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatal(err)
+	}
+	if status != 0 || stderr != "" || !result.OK || len(result.Data.Outline) != 1 ||
+		result.Data.Outline[0].Source.Text != `{"nested":42}` || result.Data.Outline[0].Source.Omitted != 0 {
+		t.Fatalf("selected inspection: stdout=%s stderr=%q exit=%d", stdout, stderr, status)
 	}
 }
 

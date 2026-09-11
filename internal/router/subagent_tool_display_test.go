@@ -31,6 +31,7 @@ func TestSubagentToolDisplay(t *testing.T) {
 		{"shell", "hcat --preview-bytes 80 --max-tokens 100 a.go 1:20", "Read `a.go 1:20`"},
 		{"shell", "hcat a.go 1:20", "Read `a.go 1:20`"},
 		{"shell", "hgrep -n -F -e 'some text' a.go", "Search `-n -F -e 'some text' a.go`"},
+		{"shell", "inspect_file --source Main --source-bytes 100 a.go", "Inspect `a.go`"},
 		{"shell", "inspect_file a.go", "Inspect `a.go`"},
 		{"shell", "ls src", "List `src`"},
 		{"shell", `{"command":[]}`, "Run"},
