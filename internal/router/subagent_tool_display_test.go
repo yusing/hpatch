@@ -565,3 +565,34 @@ func TestSubagentBatchPatchFilesStaySeparate(t *testing.T) {
 		t.Fatalf("patch file boundaries = %q", displays)
 	}
 }
+
+func TestShellBatchActivityDisplay(t *testing.T) {
+	const first = "sed -n '1,360p' internal/router/session_inspect.go"
+	const search = "rg -n '^func Test' internal/router/session_inspect_test.go cmd/mekugi/main_test.go 2>/dev/null"
+	const last = "git status --short --branch\ngit log -1 --oneline"
+	for _, marker := range []string{"#!batch=SESSION", "#!batch-stop=SESSION"} {
+		source := marker + "\n" + first + "\nSESSION\n" + search + "\nSESSION\n" + last
+		want := strings.Join([]string{
+			toolActivityShell(first), toolActivityShell(search), toolActivityShell(last),
+		}, "\n\n")
+		if got := toolActivityShell(source); got != want {
+			t.Fatalf("batch display = %q, want %q", got, want)
+		}
+	}
+
+	firstSource := "#!params={\"workdir\":\"/tmp\"}\ncat first"
+	secondSource := "#!python3\nprint('SESSION')"
+	thirdSource := "cat third"
+	source := "#!batch=SESSION\n" + firstSource + "\nSESSION\n" + secondSource + "\nSESSION\n" + thirdSource
+	want := "Read `first`\n\n" +
+		toolActivityShell("#!python3\n#!params={\"workdir\":\"/tmp\"}\nprint('SESSION')\n") +
+		"\n\nRead `third`"
+	if got := toolActivityShell(source); got != want {
+		t.Fatalf("mixed interpreters and inherited params = %q, want %q", got, want)
+	}
+	for _, invalid := range []string{"#!batch=SESSION\ncat first", "#!batch=SESSION\ncat first\nSESSION\n"} {
+		if got := toolActivityShell(invalid); got != "Run\n"+toolActivityFenced("", invalid) {
+			t.Fatalf("invalid batch lost source: %q", got)
+		}
+	}
+}

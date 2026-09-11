@@ -158,6 +158,11 @@ heading. Literal added, removed, and context lines remain intact. Unrecognized p
 retains the original source-level diff display. Display never executes or retranslates an edit.
 Rejected, unavailable, and already-satisfied translations retain a truthful source-level
 fallback rather than claiming a patch was applied.
+Valid explicit shell batches classify each program independently, in order, using
+that program's interpreter and directives. Batch headers and separator lines are
+transport framing, not displayed commands. Malformed batches retain the complete
+source-level fallback; marker-like lines inside ordinary programs remain source.
+
 Mixed scripts of simple commands classify each command independently. An unclassified command
 retains its source as a `Run` action without hiding neighboring `Search`, `Read`, or other
 classified operations. Single-line `Run` details in these mixed summaries use inline code;

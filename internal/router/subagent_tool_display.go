@@ -321,6 +321,15 @@ func toolActivityShellLanguage(script, language string) string {
 	if toolActivityScriptReference(script) != "" {
 		return "Running stored script · command unavailable"
 	}
+	if _, _, batch := shellsyntax.BatchHeader(script); batch {
+		if programs, err := shellsyntax.Split(script); err == nil {
+			displays := make([]string, 0, len(programs))
+			for _, program := range programs {
+				displays = append(displays, toolActivityShellLanguage(program, language))
+			}
+			return strings.Join(displays, "\n\n")
+		}
+	}
 	parsed, err := shellsyntax.Parse(script)
 	if err == nil && !parsed.HasScript && parsed.CommandTemplate == "" && len(parsed.Interpreter) == 1 &&
 		(parsed.Interpreter[0] == "bash" || parsed.Interpreter[0] == "sh") {
