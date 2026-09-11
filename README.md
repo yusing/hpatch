@@ -214,8 +214,16 @@ mekugi --grok codex
 
 Ask the main agent to spawn `grok:grok-4.6` in fresh context
 (`fork_turns="none"`). Codex still manages the child, tools, permissions, and
-follow-ups. Start a new session after enabling Grok; a custom
-`model_catalog_json` must also include its entry.
+follow-ups. At startup, Mekugi uses `codex debug models` to read your selected
+catalog, adds Grok, and pins a private copy for the session. This requires a Codex
+version with `debug models` and `model_catalog_json` support. A custom catalog must
+contain a native v2 model whose instruction and tool metadata can be used for Grok.
+Other Codex sessions cannot replace this session's catalog. Model availability is
+fixed until restart; your configuration files are unchanged, and the private copy
+is removed when Mekugi exits. `--grok` cannot be combined with Codex's named
+`--profile` option or `exec --ignore-user-config` because `debug models` cannot
+honor those configuration modes. Use the default configuration or an explicit
+`-c model_catalog_json=...` instead.
 
 OpenAI-hosted search and inherited encrypted OpenAI history are not supported
 on this route. Explicit `max_output_tokens` limits are rejected because this

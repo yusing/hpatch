@@ -2,8 +2,12 @@
 
 ## CTR-SUBAGENTS-001 — Third-party native subagent routing
 
-`internal/router` owns opt-in model-catalog augmentation, provider selection, plaintext collaboration
-projection and Grok protocol/authentication adaptation. Codex remains the only owner of agent
+`cmd/mekugi` owns the private session catalog lifecycle: loading the selected catalog through
+Codex, pinning it with invocation-only configuration, and cleaning it up after the child exits.
+`internal/router/grok_catalog.go` owns deriving Grok metadata from the native v2 template.
+The HTTP models endpoint forwards native catalog responses without augmentation.
+`internal/router` owns provider selection, plaintext collaboration projection and Grok
+protocol/authentication adaptation. Codex remains the only owner of agent
 creation, delivery, tool execution, sandbox/approval enforcement and lifecycle state.
 
 The collaboration bridge runs after ordinary Mekugi request preparation and before CTP serialization.

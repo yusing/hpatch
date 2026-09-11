@@ -6,13 +6,25 @@
 Without it, the existing model catalog, collaboration schemas and OpenAI routing remain unchanged;
 a `grok:` request fails locally rather than sending it to the OpenAI provider.
 
-The router appends a Grok model to the authenticated Codex model catalog, retaining the catalog's
+The wrapper adds a Grok model to Codex's selected catalog, retaining the catalog's
 native v2 instruction and executor metadata. The entry advertises text/image input, the 500,000-token
 context window, and low/medium/high/xhigh reasoning (high by default). It does not inherit OpenAI's
 Responses Lite transport, hosted search, service tiers or upgrade schedule. Existing catalog entries
-remain unchanged. A conflicting alias or a catalog without a native v2 template fails explicitly.
-Codex must fetch the enabled catalog before it can select the model; a new session is required when
-switching from an unbridged session or a stale custom catalog.
+remain unchanged. A catalog without a native v2 template fails explicitly. An existing cached
+Grok entry is rebuilt from that template rather than duplicated. With `--grok`, the wrapper runs
+`codex debug models` with the invocation's configuration and working-directory selectors,
+then writes a private session catalog and enforces its `model_catalog_json` path in the final
+invocation-only config layer. Named Codex profiles (`--profile`/`-p`) and `exec --ignore-user-config`
+are rejected with `--grok` before catalog loading because the catalog command cannot honor those
+configuration modes. The default configuration and explicit
+`-c model_catalog_json` remain supported. The catalog is fixed for the session and cannot be replaced by
+another Codex process's shared cache. Thread switching, spawning, and follow-ups retain the same
+Grok tool metadata. Catalog command failure, invalid output, or private-file creation failure
+prevents the main Codex launch. Output is bounded to 8 MiB and catalog preparation to one minute.
+The private directory is mode 0700, its file is mode 0600, and both are removed on exit or launch
+failure. User configuration and the shared cache are not rewritten by Mekugi; Codex retains its
+normal catalog-command behavior. `/v1/models` forwards the upstream catalog unchanged, without
+Grok injection or a synthetic ETag.
 
 Only a native child request with one `x-openai-subagent: collab_spawn` header, a thread ID and valid
 `subagent_kind: thread_spawn` metadata may use the Grok route. Codex owns spawning, listing, messaging,

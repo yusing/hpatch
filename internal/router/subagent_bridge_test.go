@@ -3,6 +3,9 @@ package router
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -61,7 +64,7 @@ func TestSubagentBridgeProjectsAndRestoresPlaintext(t *testing.T) {
 }
 func TestGrokCatalogPreservesNativeMetadata(t *testing.T) {
 	catalog := []byte(`{"models":[{"slug":"gpt-5.6-sol","multi_agent_version":"v2","use_responses_lite":true,"model_messages":{"instructions_template":"native instructions"},"unknown_future_field":42}],"extra":"keep"}`)
-	result, err := appendGrokModel(catalog)
+	result, err := GrokModelCatalog(catalog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,8 +81,9 @@ func TestGrokCatalogPreservesNativeMetadata(t *testing.T) {
 	if string(parsed.Models[1]["use_responses_lite"]) != "false" {
 		t.Fatal("inherited OpenAI lite transport")
 	}
-	if _, err := appendGrokModel(result); err == nil {
-		t.Fatal("accepted conflicting alias")
+	repeated, err := GrokModelCatalog(result)
+	if err != nil || !bytes.Equal(result, repeated) {
+		t.Fatalf("catalog changed when pinning a cached Grok entry: %v", err)
 	}
 }
 
@@ -105,7 +109,7 @@ func TestGrokCatalogRequiresAnActualV2Template(t *testing.T) {
 		if fallback {
 			models = append(models, map[string]any{"slug": "other", "multi_agent_version": "v2", "marker": "correct"})
 		}
-		result, err := appendGrokModel(mustTestJSON(t, map[string]any{"models": models}))
+		result, err := GrokModelCatalog(mustTestJSON(t, map[string]any{"models": models}))
 		if !fallback {
 			if err == nil {
 				t.Fatal("accepted non-v2 catalog")
@@ -122,5 +126,43 @@ func TestGrokCatalogRequiresAnActualV2Template(t *testing.T) {
 		if jsonString(catalog.Models[len(catalog.Models)-1], "marker") != "correct" {
 			t.Fatal("selected non-v2 template")
 		}
+	}
+}
+
+func TestModelsHandlerPreservesNativeCatalogWithGrokEnabled(t *testing.T) {
+	body := `{"models":[{"slug":"gpt-5.6-sol","multi_agent_version":"v2"}]}`
+	client := &http.Client{Transport: serverRoundTripper(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Etag": []string{`"native-etag"`}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})}
+	provider := newProviderClient(testProviderBaseURL, client)
+	provider.grok = &grokClient{}
+	request := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	request.Header = codexAuthHeaders()
+	response := httptest.NewRecorder()
+	modelsHandler(provider, nil)(response, request)
+	if response.Code != http.StatusOK || response.Body.String() != body || response.Header().Get("ETag") != `"native-etag"` {
+		t.Fatalf("native catalog was rewritten: status=%d body=%s etag=%s", response.Code, response.Body.String(), response.Header().Get("ETag"))
+	}
+}
+
+func TestGrokCatalogRebuildsCachedMetadata(t *testing.T) {
+	body := []byte(`{"models":[{"slug":"grok:grok-4.6","multi_agent_version":"v2","apply_patch_tool_type":null},{"slug":"gpt-5.6-sol","multi_agent_version":"v2","apply_patch_tool_type":"freeform","shell_type":"unified_exec"}]}`)
+	result, err := GrokModelCatalog(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog struct {
+		Models []map[string]json.RawMessage
+	}
+	if err := json.Unmarshal(result, &catalog); err != nil || len(catalog.Models) != 2 {
+		t.Fatalf("rebuilt catalog: %v", err)
+	}
+	grok := catalog.Models[1]
+	if jsonString(grok, "slug") != grokModel || jsonString(grok, "apply_patch_tool_type") != "freeform" || jsonString(grok, "shell_type") != "unified_exec" {
+		t.Fatalf("cached Grok tool metadata was not rebuilt: %s", result)
 	}
 }
