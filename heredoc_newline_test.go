@@ -87,6 +87,9 @@ func TestExplicitHeredocNewlineBoundaries(t *testing.T) {
 			// through Apply below.
 			normalized := strings.ReplaceAll(test.before, "\r\n", "\n")
 			wantTranslated := strings.ReplaceAll(test.want, "\r\n", "\n")
+			if wantTranslated != "" && !strings.HasSuffix(wantTranslated, "\n") {
+				wantTranslated += "\n" // Native apply_patch cannot leave the final line unterminated.
+			}
 			tree, err := patchtest.Apply(map[string]string{"file.txt": normalized}, string(translation.Patch))
 			if err != nil || tree["file.txt"] != wantTranslated {
 				t.Fatalf("translated content = %q, error %v, want %q", tree["file.txt"], err, wantTranslated)

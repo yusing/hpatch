@@ -56,6 +56,12 @@ Translation output contains file actions in deterministic first-touch order:
 *** End Patch
 ```
 
+An `Add File` action emits one `+` row per actual logical source line. The host supplies
+that row's final LF; a terminating LF is not an extra empty row. Empty content emits
+no addition rows. Explicit blank lines, including at EOF, remain addition rows.
+Like the host format itself, a nonempty unterminated addition receives a final LF;
+direct engine application remains byte-exact.
+
 Each action includes only syntax relevant to that file: additions use `Add File`,
 deletions use `Delete File`, moves use `Update File` plus `Move to`, and content edits
 use `Update File` hunks. A moved and edited file combines its content hunks and move in
@@ -206,9 +212,17 @@ prevents application; cancellation during that sequence does not interrupt it. A
 return late cancellation after applying changes. An application error therefore does not imply
 that no files changed; callers must inspect the outcome and workspace before retrying.
 
-OpenAI `apply_patch` is a logical-line format and cannot preserve CRLF or standalone-CR
-bytes when its output is applied by the tool. Translation therefore returns LF-only patch text and normalizes line endings only in its displayed before/after lines. It does not modify source files. Root application continues to preserve existing line endings outside explicitly inserted strings. Applying translated output to a non-LF file may normalize
-that file to LF; this is a declared format limitation, not byte equivalence.
+OpenAI `apply_patch` is a logical-line format. Translation returns LF-only patch text
+and normalizes line endings only in its displayed before/after lines; it does not
+modify source files. The host's legacy update mode normalizes files to LF and can
+collapse blank lines at EOF. Its line-ending-preservation mode retains those blank
+lines and existing line endings. New files and updated final lines receive a final
+terminator; an explicitly unterminated result is not byte-representable through
+this format. Direct root application remains byte-exact outside the documented
+language-aware finalization. Native executor parity tests cover the preservation
+mode separately from direct engine application and the portable host test harness.
+Set `MEKUGI_TEST_APPLY_PATCH` to the installed host executable when running
+`go test . -run TestHostNewlineParity`; the native subtests otherwise skip.
 
 Basic `Apply` returns errors for failures. Host variants place generic diagnostics
 and structured failure data in `HostTranslation`; rendered generic diagnostics use the `mekugi:`

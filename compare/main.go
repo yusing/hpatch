@@ -94,7 +94,7 @@ func scenarios() []scenario {
 			name:    "new file typing",
 			initial: map[string]string{},
 			script:  "new note.txt\ntype \"foo bar\\n\"\n",
-			patch:   "*** Begin Patch\n*** Add File: note.txt\n+foo bar\n+\n*** End Patch\n",
+			patch:   "*** Begin Patch\n*** Add File: note.txt\n+foo bar\n*** End Patch\n",
 		},
 		{
 			name: "edit move and delete",

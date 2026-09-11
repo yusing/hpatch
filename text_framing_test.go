@@ -33,8 +33,12 @@ func TestTextFramingThroughPublicOperations(t *testing.T) {
 				t.Fatalf("translate: %v, %s", err, translated.Diagnostic)
 			}
 			tree, err := patchtest.Apply(before, string(translated.Patch))
-			if err != nil || tree["file.txt"] != test.want {
-				t.Fatalf("translated tree = %v, error %v; want %q", tree, err, test.want)
+			hostWant := test.want
+			if hostWant != "" && !strings.HasSuffix(hostWant, "\n") {
+				hostWant += "\n" // Native apply_patch terminates every resulting line.
+			}
+			if err != nil || tree["file.txt"] != hostWant {
+				t.Fatalf("translated tree = %v, error %v; want %q", tree, err, hostWant)
 			}
 			result, err := applyForHostAtTest(t, root, test.script, "")
 			if err != nil || readTestFile(t, root, "file.txt") != test.want {
