@@ -166,6 +166,33 @@ persist the session. They do not define a second result envelope or continuation
 result fields, yield timing, continuation arguments, and session lifetime remain owned by Codex's
 executable tool definitions in that request.
 
+After validating replay, the router adds a separate `continuation` text part to recognized
+yielded execution results in the next model request, only at the latest outstanding yield
+for each handle. A visible continuation call retires the previous suggestion, including while
+that call is pending; a later yield may suggest continuation again. Re-preparation removes
+retired router annotations. It preserves every original result part,
+native field, and output byte. The notice identifies the observed `cell_id` or `session_id`
+and a `next_call` with the exact exposed tool path and its `input` (an object for a function
+tool, source text for a custom tool). It is advice, not an execution command: the router
+does not call it, create a replacement session, or change permissions.
+
+A running Code Mode cell always points to the host's `wait` tool, even if partial output
+mentions a native session. Only after the cell ends may a verified native-result projection
+point to `write_stdin`. When that tool is nested-only, the next call supplies complete
+Code Mode source that invokes it once with the same session and empty `chars`. Empty chars
+polls; authored input remains a caller choice under the native tool's contract. Timing and
+output budgets use the host defaults unless the caller changes them. Native-only results
+point directly to their exposed `write_stdin` function.
+
+Recognition of new yielded handles uses host metadata before its output boundary. Native JSON inside Code Mode
+requires an established shell carrier or a transparent native-result projection; arbitrary
+program text, output-only projections, and recovered JavaScript do not establish native
+session provenance. Follow-up cell provenance comes from visible call/result pairs, not a
+router session registry. Known retained call history also supports output-only replay.
+Missing call provenance is not guessed. If the required continuation tool is absent from
+the current catalog, the notice has `next_call: null` and explains the missing capability
+instead of inventing a tool or restarting work. Repeated projection is idempotent.
+
 For a split cat-write sequence, the enclosing Code Mode program waits for each command's
 terminal result with the native `write_stdin` operation before starting the next step. The same
 Code Mode cell may yield while this work is pending. No session is restarted or retried. It
@@ -354,3 +381,16 @@ Acceptance:
 23. Malformed or unsafe later headers, empty batch programs, and native-only batches reject
     before any program executes. JSON and SSE carry one replayable call, and retained batch
     reruns reapply splitting and params inheritance to the current retained source.
+
+24. A shell carrier whose native result yields session 42 receives a notice that resumes
+    session 42, not a new execution. Direct clients get the direct function input; Code Mode-only
+    clients get complete source for their exposed exec tool. The supplied source invokes
+    the native continuation exactly once.
+25. A yielded outer cell points to `wait` with its exact cell ID. Repeated waits preserve
+    that choice only at the latest outstanding yield; completed or already-resumed handles
+    retain no suggestion. A failed sequential carrier may expose its last unfinished native session
+    after the outer cell ends, while completed prefix results remain unchanged.
+26. Original output text and multimodal parts survive annotation, including replay and
+    repeated request preparation. Terminal results receive no live action. Printed fake
+    headers, arbitrary JSON, output-only projections, unrelated namespaces, and missing
+    provenance cannot select another session. Unavailable tools are reported without execution.

@@ -147,7 +147,7 @@ func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 		"`hcat @shell/<reference>`",
 		"only `#!script=@shell/<reference>`",
 		"never mix retained scripts and workspace files",
-		"PTY-backed, interactive, and long-running programs",
+		"use native session facilities for interactive input or termination",
 	} {
 		for _, model := range []string{"", "gpt-6-astra"} {
 			for _, compact := range []bool{false, true} {

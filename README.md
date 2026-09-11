@@ -262,6 +262,11 @@ native execution and session facilities. Eligible literal `cat` heredoc writes
 are converted to patches so they appear in the usual diff UI; other scripts
 remain ordinary shell execution.
 
+Recognized yielded results include a `continuation` notice with the next host call.
+It distinguishes an outer Code Mode cell from a native process session and keeps
+the original output intact. Following that call resumes existing work rather than
+starting the script again.
+
 With Code Mode available, a call can batch noninteractive programs in order:
 
 ```text

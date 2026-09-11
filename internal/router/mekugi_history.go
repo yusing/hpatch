@@ -389,8 +389,10 @@ func appendToolOutputWarning(raw json.RawMessage, warning string) (json.RawMessa
 		return nil, false, errors.New("tool output must be text or content parts")
 	}
 	notice := mustMarshalJSON(map[string]string{"type": "input_text", "text": warning})
-	if len(parts) != 0 && sameJSONValue(parts[len(parts)-1], notice) {
-		return raw, false, nil
+	for _, part := range parts {
+		if sameJSONValue(part, notice) {
+			return raw, false, nil
+		}
 	}
 	return mustMarshalJSON(append(parts, notice)), true, nil
 }

@@ -63,6 +63,11 @@ native continuation operation resumes the same host-owned session. JSON and SSE 
 and replay preserve this distinction without defining another result envelope or continuation
 protocol. Other contributed tools retain their declared output projections.
 
+The router's model-input projection may annotate an observed execution yield with the next
+host call. It derives tool availability from the current catalog and provenance from validated
+replay and visible calls/results. Original output stays intact; no execution-lifecycle record,
+polling loop, permission decision, or new continuation tool belongs to this projection.
+
 For multi-program built-in shell input, the response transformer resolves retained input and
 uses the portable splitter before invoking the existing translator for each program. It validates
 the complete batch before rendering one Code Mode carrier with separate native exec arguments

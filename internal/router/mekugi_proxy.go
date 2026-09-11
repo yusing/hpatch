@@ -493,6 +493,7 @@ func (p *mekugiProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		codeModeToolName: codeModeToolName,
 		nativeTools:      nativeTools,
 	}
+	projectExecutionContinuations(request, tools, codeModeToolName, visible)
 	if transform.subagentTurn {
 		transform.prepareShellActivity(request.fields["input"])
 	}

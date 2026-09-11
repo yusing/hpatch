@@ -162,9 +162,11 @@ A retained result includes `retained: true` and a `script_ref`. Read the source 
 containing only `#!script=@shell/<reference>`. A HPATCH script using an `@shell/` path must use
 only `@shell/` paths; never mix retained scripts and workspace files in one HPATCH script.
 
-Shell can start PTY-backed, interactive, and long-running programs. When execution yields a
-session handle, use the native session facilities to send input, poll output, resize the PTY, or
-terminate the process. Each shell call starts a new execution.
+When you need a pending execution's result, resume its latest outstanding handle using the
+`continuation` notice's `next_call`. Prefer host completion notifications when available.
+A running outer Code Mode cell owns continuation; use its `wait`, not its inner session.
+Resubmitting shell source starts a new execution. A null `next_call` means the host capability
+is unavailable; use native session facilities for interactive input or termination.
 
 ## HPATCH/2
 
