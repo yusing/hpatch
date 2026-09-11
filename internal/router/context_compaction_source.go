@@ -112,6 +112,22 @@ func reduceContextCompactionSourceWithFrontier(original, retained []json.RawMess
 				references = append(references, fields["input"], fields["arguments"])
 			}
 		case "function_call_output", "custom_tool_call_output":
+			visitOutput := func(text string) {
+				compactionSourceVisitDecodedReferences(text, func(decoded string) {
+					for line := range strings.SplitAfterSeq(decoded, "\n") {
+						if match := compactionCompleteSourceRow.FindStringSubmatch(line); match != nil {
+							line = strings.Replace(line, match[1], "", 1)
+						}
+						for _, match := range compactionSourceRangeReference.FindAllStringSubmatch(line, -1) {
+							ranges = append(ranges, [2]string{match[1], match[2]})
+						}
+						for _, row := range compactionRowReference.FindAllString(line, -1) {
+							rowReferences[row] = true
+						}
+					}
+				}, &unsafeEncoding)
+			}
+			compactionVisitReferenceStrings(fields["output"], visitOutput)
 			continue
 		default:
 			references = append(references, fields["content"], fields["summary"])

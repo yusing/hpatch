@@ -323,7 +323,17 @@ func runManualCompactionProbe(command *exec.Cmd, directory, prompt string) error
 		Params json.RawMessage `json:"params"`
 		Error  json.RawMessage `json:"error"`
 	}
+	pending := make([]rpcMessage, 0)
+	matches := func(message rpcMessage, id int, method string) bool {
+		return id != 0 && message.ID == id || method != "" && message.Method == method
+	}
 	receive := func(id int, method string) (rpcMessage, error) {
+		for index, message := range pending {
+			if matches(message, id, method) {
+				pending = append(pending[:index], pending[index+1:]...)
+				return message, nil
+			}
+		}
 		for {
 			var message rpcMessage
 			if err := decoder.Decode(&message); err != nil {
@@ -332,9 +342,10 @@ func runManualCompactionProbe(command *exec.Cmd, directory, prompt string) error
 			if len(message.Error) > 0 || message.Method == "error" {
 				return message, fmt.Errorf("app-server error: %+v", message)
 			}
-			if (id != 0 && message.ID == id) || (method != "" && message.Method == method) {
+			if matches(message, id, method) {
 				return message, nil
 			}
+			pending = append(pending, message)
 		}
 	}
 	if err := send(1, "initialize", map[string]any{"clientInfo": map[string]any{"name": "mekugi_compaction_test", "version": "1"}}); err != nil {

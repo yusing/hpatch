@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -50,8 +51,8 @@ func compactionRetiredReadToolOutput(raw json.RawMessage, tool string) (json.Raw
 		return compactionRetiredTruncatedReadToolOutput(parts, serialized, tool)
 	}
 	if rawError, exists := result["isError"]; exists {
-		var isError bool
-		if json.Unmarshal(rawError, &isError) != nil || isError {
+		var isError *bool
+		if json.Unmarshal(rawError, &isError) != nil || isError == nil || *isError {
 			return nil, false
 		}
 	}
@@ -287,7 +288,8 @@ func compactionRetiredSearchItemMaps(items []map[string]json.RawMessage) (json.R
 	for index, item := range items {
 		identified := false
 		for _, key := range []string{"url", "source_url", "title", "id", "objectID", "citation", "citation_id", "source"} {
-			if raw, exists := item[key]; exists && len(raw) > 0 && string(raw) != "null" {
+			var identity string
+			if raw, exists := item[key]; exists && json.Unmarshal(raw, &identity) == nil && strings.TrimSpace(identity) != "" {
 				identified = true
 				break
 			}
@@ -300,7 +302,15 @@ func compactionRetiredSearchItemMaps(items []map[string]json.RawMessage) (json.R
 		itemChanged := false
 		for _, key := range []string{"snippet", "snippets", "body", "content", "text", "markdown", "highlights"} {
 			raw, exists := item[key]
-			if !exists || len(raw) < 256 {
+			if !exists {
+				continue
+			}
+			var text string
+			if json.Unmarshal(raw, &text) == nil {
+				if len(text) < 256 {
+					continue
+				}
+			} else if len(raw) < 256 {
 				continue
 			}
 			body, ok := compactionRetiredReadJSONBody(raw)
@@ -410,8 +420,16 @@ func compactionRetiredReadJSONBody(raw json.RawMessage) (json.RawMessage, bool) 
 
 	var stringsOnly []string
 	if json.Unmarshal(raw, &stringsOnly) == nil && len(stringsOnly) > 0 {
+		changed := false
 		for index, text := range stringsOnly {
+			if len(text) < 256 {
+				continue
+			}
 			stringsOnly[index] = compactionRetiredReadBodyString(text)
+			changed = true
+		}
+		if !changed {
+			return nil, false
 		}
 		return mustMarshalJSON(stringsOnly), true
 	}
@@ -478,6 +496,32 @@ func compactionRetiredDocumentText(text string) (string, bool) {
 	return evidence, true
 }
 
+func compactionBoundReadBodyEvidenceLine(line string) string {
+	const (
+		maxLineBytes = 1024
+		edgeBytes    = 384
+	)
+	if len(line) <= maxLineBytes {
+		return line
+	}
+	content, ending := line, ""
+	if trimmed, ok := strings.CutSuffix(content, "\r\n"); ok {
+		content, ending = trimmed, "\r\n"
+	} else if trimmed, ok := strings.CutSuffix(content, "\n"); ok {
+		content, ending = trimmed, "\n"
+	}
+	prefixEnd := edgeBytes
+	for prefixEnd > 0 && !utf8.ValidString(content[:prefixEnd]) {
+		prefixEnd--
+	}
+	suffixStart := len(content) - edgeBytes
+	for suffixStart < len(content) && !utf8.RuneStart(content[suffixStart]) {
+		suffixStart++
+	}
+	return fmt.Sprintf("%s\n[mekugi compaction: oversized retained documentation evidence line truncated; original bytes=%d; omitted bytes=%d]\n%s%s",
+		content[:prefixEnd], len(content), len(content)-prefixEnd-(len(content)-suffixStart), content[suffixStart:], ending)
+}
+
 func compactionReadBodyEvidence(text string) string {
 	lines := strings.SplitAfter(text, "\n")
 	keep := make([]bool, len(lines))
@@ -516,7 +560,7 @@ func compactionReadBodyEvidence(text string) string {
 	var result strings.Builder
 	for index, line := range lines {
 		if keep[index] {
-			result.WriteString(line)
+			result.WriteString(compactionBoundReadBodyEvidenceLine(line))
 		}
 	}
 	return result.String()

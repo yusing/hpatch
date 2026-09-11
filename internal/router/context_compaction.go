@@ -1,6 +1,8 @@
 package router
 
 import (
+	"cmp"
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -19,6 +21,22 @@ func reduceContextCompaction(input []json.RawMessage) []json.RawMessage {
 }
 
 func reduceContextCompactionWithPlan(input []json.RawMessage, plan compactionRetentionPlan) []json.RawMessage {
+	reduced, err := reduceContextCompactionPlan(context.Background(), input, plan)
+	if err != nil {
+		return input
+	}
+	return reduced
+}
+
+func reduceContextCompactionContext(ctx context.Context, input []json.RawMessage) ([]json.RawMessage, error) {
+	return reduceContextCompactionPlan(ctx, input, compactionRetentionPlan{compactionRecentOperations, compactionRecentOperations})
+}
+
+func reduceContextCompactionPlan(ctx context.Context, input []json.RawMessage, plan compactionRetentionPlan) ([]json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return input, err
+	}
+	original := input
 	// Clean transport metadata while stable native IDs are still present.
 	// Narration reduction may remove an unreferenced ordinary-assistant ID,
 	// after which the metadata pass must conservatively leave that item alone.
@@ -39,6 +57,9 @@ func reduceContextCompactionWithPlan(input []json.RawMessage, plan compactionRet
 	duplicates := make(map[string]bool)
 	lastResult := -1
 	for index, raw := range input {
+		if err := ctx.Err(); err != nil {
+			return original, err
+		}
 		if json.Unmarshal(raw, &items[index]) != nil {
 			continue
 		}
@@ -53,7 +74,51 @@ func reduceContextCompactionWithPlan(input []json.RawMessage, plan compactionRet
 			lastResult = index
 		}
 	}
+
+	type readEvidence struct {
+		callID string
+		call   int
+	}
+	replacementEvidence := make(map[string][]readEvidence)
+	for resultIndex, candidate := range items {
+		if err := ctx.Err(); err != nil {
+			return original, err
+		}
+		if candidate.Type != "function_call_output" || candidate.CallID == "" || duplicates[candidate.CallID] {
+			continue
+		}
+		sourceIndex, exists := calls[candidate.CallID]
+		if !exists || sourceIndex >= resultIndex {
+			continue
+		}
+		source := items[sourceIndex]
+		if source.Type != "function_call" || (source.Name != "exec_command" && source.Name != "functions.exec_command") {
+			continue
+		}
+		var args struct {
+			Command string `json:"cmd"`
+			Shell   string `json:"shell"`
+		}
+		if json.Unmarshal([]byte(source.Arguments), &args) != nil || args.Shell != "" ||
+			contextCompactionCommand(args.Command) != "read" {
+			continue
+		}
+		_, evidence, ok := contextCompactionOutput(candidate.Output)
+		if ok && len(evidence) >= 256 {
+			replacementEvidence[evidence] = append(replacementEvidence[evidence], readEvidence{candidate.CallID, sourceIndex})
+		}
+	}
+	for text, candidates := range replacementEvidence {
+		slices.SortFunc(candidates, func(a, b readEvidence) int {
+			return cmp.Compare(a.call, b.call)
+		})
+		replacementEvidence[text] = candidates
+	}
+
 	for index, current := range items {
+		if err := ctx.Err(); err != nil {
+			return original, err
+		}
 		if index == lastResult || protected[current.CallID] || (current.Type != "function_call_output" && current.Type != "custom_tool_call_output") {
 			continue
 		}
@@ -93,17 +158,8 @@ func reduceContextCompactionWithPlan(input []json.RawMessage, plan compactionRet
 		reduced := text
 		switch kind {
 		case "go-test":
-			var kept strings.Builder
-			removed := 0
-			for line := range strings.SplitAfterSeq(text, "\n") {
-				if contextCompactionGoRoutine.MatchString(strings.TrimSuffix(line, "\n")) {
-					removed++
-				} else {
-					kept.WriteString(line)
-				}
-			}
-			if removed > 0 {
-				reduced = fmt.Sprintf("[mekugi: omitted %d Go test progress/pass lines]\n%s", removed, kept.String())
+			if kept, removed := compactionReduceGoTestOutput(text); removed > 0 {
+				reduced = fmt.Sprintf("[mekugi: omitted %d corroborated Go test runner lines]\n%s", removed, kept)
 			}
 		case "search":
 			// A later byte-identical output is explicit replacement evidence,
@@ -112,35 +168,14 @@ func reduceContextCompactionWithPlan(input []json.RawMessage, plan compactionRet
 			if len(text) < 256 {
 				continue
 			}
-			for later := index + 1; later < len(items); later++ {
-				candidate := items[later]
-				if candidate.Type != "function_call_output" || candidate.CallID == "" || duplicates[candidate.CallID] {
-					continue
-				}
-				sourceIndex, exists := calls[candidate.CallID]
-				if !exists || sourceIndex <= index || sourceIndex >= later {
-					continue
-				}
-				source := items[sourceIndex]
-				if source.Type != "function_call" || (source.Name != "exec_command" && source.Name != "functions.exec_command") {
-					continue
-				}
-				var args struct {
-					Command string `json:"cmd"`
-					Shell   string `json:"shell"`
-				}
-				if json.Unmarshal([]byte(source.Arguments), &args) != nil || args.Shell != "" {
-					continue
-				}
-				if contextCompactionCommand(args.Command) != "read" {
-					continue
-				}
-				_, evidence, ok := contextCompactionOutput(candidate.Output)
-				if ok && evidence == text {
-					protected[candidate.CallID] = true
-					reduced = fmt.Sprintf("[mekugi compaction: matching search listing retained verbatim in tool result %q; original command and successful exit status retained]\n", candidate.CallID)
-					break
-				}
+			candidates := replacementEvidence[text]
+			position, _ := slices.BinarySearchFunc(candidates, index+1, func(candidate readEvidence, target int) int {
+				return cmp.Compare(candidate.call, target)
+			})
+			if position < len(candidates) {
+				candidate := candidates[position]
+				protected[candidate.callID] = true
+				reduced = fmt.Sprintf("[mekugi compaction: matching search listing retained verbatim in tool result %q; original command and successful exit status retained]\n", candidate.callID)
 			}
 		}
 		if len(reduced) >= len(text) {
@@ -153,9 +188,15 @@ func reduceContextCompactionWithPlan(input []json.RawMessage, plan compactionRet
 		fields["output"] = encode(reduced)
 		output[index] = mustMarshalJSON(fields)
 	}
+	if err := ctx.Err(); err != nil {
+		return original, err
+	}
 	retained := reduceContextCompactionSourceWithFrontier(input,
 		retireCompactionOperationsWithFrontier(reduceRepeatedCompactionRows(output, protected), plan.operations), plan.outputs)
-	return consolidateContextCompactionRecords(input, retained)
+	if err := ctx.Err(); err != nil {
+		return original, err
+	}
+	return consolidateContextCompactionRecords(input, retained), nil
 }
 
 // Accept structured results or Codex's native completed-exec header. Unknown
@@ -195,7 +236,61 @@ func contextCompactionOutput(raw json.RawMessage) (func(string) json.RawMessage,
 
 var contextCompactionNativeResult = regexp.MustCompile(`(?s)\A((?:Chunk ID: [^\r\n]+\n)?Wall time: [0-9]+(?:\.[0-9]+)? seconds\nProcess exited with code 0\n(?:Original token count: [0-9]+\n)?(?:Output|Final output):\n)(.*)\z`)
 
-var contextCompactionGoRoutine = regexp.MustCompile(`^(=== (RUN|PAUSE|CONT) +\S+|[ \t]*--- PASS: \S+ \([0-9]+(\.[0-9]+)?s\))$`)
+var (
+	contextCompactionGoEvent   = regexp.MustCompile(`^=== (RUN|PAUSE|CONT) +(\S+)$`)
+	contextCompactionGoOutcome = regexp.MustCompile(`^[ \t]*--- (PASS|FAIL|SKIP): (\S+) \([0-9]+(?:\.[0-9]+)?s\)$`)
+)
+
+func compactionReduceGoTestOutput(text string) (string, int) {
+	type testRun struct {
+		runs, passes int
+		otherOutcome bool
+	}
+	runs := make(map[string]*testRun)
+	state := func(name string) *testRun {
+		if runs[name] == nil {
+			runs[name] = new(testRun)
+		}
+		return runs[name]
+	}
+	for line := range strings.SplitAfterSeq(text, "\n") {
+		trimmed := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+		if match := contextCompactionGoEvent.FindStringSubmatch(trimmed); match != nil {
+			if match[1] == "RUN" {
+				state(match[2]).runs++
+			}
+			continue
+		}
+		if match := contextCompactionGoOutcome.FindStringSubmatch(trimmed); match != nil {
+			if match[1] == "PASS" {
+				state(match[2]).passes++
+			} else {
+				state(match[2]).otherOutcome = true
+			}
+		}
+	}
+	corroborated := func(name string) bool {
+		run := runs[name]
+		return run != nil && run.runs > 0 && run.runs == run.passes && !run.otherOutcome
+	}
+
+	var kept strings.Builder
+	removed := 0
+	for line := range strings.SplitAfterSeq(text, "\n") {
+		trimmed := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+		if match := contextCompactionGoEvent.FindStringSubmatch(trimmed); match != nil && corroborated(match[2]) {
+			removed++
+			continue
+		}
+		if match := contextCompactionGoOutcome.FindStringSubmatch(trimmed); match != nil &&
+			match[1] == "PASS" && corroborated(match[2]) {
+			removed++
+			continue
+		}
+		kept.WriteString(line)
+	}
+	return kept.String(), removed
+}
 
 // Parse, never execute or expand dynamic shell syntax. Compound commands,
 // redirections, wrappers, assignments, and substitutions are outside this

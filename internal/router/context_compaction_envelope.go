@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -31,11 +32,18 @@ const (
 // history travels in the envelope; no transcript archive or retrieval is used.
 type contextCompactor struct {
 	keyPath string
+	aeadMu  sync.Mutex
+	aead    cipher.AEAD
 }
 
 func (c *contextCompactor) cipher(ctx context.Context, create bool) (cipher.AEAD, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	c.aeadMu.Lock()
+	defer c.aeadMu.Unlock()
+	if c.aead != nil {
+		return c.aead, nil
 	}
 	if c.keyPath == "" {
 		return nil, errors.New("mekugi compaction key path is not configured")
@@ -72,7 +80,12 @@ func (c *contextCompactor) cipher(ctx context.Context, create bool) (cipher.AEAD
 	if err != nil {
 		return nil, err
 	}
-	return cipher.NewGCMWithRandomNonce(block)
+	aead, err := cipher.NewGCMWithRandomNonce(block)
+	if err != nil {
+		return nil, err
+	}
+	c.aead = aead
+	return aead, nil
 }
 
 func (c *contextCompactor) seal(ctx context.Context, items []json.RawMessage) (json.RawMessage, error) {

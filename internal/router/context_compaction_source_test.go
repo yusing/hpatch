@@ -96,6 +96,73 @@ func TestCompactionSourcePrunesOnlyUnreferencedRows(t *testing.T) {
 		t.Fatal("source pruning was not idempotent")
 	}
 }
+
+func TestCompactionSourceFollowsToolOutputRowReferences(t *testing.T) {
+	rows := compactionSourceTestRows("", 18)
+	successful := string(mustMarshalJSON(map[string]any{
+		"output": "Continue from row 3:0003.", "exit_code": 0, "wall_time_seconds": 1,
+	}))
+	live := string(mustMarshalJSON(map[string]any{
+		"output": "Continue from row 3:0003.", "exit_code": 0, "session_id": 42,
+	}))
+	for _, test := range []struct {
+		name         string
+		call, result json.RawMessage
+	}{
+		{
+			name:   "function_call_output",
+			call:   compactTestCall("consumer", "pwd"),
+			result: compactTestOutput("consumer", "Continue from row 3:0003.", 0),
+		},
+		{
+			name:   "failed_function_call_output",
+			call:   compactTestCall("consumer", "pwd"),
+			result: compactTestOutput("consumer", "Continue from row 3:0003.", 1),
+		},
+		{
+			name: "custom_tool_call_output",
+			call: mustMarshalJSON(map[string]any{
+				"type": "custom_tool_call", "name": "shell", "call_id": "consumer", "input": "pwd",
+			}),
+			result: mustMarshalJSON(map[string]any{
+				"type": "custom_tool_call_output", "call_id": "consumer", "output": successful,
+			}),
+		},
+		{
+			name: "live_custom_tool_call_output",
+			call: mustMarshalJSON(map[string]any{
+				"type": "custom_tool_call", "name": "shell", "call_id": "consumer", "input": "pwd",
+			}),
+			result: mustMarshalJSON(map[string]any{
+				"type": "custom_tool_call_output", "call_id": "consumer", "output": live,
+			}),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			items := []json.RawMessage{
+				mustMarshalJSON(map[string]any{
+					"type": "reasoning", "summary": []any{map[string]string{"type": "summary_text", "text": "Inspect source."}},
+				}),
+				compactTestCall("source-old", "hread source.go"),
+				compactTestOutput("source-old", strings.Join(rows, ""), 0),
+				test.call,
+				test.result,
+				mustMarshalJSON(map[string]any{
+					"type": "function_call", "name": "unknown", "call_id": "unknown-old", "arguments": "{}",
+				}),
+				compactTestOutput("unknown-old", "unknown companion\n", 0),
+			}
+			items = append(items, compactionSourceTestRecent()...)
+
+			got := reduceContextCompaction(items)
+			text := compactionSourceTestOutputText(t, got[2])
+			if !strings.Contains(text, rows[2]) || strings.Contains(text, rows[10]) {
+				t.Fatal("tool-produced row reference was not preserved conservatively")
+			}
+		})
+	}
+}
+
 func TestCompactionSourceKeepsProtectedOutputsByteExact(t *testing.T) {
 	rows := strings.Join(compactionSourceTestRows("", 18), "")
 	tests := []struct {

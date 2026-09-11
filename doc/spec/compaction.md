@@ -37,9 +37,9 @@ completion proves irrelevance.
 
 Before lossy retirement, evidence reducers can shorten redundant output:
 
-- Successful Go test results with a structured result or native Codex exec header can omit routine run/pause/continue and
-  pass lines. The exact call, exit status, package summaries, and other output
-  remain.
+- Successful Go test results with a structured result or native Codex exec header can omit routine run, pause, and continue
+  progress lines. Test outcome lines, the exact call, exit status, package summaries,
+  and other output remain.
 - Successful search listings from recognized `rg`, `hgrep`, or `find` calls can
   be replaced with a reference to a later retained read result containing the
   exact same complete listing. The original call and completion metadata stay.
@@ -64,10 +64,12 @@ Finished-operation retirement:
   JavaScript literals are parsed without execution; dynamic expressions remain native.
   A literal shell-carrier progress notice is retained verbatim and checked against
   the corresponding result part; its evidence references remain protected.
-  Successful documentation results retain provenance, identities, hierarchy,
+- Successful documentation results retain provenance, identities, hierarchy,
   pagination, annotations, and unknown metadata while recognized unmarked bodies
-  may shrink. In truncated documentation, only historical body fragments with
-  unambiguous boundaries may shrink; provenance, warnings, references, and
+  may shrink. Selected provenance or diagnostic lines that are themselves
+  oversized retain bounded prefix and suffix evidence with an explicit truncation
+  marker. In truncated documentation, only historical body fragments with
+  unambiguous boundaries may shrink; other provenance, warnings, references, and
   uncertain material remain. Reduction must not fabricate missing structure or
   represent a truncated result as complete. A known successful
   result need not shrink individually for its complete group to be profitable.
@@ -158,7 +160,9 @@ candidate exceeds 80,000 tokens, compaction fails with HTTP 422 before sealing.
 Budget failures report the measured before/after counts and target/ceiling.
 Removing a V2 trigger is not token savings, and trigger-only input cannot produce
 an empty capsule. Never discard protected context to force admission, fabricate
-a summary or provider usage, or fall back to provider compaction.
+a summary or provider usage, or fall back to provider compaction. For WebSocket
+`response.create`, the same admission failure emits an error event with status
+422 and then closes the connection.
 
 The retained native timeline travels inline in an authenticated, encrypted
 router-owned compaction item. Legacy output also carries original real-user messages

@@ -143,6 +143,29 @@ func TestCompactionHTTPStreamingV2AndFailures(t *testing.T) {
 	if response.Code != http.StatusOK || strings.Count(response.Body.String(), "event: response.output_item.done\n") != 1 || !strings.Contains(response.Body.String(), "event: response.completed\n") {
 		t.Fatalf("V2 result = %d: %s", response.Code, response.Body.String())
 	}
+	for _, test := range []struct {
+		name  string
+		input []json.RawMessage
+	}{
+		{"trigger_only", []json.RawMessage{mustMarshalJSON(map[string]any{"type": "compaction_trigger"})}},
+		{"protected_with_trigger", []json.RawMessage{
+			mustMarshalJSON(map[string]any{"type": "message", "role": "user", "content": "protected"}),
+			mustMarshalJSON(map[string]any{"type": "compaction_trigger"}),
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(mustMarshalJSON(map[string]any{
+				"model": "gpt-5", "input": test.input, "stream": true,
+			}))))
+			request.Header.Set(codexTurnMetadataHeader, `{"request_kind":"compaction","compaction":{"implementation":"responses_compaction_v2"}}`)
+			response := httptest.NewRecorder()
+			compactor.handler(next)(response, request)
+			if response.Code != http.StatusUnprocessableEntity || strings.Contains(response.Body.String(), contextCompactionPrefix) {
+				t.Fatalf("unsafe V2 compaction accepted: %d: %s", response.Code, response.Body.String())
+			}
+		})
+	}
+
 	for _, body := range []string{
 		`{"model":"gpt-5","input":[]}`,
 		`{"model":"gpt-5","input":[null]}`,

@@ -34,7 +34,11 @@ func compactionOperationCall(fields map[string]json.RawMessage) (compactionOpera
 		}
 	case "custom_tool_call":
 		if name == "shell" {
-			return compactionOperation{tool: "shell", arguments: mustMarshalJSON(map[string]any{"input": jsonString(fields, "input")})}, true
+			var input *string
+			if json.Unmarshal(fields["input"], &input) != nil || input == nil {
+				return compactionOperation{}, false
+			}
+			return compactionOperation{tool: "shell", arguments: mustMarshalJSON(map[string]any{"input": *input})}, true
 		}
 		if name == "exec" {
 			return compactionCodeModeOperation(jsonString(fields, "input"))

@@ -159,8 +159,9 @@ Compaction can discard unmarked historical details from older finished operation
 even while the task is still open. It keeps factual execution records, requests,
 visible decisions, diagnostic excerpts, referenced evidence, and recent/live work.
 Recognized applied patch bodies and associated older opaque reasoning can also be
-retired. Older failed-command output and truncated documentation can lose
-unreferenced bulk while retaining errors, warnings, and provenance.
+retired. Older failed-command output can lose unreferenced bulk while retaining
+errors, warnings, and provenance. Truncated or oversized documentation can also
+lose unreferenced bulk; a single oversized evidence line retains bounded excerpts.
 Discarded details are not currently retrievable through Mekugi.
 
 Unknown or ambiguous execution states remain intact. If nothing qualifies,

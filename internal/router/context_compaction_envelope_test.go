@@ -59,21 +59,34 @@ func TestCompactionEnvelopeSurvivesRestartAndRejectsDamage(t *testing.T) {
 func TestCompactionEnvelopeConcurrentKeyCreationAndProviderIsolation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "compaction.key")
 	items := []json.RawMessage{mustMarshalJSON(map[string]any{"type": "message", "role": "user", "content": "Keep me."})}
+	sealed := make([]json.RawMessage, 8)
 	var workers sync.WaitGroup
-	for range 8 {
+	for index := range sealed {
 		workers.Go(func() {
 			compactor := &contextCompactor{keyPath: path}
-			sealed, err := compactor.seal(t.Context(), items)
+			var err error
+			sealed[index], err = compactor.seal(t.Context(), items)
 			if err != nil {
 				t.Error(err)
 				return
 			}
-			if _, _, err := (&contextCompactor{keyPath: path}).open(t.Context(), sealed); err != nil {
+			if _, _, err := compactor.open(t.Context(), sealed[index]); err != nil {
 				t.Error(err)
 			}
 		})
 	}
 	workers.Wait()
+
+	verifier := &contextCompactor{keyPath: path}
+	for index, envelope := range sealed {
+		if len(envelope) == 0 {
+			continue
+		}
+		if _, _, err := verifier.open(t.Context(), envelope); err != nil {
+			t.Errorf("worker %d used a different installation key: %v", index, err)
+		}
+	}
+
 	provider := mustMarshalJSON(map[string]any{"type": "compaction", "encrypted_content": "provider-owned"})
 	if _, local, err := (&contextCompactor{}).open(t.Context(), provider); local || err != nil {
 		t.Fatal("provider-owned compaction was interpreted locally")

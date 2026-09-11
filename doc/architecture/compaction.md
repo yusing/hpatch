@@ -55,7 +55,9 @@ may shorten historical output while leaving calls and opaque reasoning native.
 Both paths share reference-preservation rules. Static documentation reducers own
 only recognized bodies and unambiguous body fragments in truncated documentation;
 provenance, warnings, references, unknown metadata, and uncertain fragments remain
-exact. They do not reconstruct missing structure or infer a successful outcome.
+exact except that a single oversized selected evidence line retains bounded prefix
+and suffix evidence with an explicit truncation marker. They do not reconstruct
+missing structure or infer a successful outcome.
 
 Historical ordinary-assistant narration reduction consolidates exact repeated text rather
 than guessing whether an arbitrary sentence is routine progress. It preserves

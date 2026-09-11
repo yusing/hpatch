@@ -296,6 +296,48 @@ func TestCompactionRetiresActualDocumentationSearchSchema(t *testing.T) {
 	}
 }
 
+func TestCompactionSearchBodyThresholdsAndIdentities(t *testing.T) {
+	t.Run("decoded short escaped string", func(t *testing.T) {
+		items := []map[string]json.RawMessage{{
+			"id":      mustMarshalJSON("result-1"),
+			"snippet": mustMarshalJSON(strings.Repeat("\"", 200)),
+		}}
+		if _, changed := compactionRetiredSearchItemMaps(items); changed {
+			t.Fatal("short decoded snippet was retired because its JSON encoding was large")
+		}
+	})
+
+	t.Run("mixed string array", func(t *testing.T) {
+		const short = "keep this short snippet"
+		items := []map[string]json.RawMessage{{
+			"id":       mustMarshalJSON("result-1"),
+			"snippets": mustMarshalJSON([]string{strings.Repeat("large body ", 40), short}),
+		}}
+		reduced, changed := compactionRetiredSearchItemMaps(items)
+		if !changed {
+			t.Fatal("large snippet was not retired")
+		}
+		var decoded []map[string]json.RawMessage
+		var snippets []string
+		if json.Unmarshal(reduced, &decoded) != nil || json.Unmarshal(decoded[0]["snippets"], &snippets) != nil ||
+			len(snippets) != 2 || snippets[1] != short || !strings.Contains(snippets[0], "historical document body retired") {
+			t.Fatalf("mixed snippets were not reduced conservatively: %s", reduced)
+		}
+	})
+
+	t.Run("invalid identity", func(t *testing.T) {
+		for _, identity := range []any{"", false, map[string]any{"url": "opaque"}} {
+			items := []map[string]json.RawMessage{{
+				"url":     mustMarshalJSON(identity),
+				"snippet": mustMarshalJSON(strings.Repeat("unidentified body ", 40)),
+			}}
+			if _, changed := compactionRetiredSearchItemMaps(items); changed {
+				t.Fatalf("body with unusable identity %v was retired", identity)
+			}
+		}
+	})
+}
+
 func TestCompactionSuccessfulReadWithoutBodyReductionStaysEligible(t *testing.T) {
 	tool := compactionDocsFetchTool
 	source := readToolSource(tool, `{"url":"https://developers.openai.com/api/docs/index"}`)
@@ -426,6 +468,9 @@ func TestCompactionDocumentationReadFailuresStayNative(t *testing.T) {
 		{"unknown error flag", goodSource, readToolResultOutput("operation_00", "Script completed\n", map[string]any{
 			"isError": "false", "content": []any{map[string]any{"type": "text", "text": "ambiguous status"}},
 		})},
+		{"null error flag", goodSource, readToolResultOutput("operation_00", "Script completed\n", map[string]any{
+			"isError": nil, "content": []any{map[string]any{"type": "text", "text": "ambiguous null status"}},
+		})},
 		{"media", goodSource, readToolResultOutput("operation_00", "Script completed\n", map[string]any{
 			"content": []any{map[string]any{"type": "image", "data": "opaque-media"}},
 		})},
@@ -515,6 +560,17 @@ func TestCompactionTruncatedDocumentationSearchRetiresCompleteBodySpan(t *testin
 	}
 	if strings.Count(wire, "unmarked historical body") > 2 {
 		t.Fatal("unambiguous truncated historical body span was not retired")
+	}
+}
+
+func TestCompactionReadBodyEvidenceBoundsOversizedLines(t *testing.T) {
+	body := "# " + strings.Repeat("oversized documentation evidence ", 400) +
+		"https://developers.openai.com END"
+	evidence, ok := compactionRetiredDocumentText(body)
+	if !ok || len(evidence) >= len(body)/2 ||
+		!strings.Contains(evidence, "oversized retained documentation evidence line truncated") ||
+		!strings.HasPrefix(evidence, "# ") || !strings.HasSuffix(evidence, " END") {
+		t.Fatalf("oversized evidence line was not bounded with its edges intact: %d of %d bytes", len(evidence), len(body))
 	}
 }
 

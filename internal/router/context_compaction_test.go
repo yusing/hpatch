@@ -1,7 +1,9 @@
 package router
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -98,15 +100,28 @@ func TestContextCompactionSearchRequiresRetainedExactEvidence(t *testing.T) {
 	}
 }
 
+func TestContextCompactionHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := reduceContextCompactionContext(ctx, compactHTTPHistory()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled reduction returned %v", err)
+	}
+}
+
 func TestContextCompactionKeepsUnknownTestDiagnostics(t *testing.T) {
+	diagnostic := "--- PASS: retained diagnostic (0.1s)"
+	runnerLines := "=== RUN   TestA\n--- PASS: TestA (0.1s)\n"
 	items := []json.RawMessage{
 		compactTestCall("tests", "go test -v ./..."),
-		compactTestOutput("tests", strings.Repeat("=== RUN   TestA\n--- PASS: TestA (0.1s)\n", 20)+"    test.go:10: important diagnostic\nPASS\nok  example 0.1s\n", 0),
+		compactTestOutput("tests", strings.Repeat(runnerLines, 20)+diagnostic+"\n=== RUN   retained run diagnostic\n    test.go:10: important diagnostic\nPASS\nok  example 0.1s\n", 0),
 		compactTestCall("last", "pwd"), compactTestOutput("last", "/workspace\n", 0),
 	}
 	got := reduceContextCompaction(items)
-	if string(got[1]) == string(items[1]) || !strings.Contains(string(got[1]), "important diagnostic") {
-		t.Fatal("non-routine diagnostic removed")
+	if string(got[1]) == string(items[1]) || !strings.Contains(string(got[1]), diagnostic) ||
+		!strings.Contains(string(got[1]), "retained run diagnostic") ||
+		!strings.Contains(string(got[1]), "important diagnostic") ||
+		strings.Contains(string(got[1]), "--- PASS: TestA") {
+		t.Fatal("corroborated runner output was not reduced or unmatched diagnostic was removed")
 	}
 }
 

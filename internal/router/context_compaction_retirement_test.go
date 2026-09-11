@@ -121,6 +121,25 @@ func TestCompactionRetirementPreservesCarrierNotice(t *testing.T) {
 	}
 }
 
+func TestCompactionOperationRejectsMalformedShellInput(t *testing.T) {
+	for _, fields := range []map[string]json.RawMessage{
+		{"type": mustMarshalJSON("custom_tool_call"), "name": mustMarshalJSON("shell")},
+		{"type": mustMarshalJSON("custom_tool_call"), "name": mustMarshalJSON("shell"), "input": json.RawMessage("null")},
+		{"type": mustMarshalJSON("custom_tool_call"), "name": mustMarshalJSON("shell"), "input": json.RawMessage("17")},
+		{"type": mustMarshalJSON("custom_tool_call"), "name": mustMarshalJSON("shell"), "input": json.RawMessage(`{"cmd":"pwd"}`)},
+	} {
+		if _, ok := compactionOperationCall(fields); ok {
+			t.Fatalf("malformed shell input was accepted: %s", mustMarshalJSON(fields))
+		}
+	}
+	valid := map[string]json.RawMessage{
+		"type": mustMarshalJSON("custom_tool_call"), "name": mustMarshalJSON("shell"), "input": mustMarshalJSON(""),
+	}
+	if _, ok := compactionOperationCall(valid); !ok {
+		t.Fatal("valid empty shell input was rejected")
+	}
+}
+
 func TestCompactionRetiresAppliedPatchBodyNotFailedPatch(t *testing.T) {
 	patch := "*** Begin Patch\n*** Add File: example.go\n+" + strings.Repeat("// old implementation detail\n+", 500) + "\n*** End Patch\n"
 	report := "in example.go\nfiles add=1 update=0 move=0 delete=0\n"
@@ -368,6 +387,59 @@ func TestCompactionRetirementFollowsOnlySurvivingReplacementNotes(t *testing.T) 
 		}))
 		assertNative(t, retireCompactionOperations(rooted), rooted)
 		assertNative(t, reduceContextCompaction(rooted), rooted)
+	})
+}
+
+func TestCompactionRetirementFollowsReferencesExposedByRetainedResults(t *testing.T) {
+	t.Run("pinned tool result row", func(t *testing.T) {
+		items := retirementHistory()
+		items[3] = compactTestOutput("operation_00",
+			"Continue with exact row 17:abcd.\n"+strings.Repeat("consumer historical detail\n", 500), 0)
+		referencedLine := "17:abcd required source evidence\n"
+		items[6] = compactTestOutput("operation_01",
+			referencedLine+strings.Repeat("unreferenced source detail\n", 500), 0)
+		items = append(items, mustMarshalJSON(map[string]any{
+			"type": "message", "role": "assistant", "content": "Keep operation_00.",
+		}))
+
+		got := retireCompactionOperations(items)
+		if !strings.Contains(string(mustMarshalJSON(got)), strings.TrimSpace(referencedLine)) {
+			t.Fatal("row reference in a pinned tool result lost its source evidence")
+		}
+	})
+
+	t.Run("restored factual row references operation", func(t *testing.T) {
+		items := retirementHistory()
+		items[3] = compactTestOutput("operation_00",
+			"17:abcd retained evidence requires operation_01\n"+strings.Repeat("consumer historical detail\n", 500), 0)
+		items[6] = compactTestOutput("operation_01", strings.Repeat("required dependency detail\n", 500), 0)
+		items = append(items, mustMarshalJSON(map[string]any{
+			"type": "message", "role": "assistant", "content": "Keep exact row 17:abcd.",
+		}))
+
+		got := retireCompactionOperations(items)
+		for _, index := range []int{4, 5, 6} {
+			if string(got[index]) != string(items[index]) {
+				t.Fatalf("reference exposed by restored factual row did not pin operation item %d", index)
+			}
+		}
+	})
+
+	t.Run("restored factual row references another row", func(t *testing.T) {
+		items := retirementHistory()
+		items[3] = compactTestOutput("operation_00",
+			"17:abcd retained evidence requires row 23:beef\n"+strings.Repeat("consumer historical detail\n", 500), 0)
+		referencedLine := "23:beef required chained source evidence\n"
+		items[6] = compactTestOutput("operation_01",
+			referencedLine+strings.Repeat("unreferenced source detail\n", 500), 0)
+		items = append(items, mustMarshalJSON(map[string]any{
+			"type": "message", "role": "assistant", "content": "Keep exact row 17:abcd.",
+		}))
+
+		got := retireCompactionOperations(items)
+		if !strings.Contains(string(mustMarshalJSON(got)), strings.TrimSpace(referencedLine)) {
+			t.Fatal("row reference exposed by restored factual evidence lost its dependency")
+		}
 	})
 }
 

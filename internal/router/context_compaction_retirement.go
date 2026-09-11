@@ -180,7 +180,7 @@ func retireCompactionOperationsWithFrontier(input []json.RawMessage, recent int)
 	enqueueOriginal := func(id string, plan *compactionRetirement) {
 		queue = append(queue, referenceText{fields[plan.call]["input"], id, true},
 			referenceText{fields[plan.call]["arguments"], id, true},
-			referenceText{fields[plan.result]["output"], id, false})
+			referenceText{fields[plan.result]["output"], id, true})
 	}
 	revision := 0
 	var pin func(string)
@@ -309,7 +309,7 @@ func retireCompactionOperationsWithFrontier(input []json.RawMessage, recent int)
 			}
 		case "function_call_output", "custom_tool_call_output":
 			if p := plans[id]; p == nil || !p.eligible {
-				queue = append(queue, referenceText{item["output"], id, false})
+				queue = append(queue, referenceText{item["output"], id, true})
 			}
 		default:
 			queue = append(queue, referenceText{item["content"], "", true}, referenceText{item["summary"], "", true})
@@ -406,13 +406,14 @@ func retireCompactionOperationsWithFrontier(input []json.RawMessage, recent int)
 		}
 	}
 
-	// Pinning is monotonic. Repeat reference closure only when profitability
-	// restores original content, which can expose references that were absent
-	// from the proposed factual record. At most one pass per retired candidate
-	// can restore content, so this reaches a bounded stable result.
+	// Pinning and row restoration are monotonic. Repeat reference closure when
+	// either exposes references that were absent from the proposed factual
+	// record. At most one pass per retired candidate can restore content, so
+	// this reaches a bounded stable result.
 	for {
+		beforeRevision := revision
 		drainReferences()
-		for _, plan := range plans {
+		for id, plan := range plans {
 			if !plan.eligible || (len(plan.rows) == 0 && len(plan.ranges) == 0) {
 				continue
 			}
@@ -421,10 +422,13 @@ func retireCompactionOperationsWithFrontier(input []json.RawMessage, recent int)
 			if !ok {
 				return input
 			}
-			plan.output = retained
+			if string(plan.output) != string(retained) {
+				plan.output = retained
+				queue = append(queue, referenceText{retained, id, true})
+				revision++
+			}
 		}
 
-		beforeProfitability := revision
 		for id, plan := range plans {
 			if !plan.eligible || groupAt[plan.call] >= 0 {
 				continue
@@ -449,7 +453,7 @@ func retireCompactionOperationsWithFrontier(input []json.RawMessage, recent int)
 				}
 			}
 		}
-		if revision == beforeProfitability {
+		if revision == beforeRevision {
 			break
 		}
 	}
@@ -583,16 +587,14 @@ func compactionFailedOutput(raw json.RawMessage) (func(string) json.RawMessage, 
 	return nil, "", false
 }
 
-// Failed operations retain every unclassified line. Only known routine test
-// progress/pass lines and unreferenced verified source rows are positively
-// identified as historical bulk and eligible for omission.
+// Failed operations retain every unclassified line. Only corroborated runner
+// lines and unreferenced verified source rows are positively identified as
+// historical bulk and eligible for omission.
 func compactionRetiredFailedText(text string, referenced map[string]bool, ranges [][2]string) string {
+	reduced, removed := compactionReduceGoTestOutput(text)
 	var result strings.Builder
-	removed := 0
-	for line := range strings.SplitAfterSeq(text, "\n") {
-		trimmed := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-		if contextCompactionGoRoutine.MatchString(trimmed) ||
-			(compactionCompleteSourceRow.MatchString(line) && !compactionTextReferencesRows(line, referenced, ranges)) {
+	for line := range strings.SplitAfterSeq(reduced, "\n") {
+		if compactionCompleteSourceRow.MatchString(line) && !compactionTextReferencesRows(line, referenced, ranges) {
 			removed++
 			continue
 		}
@@ -601,7 +603,7 @@ func compactionRetiredFailedText(text string, referenced map[string]bool, ranges
 	if removed == 0 {
 		return text
 	}
-	return fmt.Sprintf("[mekugi: omitted %d positively identified routine/source lines from terminal failed output; failure remains unresolved]\n%s", removed, result.String())
+	return fmt.Sprintf("[mekugi: omitted %d positively identified runner/source lines from terminal failed output; failure remains unresolved]\n%s", removed, result.String())
 }
 
 func compactionRetiredTextKeepingRows(text string, referenced map[string]bool, ranges [][2]string) string {

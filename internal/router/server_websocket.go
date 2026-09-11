@@ -857,6 +857,9 @@ func (w *webSocketOutput) message(payload []byte) error {
 			// provider successor. Its accepted steering remains pending until
 			// that provider response actually starts.
 			e.history.parent = nil
+			for _, item := range e.history.input {
+				s.retainedBytes -= len(item)
+			}
 			e.history.input = nil
 		} else {
 			s.commitSteering(e.history, e.parentID)

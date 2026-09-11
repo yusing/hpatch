@@ -257,6 +257,9 @@ func TestCompactionWebSocketFailsClosed(t *testing.T) {
 			if jsonString(event, "type") != "error" || string(event["status"]) != fmt.Sprint(tc.status) || calls.Load() != 0 {
 				t.Fatalf("not fail-closed: %s, provider calls %d", mustMarshalJSON(event), calls.Load())
 			}
+			if _, _, err := conn.Read(ctx); err == nil {
+				t.Fatal("failed compaction left the WebSocket connection open")
+			}
 		})
 	}
 }

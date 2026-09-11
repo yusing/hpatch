@@ -148,6 +148,9 @@ func (c *contextCompactor) prepare(ctx context.Context, parsed *parsedResponsesR
 		compactionTargetTokens, compactionOvershootTokens,
 		reduceContextCompactionWithPlan, compactionVisibleStringTokens)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		return fail(http.StatusUnprocessableEntity, err.Error())
 	}
 	capsule, err := c.seal(ctx, reduced)
