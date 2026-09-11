@@ -39,10 +39,11 @@ type QueryMode = "def" | "refs";
 type Resolver = "gopls" | "typescript" | "python";
 
 type Query = {
+  workspace?: string;
   mode: QueryMode;
   path: string;
   line: number;
-  hash: string;
+  hash: string | null;
   identifier: string;
   occurrence: number | null;
 };
@@ -128,8 +129,16 @@ function validGoIdentifier(value: string): boolean {
  * parseQuery validates and parses the hsymbol argv into a structured query object.
  */
 function parseQuery(argv: string[]): Query {
+  let workspace: string | undefined;
+  if (argv[0] === "--workspace") {
+    workspace = argv[1];
+    if (workspace === undefined || workspace === "" || workspace.includes("\0")) {
+      throw new HSymbolFailure("--workspace requires a usable directory");
+    }
+    argv = argv.slice(2);
+  }
   if (argv.length !== 4 && argv.length !== 5) {
-    throw new HSymbolFailure("usage: hsymbol (def|refs) PATH LINE:HASH SYMBOL [N]");
+    throw new HSymbolFailure("usage: hsymbol [--workspace ROOT] (def|refs) PATH (LINE|LINE:HASH) SYMBOL [N]");
   }
   const [mode, inputPath, row, identifier, occurrenceText] = argv;
   if (mode !== "def" && mode !== "refs") {
@@ -140,15 +149,18 @@ function parseQuery(argv: string[]): Query {
   }
   let parsedRow;
   try {
-    parsedRow = parseRowReference(row);
+    parsedRow = /^[1-9][0-9]*$/u.test(row)
+      ? {line: parsePositiveInteger(row, "line"), hash: null}
+      : parseRowReference(row);
   } catch (error) {
     if (error instanceof SharedCoreError && error.code === "integer_out_of_range") {
       throw new HSymbolFailure("line is too large");
     }
-    throw new HSymbolFailure("row must be LINE:HASH with a positive line and lowercase four-digit hash");
+    throw new HSymbolFailure("row must be a positive LINE or LINE:HASH with a lowercase four-digit hash");
   }
   return {
     mode,
+    workspace,
     path: inputPath,
     line: parsedRow.line,
     hash: parsedRow.hash,
@@ -250,7 +262,7 @@ function selectSymbol(file: SourceFile, query: Query): number {
   if (logicalLine === null) {
     throw new HSymbolFailure(`line ${query.line} is past EOF`);
   }
-  if (hashLine(logicalLine.text) !== query.hash) {
+  if (query.hash !== null && hashLine(logicalLine.text) !== query.hash) {
     throw new HSymbolFailure(`stale row ${query.line}:${query.hash}`);
   }
   if (file.format.language === "go" && !validGoIdentifier(query.identifier)) {
@@ -258,11 +270,11 @@ function selectSymbol(file: SourceFile, query: Query): number {
   }
   const offsets = symbolOffsets(file.source, file.lines, file.format, query.line, query.identifier);
   if (offsets.length === 0) {
-    throw new HSymbolFailure(`${query.identifier} is not a symbol token on the verified line`);
+    throw new HSymbolFailure(`${query.identifier} is not a symbol token on the selected line`);
   }
   if (query.occurrence === null) {
     if (offsets.length !== 1) {
-      throw new HSymbolFailure(`${query.identifier} is ambiguous on the verified line; supply N`);
+      throw new HSymbolFailure(`${query.identifier} is ambiguous on the selected line; supply N`);
     }
     return offsets[0];
   }
@@ -278,12 +290,12 @@ function conciseGoplsError(stderr: string, exitCode: number | null): string {
   return line === undefined ? `gopls exited with status ${exitCode ?? "unknown"}` : line.trim();
 }
 
-async function runGopls(mode: QueryMode, position: string): Promise<GoplsResult> {
+async function runGopls(workspace: string, mode: QueryMode, position: string): Promise<GoplsResult> {
   return withResolverDeadline(async (deadline) => {
     const argumentsValue = mode === "def"
       ? ["definition", "-json", position]
       : ["references", "-d", position];
-    const child = spawn("gopls", argumentsValue, {stdio: ["ignore", "pipe", "pipe"]});
+    const child = spawn("gopls", argumentsValue, {cwd: workspace, stdio: ["ignore", "pipe", "pipe"]});
     const lifecycle = resolverProcess(child);
     const stdoutPromise = collect(child.stdout);
     const stderrPromise = collect(child.stderr);
@@ -407,7 +419,7 @@ async function queryBackend(
   onResolverStart();
   if (resolver === "gopls") {
     const position = `${file.path}:#${byteLength(file.source.slice(0, selectedOffset))}`;
-    const result = await runGopls(query.mode, position);
+    const result = await runGopls(workspace, query.mode, position);
     return {
       resolver,
       locations: query.mode === "def" ? [parseDefinition(result.stdout)] : parseReferences(result.stdout),
@@ -486,13 +498,13 @@ async function materializeLocation(
 }
 
 /**
- * verifiedSourceRow formats a workspace-relative verified-row reference for the given line.
+ * verifiedSourceRow formats a verified reference, absolute when workspace is null.
  */
-function verifiedSourceRow(workspace: string, file: SourceFile, line: number): string | null {
+function verifiedSourceRow(workspace: string | null, file: SourceFile, line: number): string | null {
   const logicalLine = file.lines.logicalLine(line);
   return logicalLine === null
     ? null
-    : `${JSON.stringify(path.relative(workspace, file.path))}:${formatVerifiedRow(line, logicalLine.text)}`;
+    : `${JSON.stringify(workspace === null ? file.path : path.relative(workspace, file.path))}:${formatVerifiedRow(line, logicalLine.text)}`;
 }
 
 function skippedDiagnostic(skipped: Map<SourceFailureReason, number>): string {
@@ -503,7 +515,10 @@ function skippedDiagnostic(skipped: Map<SourceFailureReason, number>): string {
 async function executeQuery(query: Query, onResolverStart: () => void): Promise<ExecutionResult> {
   let workspace: string;
   try {
-    workspace = await realpath(process.cwd());
+    workspace = await realpath(query.workspace ?? process.cwd());
+    if (!(await stat(workspace)).isDirectory()) {
+      throw new Error("workspace is not a directory");
+    }
   } catch (error) {
     throw new HSymbolFailure(`cannot resolve workspace: ${errorText(error)}`);
   }
@@ -558,7 +573,7 @@ async function executeQuery(query: Query, onResolverStart: () => void): Promise<
         endLine = expanded?.line_end ?? materialized.line;
       }
       for (let line = startLine; line <= endLine; line += 1) {
-        const row = verifiedSourceRow(workspace, materialized.file, line);
+        const row = verifiedSourceRow(query.workspace === undefined ? workspace : null, materialized.file, line);
         if (row === null) {
           skip("unavailable");
           break;
@@ -568,7 +583,7 @@ async function executeQuery(query: Query, onResolverStart: () => void): Promise<
           continue;
         }
         seen.add(key);
-        if (!output.incomplete && !output.append(row, "")) {
+        if (!output.incomplete && !output.append(row)) {
           break;
         }
       }
@@ -583,6 +598,10 @@ async function executeQuery(query: Query, onResolverStart: () => void): Promise<
   let stderr = backend.stderr;
   if (stderr !== "" && !stderr.endsWith("\n")) {
     stderr += "\n";
+  }
+  if (query.hash === null) {
+    const inputLine = inputFile.lines.logicalLine(query.line)!;
+    stderr += `hsymbol: input ${JSON.stringify(query.workspace === undefined ? path.relative(workspace, inputFile.path) : inputFile.path)}:${query.line}:${hashLine(inputLine.text)} (current snapshot)\n`;
   }
   stderr += skippedDiagnostic(skipped);
   if (query.mode === "def" && output.current === "" && !output.incomplete) {
@@ -675,7 +694,15 @@ export function createHSymbolTool(description: string, grammar: string): Tool<st
       try {
         result = await executeQuery(parseQuery(argv), () => { resolverStarted = true; });
       } catch (error) {
-        const message = error instanceof HSymbolFailure ? error.message : errorText(error);
+        let message = error instanceof HSymbolFailure ? error.message : errorText(error);
+        const prerequisites: Record<string, string> = {
+          "gopls is unavailable": "expose gopls on the executor PATH",
+          "tsc is unavailable": "expose TypeScript 7 tsc with --lsp support on the executor PATH",
+          "pyright-langserver is unavailable": "expose pyright-langserver on the executor PATH",
+        };
+        if (prerequisites[message] !== undefined) {
+          message += `; ${prerequisites[message]}`;
+        }
         result = {stderr: `hsymbol: ${message}\n`, exitCode: 1};
       }
       return resolverStarted ? {...result, terminationReason: "resolver_cleanup"} : result;

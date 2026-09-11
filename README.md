@@ -307,6 +307,12 @@ programs**, not as standalone utilities in your terminal:
 | `hsymbol` | Look up definitions and references | `gopls` for Go; TypeScript 7 as `tsc` for JS, TS, and JSON; `pyright-langserver` for Python |
 | `inspect_file` | Inspect structure, optionally including selected source | None |
 
+Semantic lookup can start with a known line number:
+`hsymbol def source.go 42 MyFunction`. Use `LINE:HASH` instead when the query
+must verify a prior read. `hsymbol --workspace /path/to/project refs source.go 42 MyFunction`
+selects a resolver root without changing shell state and returns absolute result
+paths. Semantic results stay confined to that root.
+
 Structural inspection accepts ordinary relative or absolute paths.
 `inspect_file --source MyFunction source.go` returns the matching declaration and
 its verified span; `inspect_file --source /settings config.json` selects a JSON

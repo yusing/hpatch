@@ -367,10 +367,15 @@ still report incomplete results. Hcat source rows over 1,984,000 bytes require a
 byte-window reader instead.
 
 For Go, JavaScript, TypeScript, JSON, and Python, use
-`hsymbol refs PATH LINE:HASH SYMBOL [N]` when an exact symbol must be renamed, audited, or changed
-at every reference. Use `hsymbol def PATH LINE:HASH SYMBOL [N]` when the next edit is the symbol's
-declaration. `N` counts exact language tokens on the verified input line and may be omitted only
-when one exists. Copy emitted `"PATH":LINE:HASH TEXT` rows directly
+`hsymbol refs PATH LINE SYMBOL [N]` for semantic references or
+`hsymbol def PATH LINE SYMBOL [N]` for definitions. Supply an already-known
+`LINE:HASH` instead of `LINE` to enforce a prior read; plain lines query the
+current snapshot without requiring a preliminary verified read.
+A leading `--workspace ROOT` chooses resolver scope and relative input paths
+without changing shell state; its result paths are absolute. Other results are
+relative to the current workspace. Missing-resolver errors identify executor
+prerequisites rather than silently falling back to text search. `N` counts exact
+language tokens on the selected line and may be omitted only when one exists. Copy emitted `"PATH":LINE:HASH TEXT` rows directly
 into HPATCH/2 targets. Do not follow a complete hsymbol definition with hcat of the same span
 unless non-declaration context is needed. Never treat an incomplete token-limited hsymbol result
 as a complete definition or reference set.

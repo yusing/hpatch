@@ -134,6 +134,33 @@ func TestShellRunnerEvaluatesPrivateToolsWithoutFrontends(t *testing.T) {
 	}
 }
 
+func TestShellRunnerQueriesCurrentSymbol(t *testing.T) {
+	registry := sharedProxyTestRegistry(t)
+	workspace := t.TempDir()
+	caller := t.TempDir()
+	bin := t.TempDir()
+	source := filepath.Join(workspace, "source.go")
+	if err := os.WriteFile(source, []byte("package p\nfunc Pick() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolver := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' %q\n", source+":2:6-10")
+	if err := os.WriteFile(filepath.Join(bin, "gopls"), []byte(resolver), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Chdir(caller)
+	alias := filepath.Join(caller, "project")
+	if err := os.Symlink(workspace, alias); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, status := runShellWorkerTest(t, registry, "/bin/sh", nil,
+		fmt.Sprintf("hsymbol --workspace %q refs source.go 2 Pick", alias), nil)
+	if status != 0 || !strings.Contains(stdout, fmt.Sprintf("%q:2:", source)) ||
+		!strings.Contains(stdout, "func Pick() {}") || !strings.Contains(stderr, "(current snapshot)") {
+		t.Fatalf("semantic lookup: stdout=%q stderr=%q exit=%d", stdout, stderr, status)
+	}
+}
+
 func TestShellRunnerInspectsSelectedOutsideSource(t *testing.T) {
 	registry := sharedProxyTestRegistry(t)
 	workspace := t.TempDir()
