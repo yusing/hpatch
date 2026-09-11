@@ -20,6 +20,7 @@ func TestExecShellRecoveryDetection(t *testing.T) {
 		{"Bash selector", "#!/bin/bash\nprintf '%s' hello\n", true},
 		{"Python selector", "#!python3\nfrom pathlib import Path\nprint(Path.cwd())\n", true},
 		{"template", "#!cmd=printf input | {.}\ncat -\n", true},
+		{"stop batch", "#!batch-stop=NEXT\nexit 7\nNEXT\necho later\n", true},
 		{"batch", "#!batch=NEXT\n#!params={}\necho first\nNEXT\n#!python3\nprint('second')\n", true},
 		{"valid JavaScript", "text(await tools.clock__curr_time({}));", false},
 		{"valid hashbang JavaScript", "#!node\ntext('hello');", false},

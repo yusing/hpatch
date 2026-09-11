@@ -1198,6 +1198,7 @@ func (t *mekugiResponseTransform) translateRegisteredTool(contribution toolContr
 	}
 	pathPrefix := t.shellDirectory + string(os.PathSeparator)
 	recovered := !t.nativeTools && shellCodeModeRecovery(contribution, input)
+	var stopBatchOnNonzero bool
 	var batch []string
 	var translation toolplugin.Translation
 	var err error
@@ -1206,6 +1207,7 @@ func (t *mekugiResponseTransform) translateRegisteredTool(contribution toolContr
 		effectiveInput, err = t.proxy.resolveShellInput(t.shellDirectory, input)
 		if err == nil {
 			var programs []string
+			_, stopBatchOnNonzero, _ = shellsyntax.BatchHeader(effectiveInput)
 			programs, err = shellsyntax.Split(effectiveInput)
 			if err == nil && len(programs) > 1 {
 				batch, translation, err = t.prepareShellBatch(contribution, programs, pathPrefix)
@@ -1294,7 +1296,7 @@ func (t *mekugiResponseTransform) translateRegisteredTool(contribution toolContr
 				return mekugiHistory{}, fmt.Errorf("%s exec carrier: %w", contribution.Name, err)
 			}
 			if len(batch) != 0 {
-				payload = renderShellBatch(batch, resultMetadata)
+				payload = renderShellBatch(batch, resultMetadata, stopBatchOnNonzero)
 				splitShellCarrier = true
 				break
 			}

@@ -25,7 +25,7 @@ func toolActivityScriptReference(script string) string {
 func toolActivityCommandExcerpt(script string) string {
 	script, _ = toolActivityUnwrapShell(script, "bash")
 	morePrograms := false
-	if strings.HasPrefix(script, shellsyntax.BatchHeaderPrefix) {
+	if _, _, batch := shellsyntax.BatchHeader(script); batch {
 		if programs, err := shellsyntax.Split(script); err == nil {
 			script = programs[0]
 			morePrograms = len(programs) > 1

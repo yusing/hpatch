@@ -91,6 +91,83 @@ func TestShellBatchExecutionAndReplay(t *testing.T) {
 	}
 }
 
+func TestShellBatchStopPolicyExecutionAndRetention(t *testing.T) {
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+	transform, _, _, _ := newMekugiTestTransformWithProxy(t, proxy)
+	directory := t.TempDir()
+	transform.directory = directory
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "shell"), []byte("#!/bin/sh\ninterpreter=$1\nshift\nexec \"$interpreter\" -c \"$1\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	source := "#!batch-stop=NEXT\n#!params=" + string(mustMarshalJSON(map[string]any{"workdir": directory})) +
+		"\nprintf failed; exit 7\nNEXT\ntouch should-not-run"
+	contribution, _ := proxy.registry.contribution("shell")
+	history, err := transform.translateRegisteredTool(contribution, "batch-stop", source, nil)
+	if err != nil || history.translationError != "" {
+		t.Fatalf("translate: %+v, %v", history, err)
+	}
+	var result struct {
+		Results   []map[string]any `json:"results"`
+		ScriptRef string           `json:"script_ref"`
+		Batch     struct {
+			Policy     string `json:"on_nonzero_exit"`
+			Total      int    `json:"program_count"`
+			Started    int    `json:"started_programs"`
+			NotStarted int    `json:"not_started_programs"`
+			Reason     string `json:"stopped_reason"`
+		} `json:"batch"`
+	}
+	runShellCatJavaScript(t, proxy.registry.NodeExecutable, directory, history.carrierInput(), &result, "")
+	if len(result.Results) != 1 || result.Results[0]["exit_code"] != float64(7) ||
+		result.Batch.Policy != "stop" || result.Batch.Total != 2 || result.Batch.Started != 1 ||
+		result.Batch.NotStarted != 1 || result.Batch.Reason != "nonzero_exit" {
+		t.Fatalf("stop result: %+v", result)
+	}
+	if _, err := os.Stat(filepath.Join(directory, "should-not-run")); !os.IsNotExist(err) {
+		t.Fatalf("later program executed: %v", err)
+	}
+	resolved, err := proxy.resolveShellInput(transform.shellDirectory, "#!script="+result.ScriptRef)
+	if err != nil || resolved != source {
+		t.Fatalf("retained policy lost: %q, %v", resolved, err)
+	}
+	rerun, err := transform.translateRegisteredTool(contribution, "batch-stop-rerun", "#!script="+result.ScriptRef, nil)
+	if err != nil || rerun.translationError != "" || !strings.Contains(rerun.carrierInput(), "break batch") {
+		t.Fatalf("rerun lost stop policy: %+v, %v", rerun, err)
+	}
+}
+
+func TestShellBatchStopWaitsForTerminalExit(t *testing.T) {
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+	transform, _, _, _ := newMekugiTestTransformWithProxy(t, proxy)
+	contribution, _ := proxy.registry.contribution("shell")
+	history, err := transform.translateRegisteredTool(contribution, "batch-stop-wait",
+		"#!batch-stop=NEXT\nsleep 100\nNEXT\necho later", nil)
+	if err != nil || history.translationError != "" {
+		t.Fatalf("translate: %+v, %v", history, err)
+	}
+	overrides := `
+let executions = 0, waits = 0;
+tools.exec_command = async () => {
+  if (++executions !== 1) throw new Error('later program ran');
+  return {output:'start',session_id:42};
+};
+tools.write_stdin = async args => {
+  if (++waits !== 1 || args.session_id !== 42) throw new Error('wrong continuation');
+  return {output:' end',exit_code:9};
+};`
+	var result struct {
+		Results []map[string]any `json:"results"`
+		Batch   map[string]any   `json:"batch"`
+	}
+	runShellCatJavaScript(t, proxy.registry.NodeExecutable, t.TempDir(), history.carrierInput(), &result, overrides)
+	if len(result.Results) != 1 || result.Results[0]["output"] != "start end" ||
+		result.Results[0]["exit_code"] != float64(9) || result.Batch["not_started_programs"] != float64(1) {
+		t.Fatalf("terminal stop: %+v", result)
+	}
+}
+
 func TestShellBatchParamsAndContinuation(t *testing.T) {
 	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	transform, _, _, _ := newMekugiTestTransformWithProxy(t, proxy)
@@ -213,6 +290,7 @@ const tools = {
 	}
 	var result struct {
 		Emissions []struct {
+			Batch    map[string]any   `json:"batch"`
 			Results  []map[string]any `json:"results"`
 			Retained bool             `json:"retained"`
 		} `json:"emissions"`
@@ -228,6 +306,11 @@ const tools = {
 		result.Emissions[0].Results[1]["output"] != "partial" ||
 		result.Emissions[0].Results[1]["session_id"] != float64(42) {
 		t.Fatalf("host failure = %+v", result)
+	}
+	summary := result.Emissions[0].Batch
+	if summary["on_nonzero_exit"] != "continue" || summary["stopped_reason"] != "host_error" ||
+		summary["started_programs"] != float64(2) || summary["not_started_programs"] != float64(1) {
+		t.Fatalf("host failure summary = %+v", summary)
 	}
 }
 

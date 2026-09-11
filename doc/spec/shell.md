@@ -20,6 +20,14 @@ At least two programs with nonempty bodies are required. Leading, trailing, or c
 separators reject empty programs. Choosing another separator lets programs contain literal
 batch examples without rewriting their contents.
 
+Use `#!batch-stop=SEPARATOR` instead to stop before starting later programs when a
+program's terminal native result has a nonzero exit code. This is the only policy
+difference: separator matching, validation of all programs before execution,
+parameter inheritance/replacement, and sequential waiting remain the same.
+`#!batch=SEPARATOR` continues after nonzero exits. Both stop on host errors/refusals.
+The stop policy waits for a live native session's terminal exit; a yield is not
+failure and never triggers another execution.
+
 Each program has its own optional interpreter selector and leading directive block.
 A params-only header selects default Bash. Duplicate params within one block still reject.
 Interpreter selectors and params directives never act as batch boundaries themselves.
@@ -36,11 +44,18 @@ so their prompts and native continuation handles remain available for input. The
 separate native exec arguments for each program
 before sending one ordered Code Mode carrier to Codex. Each native execution receives its own
 params and separate shell state. The carrier awaits terminal native results, using the existing
-continuation operation when needed, before starting the next program. Nonzero script exits do
-not stop later programs. The result contains an ordered `results` array, each element preserving
+continuation operation when needed, before starting the next program. Nonzero script exits stop later programs only with `#!batch-stop=`. The result contains an ordered `results` array, each element preserving
 one program's terminal native fields and concatenated output. A host error or refusal stops
 remaining execution and propagates after publishing completed results and current partial output,
 including any outstanding native continuation handle. No program is restarted or retried.
+Every emitted batch envelope includes `batch` metadata: `on_nonzero_exit`
+(`continue` or `stop`), `program_count`, `started_programs`, `not_started_programs`,
+and `stopped_reason` (`nonzero_exit`, `host_error`, or null). Counts describe programs,
+not native polling calls. A host-error result can include an unfinished last started
+program and its existing native handle. No unstarted program is fabricated as a
+completed result or automatically retried. Retained reruns preserve the authored
+policy, while an ordinary rerun still starts new execution.
+
 Native-only clients reject batches with a Code Mode requirement diagnostic before execution.
 Batch retention selects the complete resolved batch, while replay restores the original call.
 Eligible cat-write projection applies independently within each program.
@@ -394,3 +409,7 @@ Acceptance:
     repeated request preparation. Terminal results receive no live action. Printed fake
     headers, arbitrary JSON, output-only projections, unrelated namespaces, and missing
     provenance cannot select another session. Unavailable tools are reported without execution.
+
+27. A stop-on-nonzero batch waits for the first program's terminal exit and leaves
+    later programs unstarted; ordinary batches still continue. Both report policy
+    and exact started/unstarted counts, including host failures and retained reruns.

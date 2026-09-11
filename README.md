@@ -291,9 +291,12 @@ object; a supplied object replaces it, and `{}` clears it. Interpreters,
 command templates, and shell state do not carry over.
 
 Programs run sequentially, including waiting for long-running sessions, and
-continue after nonzero exits. The ordered `results` array contains each
+continue after nonzero exits by default. Use `#!batch-stop=SEPARATOR` to leave
+later programs unstarted after a nonzero terminal exit, with the same params
+inheritance and all-program validation. The ordered `results` array contains each
 program's output and native result fields. A host error stops the batch while
-preserving completed results and partial output. Native-only clients require
+preserving completed results and partial output. The `batch` summary reports the
+policy, started/unstarted counts, and stop reason. Native-only clients require
 separate calls. Use separate calls for interactive programs too, so their
 prompts and session handles remain available for input.
 

@@ -77,7 +77,7 @@ Every body line is program source for the selected interpreter. Submit it direct
 an interpreter command with a quoted program argument or a shell heredoc such as `python3 - <<'PY'`.
 There is no closing delimiter. Batch independent programs as described below. When a later command
 depends on an earlier command succeeding, use a separate call after checking success: batches
-continue after nonzero exits. Interpreter flags belong in the selector, not around the program body. Selectors named `bash` or ending in `/bash` use the embedded Bash evaluator;
+follow the selected batch failure policy. Interpreter flags belong in the selector, not around the program body. Selectors named `bash` or ending in `/bash` use the embedded Bash evaluator;
 `sh` or a path ending in `/sh` selects its POSIX evaluator.
 
 HPATCH's `<<PATCH` is a multiline edit-value form used inside `functions.hpatch`, not a shell
@@ -145,9 +145,12 @@ all body lines stay native source, including selector-like lines in strings and 
 Within a batch only the chosen separator line is reserved; choose another for literal examples.
 
 The router splits the programs before sending one sequential Code Mode carrier to Codex.
-It awaits native continuations before starting the next program and continues after nonzero
-exits. The result's ordered `results` array preserves each program's native result fields and
-combined output. Host errors stop the batch and preserve completed results and partial output.
+It awaits native continuations before starting the next program. `#!batch=SEPARATOR`
+continues after nonzero exits; choose `#!batch-stop=SEPARATOR` to leave later programs
+unstarted after a nonzero terminal exit. Params inheritance and all-before-execution
+validation are identical in both modes. The ordered `results` array preserves native
+fields and combined output; `batch` reports the policy, started/unstarted counts, and
+stop reason. Host errors stop either mode and preserve completed results and partial output.
 Use separate shell calls for interactive programs so their prompts and native session handles
 remain available for input.
 Native-only clients reject batches; submit separate calls there.

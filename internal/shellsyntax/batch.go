@@ -6,15 +6,30 @@ import (
 	"strings"
 )
 
+const BatchStopHeaderPrefix = "#!batch-stop="
+
 const BatchHeaderPrefix = "#!batch="
 
-// Split recognizes an explicit first-line #!batch=SEPARATOR header. Only exact
+// BatchHeader recognizes the two explicit batch policies without interpreting
+// source lines. Split validates the selected separator and every program.
+func BatchHeader(input string) (separator string, stopOnNonzero, ok bool) {
+	first, _ := splitFirstLine(input)
+	if separator, ok := strings.CutPrefix(first, BatchHeaderPrefix); ok {
+		return separator, false, true
+	}
+	if separator, ok := strings.CutPrefix(first, BatchStopHeaderPrefix); ok {
+		return separator, true, true
+	}
+	return "", false, false
+}
+
+// Split recognizes an explicit first-line batch header. Only exact
 // separator lines delimit programs; all other source bytes remain program data.
 // Only an omitted params directive inherits the preceding complete object.
 func Split(input string) ([]string, error) {
 	programs := []string{input}
-	first, body := splitFirstLine(input)
-	if separator, batch := strings.CutPrefix(first, BatchHeaderPrefix); batch {
+	_, body := splitFirstLine(input)
+	if separator, _, batch := BatchHeader(input); batch {
 		if separator == "" || separator != strings.TrimSpace(separator) || strings.ContainsRune(separator, 0) {
 			return nil, fmt.Errorf("shell batch line 1: separator must be nonempty, without surrounding whitespace or NUL")
 		}

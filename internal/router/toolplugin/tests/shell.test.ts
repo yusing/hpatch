@@ -25,7 +25,9 @@ test("description stays call-local", () => {
     "put that exact separator line between at least two nonempty programs",
     "Single scripts need no batch header",
     "Batches require Code Mode",
-    "continue after nonzero exits",
+    "#!batch= continues after nonzero exits",
+    "#!batch-stop= stops before later programs",
+    "policy and unstarted program count",
   ]) {
     expect(tool.specification.description).toContain(guidance);
   }

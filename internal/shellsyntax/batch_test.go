@@ -89,6 +89,35 @@ func TestSplit(t *testing.T) {
 	}
 }
 
+func TestBatchStopPolicyPreservesPrograms(t *testing.T) {
+	for _, ending := range []string{"\n", "\r\n", "\r"} {
+		source := "#!batch-stop=NEXT" + ending + "#!params={\"yield_time_ms\":1000}" + ending +
+			"exit 7" + ending + "NEXT" + ending + "#!python3" + ending + "print(2)"
+		separator, stop, batch := BatchHeader(source)
+		if separator != "NEXT" || !stop || !batch {
+			t.Fatalf("batch header = %q, %v, %v", separator, stop, batch)
+		}
+		got, err := Split(source)
+		want, wantErr := Split(strings.Replace(source, "#!batch-stop=", "#!batch=", 1))
+		if err != nil || wantErr != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("policy changed program contents: %#v, %v; want %#v, %v", got, err, want, wantErr)
+		}
+	}
+	for _, source := range []string{
+		"#!batch-stop=\necho one\nNEXT\necho two",
+		"#!batch-stop=NEXT\nexit 7\nNEXT\n#!params={bad}\necho two",
+		"#!batch-stop=NEXT\nexit 7",
+	} {
+		if _, err := Split(source); err == nil {
+			t.Fatalf("invalid stop batch accepted: %q", source)
+		}
+	}
+	source := "#!python3\nexample = '''\n#!batch-stop=NEXT\nNEXT\n'''\n"
+	if separator, stop, batch := BatchHeader(source); separator != "" || stop || batch {
+		t.Fatal("body example became a batch")
+	}
+}
+
 func TestSplitKeepsSingleProgramSource(t *testing.T) {
 	for _, input := range []string{
 		"#!python3\nexample = '''\n#!python3\n#!params={bad}\n#!script=@shell/example\n#!batch=NEXT\nNEXT\n'''\n",
