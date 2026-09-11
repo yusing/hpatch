@@ -76,7 +76,10 @@ func wrapCodex(ctx context.Context, routerArgs, args []string) (code int, runErr
 			return 1, errors.Join(err, <-routerDone)
 		}
 		defer func() {
-			runErr = errors.Join(runErr, os.RemoveAll(catalogDirectory))
+			if err := os.RemoveAll(catalogDirectory); err != nil {
+				runErr = errors.Join(runErr, err)
+				code = 1
+			}
 		}()
 		index := slices.Index(args, "--")
 		if index < 0 {
