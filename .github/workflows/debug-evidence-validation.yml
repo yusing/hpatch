@@ -44,9 +44,6 @@ jobs:
               }
               return line;
           '''
-          # Remove the extra indentation required by this YAML block.
-          old = '\n'.join(line[8:] if line.startswith('        ') else line for line in old.split('\n'))
-          new = '\n'.join(line[8:] if line.startswith('        ') else line for line in new.split('\n'))
           assert s.count(old) == 1
           p.write_text(s.replace(old, new))
           PY
