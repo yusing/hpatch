@@ -244,6 +244,7 @@ type mekugiResponseTransform struct {
 	subagentResponses         []map[string]json.RawMessage
 	subagentTurn              bool
 	usageTracker              *threadUsageObservation
+	finalAnswer               finalAnswerStream
 	usageObserved             bool
 
 	codeModeToolName string
@@ -1459,6 +1460,9 @@ func (t *mekugiResponseTransform) transformSSE(payload []byte) ([][]byte, error)
 }
 
 func (t *mekugiResponseTransform) transformActivitySSE(payload []byte) ([][]byte, error) {
+	if visible, buffered := t.finalAnswer.observe(payload); buffered {
+		return visible, nil
+	}
 	var envelope struct {
 		Type     string          `json:"type"`
 		ItemID   string          `json:"item_id"`
@@ -1809,9 +1813,10 @@ func (t *mekugiResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 			}
 		}
 		t.releaseCommentarySubscriptions()
-		if usageMessage != nil && !t.subagentTurn {
+		if usageMessage != nil {
 			visible = append(visible, assistantCommentaryDoneEvent(usageMessage))
 		}
+		visible = append(visible, t.finalAnswer.flush()...)
 		visible = append(visible, event)
 		return visible, nil
 
@@ -1851,18 +1856,27 @@ func (t *mekugiResponseTransform) pendingCallKnown(callID string) bool {
 
 func (t *mekugiResponseTransform) transformResponse(payload []byte, terminalStatus string) ([]byte, map[string]json.RawMessage, error) {
 	counts, observed := t.threadUsageCounts()
-	object, usageMessage, err := responseWithTokenUsageCommentary(
-		payload,
-		counts,
-		observed && t.usageObserved,
-		terminalStatus,
-	)
+	var object map[string]json.RawMessage
+	var usageMessage map[string]json.RawMessage
+	var err error
+	if terminalStatus == "" {
+		object, usageMessage, err = responseWithTokenUsageCommentary(payload, counts, observed && t.usageObserved, "")
+	} else {
+		err = json.Unmarshal(payload, &object)
+		if err == nil && object == nil {
+			err = errors.New("decode mekugi-enabled response")
+		}
+		// Codex consumes completed items, not the terminal output snapshot.
+		usageMessage = formatTokenUsageCommentary(payload, counts, observed && t.usageObserved,
+			terminalStatus, t.finalAnswer.substantive && !t.finalAnswer.blocked && !t.finalAnswer.disabled)
+	}
+
 	if err != nil {
 		return nil, nil, err
 	}
 	if usageMessage != nil && len(t.retainCommentary(usageMessage)) == 0 {
 		var output []map[string]json.RawMessage
-		if json.Unmarshal(object["output"], &output) == nil {
+		if terminalStatus == "" && json.Unmarshal(object["output"], &output) == nil {
 			id := jsonString(usageMessage, "id")
 			output = slices.DeleteFunc(output, func(item map[string]json.RawMessage) bool { return jsonString(item, "id") == id })
 			object["output"] = mustMarshalJSON(output)
