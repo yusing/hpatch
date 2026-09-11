@@ -72,7 +72,7 @@ func reduceRepeatedCompactionRows(input []json.RawMessage, protected map[string]
 				// Bound formatting by the span it might replace, even when a
 				// very long call ID is matched by many separate short excerpts.
 				if size >= 256 && size > len(prior.callID) {
-					note = fmt.Sprintf("[hpatch compaction: %d source rows (%s through %s) retained verbatim in later tool result %q]\n",
+					note = fmt.Sprintf("[mekugi compaction: %d source rows (%s through %s) retained verbatim in later tool result %q]\n",
 						count, strings.Fields(lines[row])[0], strings.Fields(lines[row+count-1])[0], prior.callID)
 				}
 				if note == "" || len(note) >= size {
@@ -171,7 +171,7 @@ func mapCompactionCompletedOutput(raw json.RawMessage, transform func(string) st
 
 // Replacement notes are durable references, not just progress prose. Protect
 // their targets on later compactions as well as within the current reduction.
-var compactionRetainedReference = regexp.MustCompile(`(?m)^\[hpatch compaction: (?:matching search listing retained verbatim in tool result |[0-9]+ source rows \([^\r\n]*\) retained verbatim in later tool result )("(?:\\.|[^"\\])*")`)
+var compactionRetainedReference = regexp.MustCompile(`(?m)^\[mekugi compaction: (?:matching search listing retained verbatim in tool result |[0-9]+ source rows \([^\r\n]*\) retained verbatim in later tool result )("(?:\\.|[^"\\])*")`)
 
 func contextCompactionReferencedResults(input []json.RawMessage) map[string]bool {
 	protected := make(map[string]bool)

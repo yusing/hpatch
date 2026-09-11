@@ -73,7 +73,7 @@ func hasLocalContextCompaction(input []json.RawMessage) bool {
 	for _, raw := range input {
 		var item map[string]json.RawMessage
 		_ = json.Unmarshal(raw, &item)
-		if strings.HasPrefix(jsonString(item, "encrypted_content"), "hpatch.compaction.") || strings.HasPrefix(jsonString(item, "id"), contextCompactionIDPrefix) {
+		if strings.HasPrefix(jsonString(item, "encrypted_content"), "mekugi.compaction.") || strings.HasPrefix(jsonString(item, "id"), contextCompactionIDPrefix) {
 			return true
 		}
 	}
@@ -204,6 +204,19 @@ func (c *contextCompactor) restore(ctx context.Context, input []json.RawMessage)
 		raw          json.RawMessage
 		fromEnvelope bool
 	}
+	withinBudget := func(items []restoredItem) bool {
+		remaining := responsesRequestBufferBytes - 2 // JSON array brackets.
+		for index, item := range items {
+			if index > 0 {
+				remaining-- // JSON array separator.
+			}
+			if remaining < 0 || len(item.raw) > remaining {
+				return false
+			}
+			remaining -= len(item.raw)
+		}
+		return true
+	}
 	var output []restoredItem
 	for _, item := range input {
 
@@ -225,7 +238,7 @@ func (c *contextCompactor) restore(ctx context.Context, input []json.RawMessage)
 			if json.Unmarshal(raw, &fields) != nil || fields == nil {
 				return nil, errors.New("invalid item in retained compaction history")
 			}
-			if strings.HasPrefix(jsonString(fields, "encrypted_content"), "hpatch.compaction.") || strings.HasPrefix(jsonString(fields, "id"), contextCompactionIDPrefix) {
+			if strings.HasPrefix(jsonString(fields, "encrypted_content"), "mekugi.compaction.") || strings.HasPrefix(jsonString(fields, "id"), contextCompactionIDPrefix) {
 				return nil, errors.New("nested local compaction envelope is not supported")
 			}
 			retainedItems[index] = restoredItem{raw: raw, fromEnvelope: true}
@@ -282,14 +295,18 @@ func (c *contextCompactor) restore(ctx context.Context, input []json.RawMessage)
 			cursor = index + 1
 		}
 		merged = append(merged, retainedItems[cursor:]...)
-		output = append(merged, pending...)
+		candidate := append(merged, pending...)
+		if !withinBudget(candidate) {
+			return nil, errors.New("restored compaction history exceeds the router buffer budget")
+		}
+		output = candidate
+	}
+	if !withinBudget(output) {
+		return nil, errors.New("restored compaction history exceeds the router buffer budget")
 	}
 	result := make([]json.RawMessage, len(output))
 	for index, item := range output {
 		result[index] = item.raw
-	}
-	if len(mustMarshalJSON(result)) > responsesRequestBufferBytes {
-		return nil, errors.New("restored compaction history exceeds the router buffer budget")
 	}
 	return result, nil
 

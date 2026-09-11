@@ -72,7 +72,7 @@ func reduceContextCompactionNarration(input []json.RawMessage) []json.RawMessage
 			key := contextCompactionNarrationKey(fields[index], text)
 			if later[key] > index {
 				return contextCompactionNarrationReplacement(text,
-					"[hpatch: exact repeated historical narration omitted; later identical occurrence retained]")
+					"[mekugi: exact repeated historical narration omitted; later identical occurrence retained]")
 			}
 			return text
 		})

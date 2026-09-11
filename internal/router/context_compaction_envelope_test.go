@@ -56,7 +56,6 @@ func TestCompactionEnvelopeSurvivesRestartAndRejectsDamage(t *testing.T) {
 		t.Fatal("missing key did not fail closed")
 	}
 }
-
 func TestCompactionEnvelopeConcurrentKeyCreationAndProviderIsolation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "compaction.key")
 	items := []json.RawMessage{mustMarshalJSON(map[string]any{"type": "message", "role": "user", "content": "Keep me."})}
@@ -80,4 +79,3 @@ func TestCompactionEnvelopeConcurrentKeyCreationAndProviderIsolation(t *testing.
 		t.Fatal("provider-owned compaction was interpreted locally")
 	}
 }
-

@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	contextCompactionPrefix   = "hpatch.compaction.v1:"
-	contextCompactionIDPrefix = "cmp_hpatch_"
+	contextCompactionPrefix   = "mekugi.compaction.v1:"
+	contextCompactionIDPrefix = "cmp_mekugi_"
 )
 
 // The key is installation-owned, not session-owned: resumed and forked Codex
@@ -38,7 +38,7 @@ func (c *contextCompactor) cipher(ctx context.Context, create bool) (cipher.AEAD
 		return nil, err
 	}
 	if c.keyPath == "" {
-		return nil, errors.New("hpatch compaction key path is not configured")
+		return nil, errors.New("mekugi compaction key path is not configured")
 	}
 	if create {
 		if err := os.MkdirAll(filepath.Dir(c.keyPath), 0o700); err != nil {
@@ -117,16 +117,16 @@ func (c *contextCompactor) open(ctx context.Context, raw json.RawMessage) ([]jso
 	item.Type = jsonString(fields, "type")
 	item.ID = jsonString(fields, "id")
 	item.Content = jsonString(fields, "encrypted_content")
-	local := strings.HasPrefix(item.Content, "hpatch.compaction.") || strings.HasPrefix(item.ID, contextCompactionIDPrefix)
+	local := strings.HasPrefix(item.Content, "mekugi.compaction.") || strings.HasPrefix(item.ID, contextCompactionIDPrefix)
 	if !local {
 		return nil, false, nil
 	}
 	if item.Type != "compaction" || !strings.HasPrefix(item.Content, contextCompactionPrefix) {
-		return nil, true, errors.New("unsupported or damaged hpatch compaction envelope")
+		return nil, true, errors.New("unsupported or damaged mekugi compaction envelope")
 	}
 	encrypted, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(item.Content, contextCompactionPrefix))
 	if err != nil {
-		return nil, true, errors.New("invalid hpatch compaction envelope encoding")
+		return nil, true, errors.New("invalid mekugi compaction envelope encoding")
 	}
 	aead, err := c.cipher(ctx, false)
 	if err != nil {
@@ -134,23 +134,23 @@ func (c *contextCompactor) open(ctx context.Context, raw json.RawMessage) ([]jso
 	}
 	compressed, err := aead.Open(nil, nil, encrypted, []byte(contextCompactionPrefix))
 	if err != nil {
-		return nil, true, errors.New("hpatch compaction envelope authentication failed")
+		return nil, true, errors.New("mekugi compaction envelope authentication failed")
 	}
 	decompressor, err := zlib.NewReader(bytes.NewReader(compressed))
 	if err != nil {
-		return nil, true, errors.New("invalid hpatch compaction envelope payload")
+		return nil, true, errors.New("invalid mekugi compaction envelope payload")
 	}
 	defer decompressor.Close()
 	plaintext, err := io.ReadAll(io.LimitReader(decompressor, responsesRequestBufferBytes+1))
 	if err != nil || len(plaintext) > responsesRequestBufferBytes {
-		return nil, true, errors.New("hpatch compaction envelope exceeds the router buffer budget or is damaged")
+		return nil, true, errors.New("mekugi compaction envelope exceeds the router buffer budget or is damaged")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, true, err
 	}
 	var items []json.RawMessage
 	if json.Unmarshal(plaintext, &items) != nil || len(items) == 0 {
-		return nil, true, errors.New("invalid retained hpatch compaction history")
+		return nil, true, errors.New("invalid retained mekugi compaction history")
 	}
 	return items, true, nil
 }

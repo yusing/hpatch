@@ -27,8 +27,8 @@ func TestCompactionHTTPDoesNotInterpretTextAndBlocksEscapedEnvelopes(t *testing.
 	calls := 0
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ })
 	for _, body := range []string{
-		`{"model":"gpt-5","input":"Explain hpatch.compaction.v1: please."}`,
-		`{"model":"gpt-5","input":[{"type":"message","role":"user","content":"cmp_hpatch_example"}]}`,
+		`{"model":"gpt-5","input":"Explain mekugi.compaction.v1: please."}`,
+		`{"model":"gpt-5","input":[{"type":"message","role":"user","content":"cmp_mekugi_example"}]}`,
 	} {
 		response := httptest.NewRecorder()
 		compactor.handler(next)(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)))
@@ -36,7 +36,7 @@ func TestCompactionHTTPDoesNotInterpretTextAndBlocksEscapedEnvelopes(t *testing.
 			t.Fatal("ordinary text was interpreted as a capsule")
 		}
 	}
-	body := `{"model":"gpt-5","input":[{"type":"compaction","encrypted_content":"hpatch\u002ecompaction\u002ev1:broken"}]}`
+	body := `{"model":"gpt-5","input":[{"type":"compaction","encrypted_content":"mekugi\u002ecompaction\u002ev1:broken"}]}`
 	response := httptest.NewRecorder()
 	compactor.handler(next)(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)))
 	if response.Code < 400 || calls != 2 {
@@ -147,7 +147,7 @@ func TestCompactionHTTPStreamingV2AndFailures(t *testing.T) {
 		`{"model":"gpt-5","input":[]}`,
 		`{"model":"gpt-5","input":[null]}`,
 		`{"model":"gpt-5","input":[{"type":"message","role":"user","content":"protected"}]}`,
-		`{"model":"gpt-5","input":[{"type":"compaction","id":"cmp_hpatch_broken","encrypted_content":"broken"}]}`,
+		`{"model":"gpt-5","input":[{"type":"compaction","id":"cmp_mekugi_broken","encrypted_content":"broken"}]}`,
 	} {
 		response := httptest.NewRecorder()
 		compactor.handler(next)(response, httptest.NewRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader(body)))
@@ -177,6 +177,29 @@ func TestCompactionRestoreRepeatedAndTruncatedCarriedItems(t *testing.T) {
 	got, err = compactor.restore(t.Context(), []json.RawMessage{capsule, second})
 	if err != nil || string(mustMarshalJSON(got)) != string(mustMarshalJSON(reduceContextCompaction(items))) {
 		t.Fatalf("repeated envelope duplicated or lost history: %v", err)
+	}
+}
+
+func TestCompactionRestoreRejectsAggregateBeforeOpeningLaterEnvelope(t *testing.T) {
+	compactor := &contextCompactor{keyPath: filepath.Join(t.TempDir(), "compaction.key")}
+	capsule := func(fill string) json.RawMessage {
+		message := mustMarshalJSON(map[string]any{
+			"type": "message", "role": "developer",
+			"content": strings.Repeat(fill, responsesRequestBufferBytes/2),
+		})
+		sealed, err := compactor.seal(t.Context(), []json.RawMessage{message})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sealed
+	}
+	damaged := mustMarshalJSON(map[string]any{
+		"type": "compaction", "id": contextCompactionIDPrefix + "damaged",
+		"encrypted_content": contextCompactionPrefix + "!",
+	})
+	_, err := compactor.restore(t.Context(), []json.RawMessage{capsule("a"), capsule("b"), damaged})
+	if err == nil || err.Error() != "restored compaction history exceeds the router buffer budget" {
+		t.Fatalf("aggregate history was not rejected before the later envelope: %v", err)
 	}
 }
 

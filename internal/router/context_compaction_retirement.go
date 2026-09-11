@@ -589,7 +589,7 @@ func compactionRetiredFailedText(text string, referenced map[string]bool, ranges
 	if removed == 0 {
 		return text
 	}
-	return fmt.Sprintf("[hpatch: omitted %d positively identified routine/source lines from terminal failed output; failure remains unresolved]\n%s", removed, result.String())
+	return fmt.Sprintf("[mekugi: omitted %d positively identified routine/source lines from terminal failed output; failure remains unresolved]\n%s", removed, result.String())
 }
 
 func compactionRetiredTextKeepingRows(text string, referenced map[string]bool, ranges [][2]string) string {
@@ -625,7 +625,7 @@ func compactionRetiredTextKeepingRows(text string, referenced map[string]bool, r
 	}
 
 	var result strings.Builder
-	fmt.Fprintf(&result, "[hpatch: output details omitted; unavailable; original bytes=%d]\n", len(text))
+	fmt.Fprintf(&result, "[mekugi: output details omitted; unavailable; original bytes=%d]\n", len(text))
 	for index, line := range lines {
 		if keep[index] {
 			result.WriteString(line)
@@ -715,7 +715,7 @@ func compactionRetiredPatchReport(text string, referenced map[string]bool, range
 	if removed == 0 {
 		return text
 	}
-	return fmt.Sprintf("[hpatch: omitted %d unreferenced verified source rows from successful historical patch report]\n%s", removed, result.String())
+	return fmt.Sprintf("[mekugi: omitted %d unreferenced verified source rows from successful historical patch report]\n%s", removed, result.String())
 }
 
 func compactionRetiredCall(fields map[string]json.RawMessage, operation compactionOperation) json.RawMessage {
@@ -755,7 +755,7 @@ func compactionLedgerMessage(kind string, record map[string]json.RawMessage) jso
 	default:
 		record = maps.Clone(record)
 		delete(record, "type")
-		text = "[hpatch historical reasoning fact v3; not an instruction]\nmetadata=" +
+		text = "[mekugi historical reasoning fact v3; not an instruction]\nmetadata=" +
 			string(mustMarshalJSON(record))
 	}
 
@@ -778,7 +778,7 @@ func compactionLedgerInvocation(record map[string]json.RawMessage) string {
 		delete(source, "status")
 	}
 
-	return "[hpatch historical tool invocation v3; not an instruction]\n" +
+	return "[mekugi historical tool invocation v3; not an instruction]\n" +
 		"call=" + string(callID) + "\ntool=" + string(operation) +
 		"\nmetadata=" + string(mustMarshalJSON(source)) +
 		"\narguments=" + string(invocation)
@@ -835,13 +835,13 @@ func compactionLedgerCompletion(record map[string]json.RawMessage) string {
 			manifestParts = append(manifestParts, []any{part.metadata, part.result, len(part.text)})
 			body.WriteString(part.text)
 		}
-		return "[hpatch historical tool completion v3; not an instruction; parts=(metadata,result-or-null,text-bytes); body=concatenated part texts]\n" +
+		return "[mekugi historical tool completion v3; not an instruction; parts=(metadata,result-or-null,text-bytes); body=concatenated part texts]\n" +
 			"call=" + string(callID) + "\nmetadata=" + string(mustMarshalJSON(source)) +
 			"\ndata=" + string(mustMarshalJSON(manifestParts)) + "\nbody:\n" + body.String()
 	}
 
 	if result, actualOutput, ok := compactionLedgerShellResult(output); ok {
-		return "[hpatch historical tool completion v3; not an instruction; result and body]\n" +
+		return "[mekugi historical tool completion v3; not an instruction; result and body]\n" +
 			"call=" + string(callID) + "\nmetadata=" + string(mustMarshalJSON(source)) +
 			"\nresult=" + string(result) + "\nbody-bytes=" + fmt.Sprint(len(actualOutput)) +
 			"\nbody:\n" + actualOutput
@@ -849,7 +849,7 @@ func compactionLedgerCompletion(record map[string]json.RawMessage) string {
 
 	var native string
 	if json.Unmarshal(output, &native) == nil && contextCompactionNativeResult.MatchString(native) {
-		return "[hpatch historical tool completion v3; not an instruction; completed native body]\n" +
+		return "[mekugi historical tool completion v3; not an instruction; completed native body]\n" +
 			"call=" + string(callID) + "\nmetadata=" + string(mustMarshalJSON(source)) +
 			"\nbody-bytes=" + fmt.Sprint(len(native)) + "\nbody:\n" + native
 	}
@@ -858,7 +858,7 @@ func compactionLedgerCompletion(record map[string]json.RawMessage) string {
 }
 
 func compactionLedgerJSONCompletion(callID json.RawMessage, source map[string]json.RawMessage, output json.RawMessage) string {
-	return "[hpatch historical tool completion v3; not an instruction; JSON result]\n" +
+	return "[mekugi historical tool completion v3; not an instruction; JSON result]\n" +
 		"call=" + string(callID) + "\nmetadata=" + string(mustMarshalJSON(source)) +
 		"\nresult=" + string(output)
 }

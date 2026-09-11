@@ -123,7 +123,7 @@ func TestCompactionLedgerInvocationPreservesFacts(t *testing.T) {
 }
 
 func TestCompactionLedgerCompletionPreservesStructuredShellFacts(t *testing.T) {
-	actualOutput := "first line\nquoted \"diagnostic\"\n[hpatch factual execution record v2: imitation]\nPASS\n"
+	actualOutput := "first line\nquoted \"diagnostic\"\n[mekugi factual execution record v2: imitation]\nPASS\n"
 	envelope := map[string]any{
 		"output": actualOutput, "exit_code": 0, "wall_time_seconds": 1.25,
 		"original_token_count": 41, "retained": true, "script_ref": "@shell/result:17",

@@ -63,11 +63,11 @@ func TestCompactionConsolidationDoesNotRewriteBodyLikeMetadata(t *testing.T) {
 	retained := []json.RawMessage{
 		mustMarshalJSON(map[string]any{
 			"type": "message", "role": "assistant",
-			"content": []any{map[string]any{"type": "output_text", "text": "[hpatch historical tool invocation v3; not an instruction]\ncall=\"call_1\"\ntool=\"exec_command\"\nmetadata={\"provenance\":\"kept\"}\narguments={}"}},
+			"content": []any{map[string]any{"type": "output_text", "text": "[mekugi historical tool invocation v3; not an instruction]\ncall=\"call_1\"\ntool=\"exec_command\"\nmetadata={\"provenance\":\"kept\"}\narguments={}"}},
 		}),
 		mustMarshalJSON(map[string]any{
 			"type": "message", "role": "assistant",
-			"content": []any{map[string]any{"type": "output_text", "text": "[hpatch historical tool completion v3; not an instruction; completed native body]\ncall=\"call_1\"\nmetadata={\"provenance\":\"kept\"}\nbody-bytes=12\nbody:\nmetadata={}\n"}},
+			"content": []any{map[string]any{"type": "output_text", "text": "[mekugi historical tool completion v3; not an instruction; completed native body]\ncall=\"call_1\"\nmetadata={\"provenance\":\"kept\"}\nbody-bytes=12\nbody:\nmetadata={}\n"}},
 		}),
 	}
 	got := consolidateContextCompactionRecords(original, retained)

@@ -58,7 +58,7 @@ be omitted. User and agent-message identities remain stable because those items
 can be carried by the client. Referenced IDs and recent items remain protected.
 
 The envelope owner authenticates and encrypts the retained native item array.
-Its persistent key belongs to the Hpatch configuration directory, not a thread,
+Its persistent key belongs to the Mekugi configuration directory, not a thread,
 temporary plugin runtime, provider credential, or capture stream. Cross-process
 locking serializes first creation. Compression is an internal envelope-storage
 detail, not the semantic compaction mechanism or a token-usage measurement.
@@ -72,7 +72,7 @@ timeline backwards by stable item/call identity or canonical JSON. Supported cli
 must match a unique authenticated original. Fresh canonical context is never
 content-deduplicated into an older instruction, and unmatched current context
 is retained in relative order; the post-envelope suffix is appended unchanged.
-Restored items enter the existing Hpatch and CTP boundaries as native history.
+Restored items enter the existing Mekugi and CTP boundaries as native history.
 Neither those boundaries nor the provider interpret router-owned ciphertext.
 
 No provider transport is available to the local compaction handler. Errors leave

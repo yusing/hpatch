@@ -124,7 +124,7 @@ func TestCompactionRetirementPreservesCarrierNotice(t *testing.T) {
 func TestCompactionRetiresAppliedPatchBodyNotFailedPatch(t *testing.T) {
 	patch := "*** Begin Patch\n*** Add File: example.go\n+" + strings.Repeat("// old implementation detail\n+", 500) + "\n*** End Patch\n"
 	report := "in example.go\nfiles add=1 update=0 move=0 delete=0\n"
-	source := hpatchApplyExecMarker + "await tools.apply_patch(" + string(mustMarshalJSON(patch)) + ");\ntext(" + string(mustMarshalJSON(report)) + ");"
+	source := mekugiApplyExecMarker + "await tools.apply_patch(" + string(mustMarshalJSON(patch)) + ");\ntext(" + string(mustMarshalJSON(report)) + ");"
 	result := mustMarshalJSON(map[string]any{
 		"type": "custom_tool_call_output", "call_id": "operation_00",
 		"output": []any{map[string]any{"type": "input_text", "text": "Script completed\nWall time 0.1 seconds\nOutput:\n"},
@@ -153,7 +153,7 @@ func TestCompactionRetiredPatchReportKeepsApplicationFactsAndReferencedRows(t *t
 	report := "in internal/router/example.go\nfiles add=0 update=1 move=0 delete=0\n" + rows.String() +
 		"Done!\nWARNING: retained application qualification\n"
 	patch := "*** Begin Patch\n*** Update File: internal/router/example.go\n@@\n-old\n+new\n*** End Patch\n"
-	source := hpatchApplyExecMarker + "await tools.apply_patch(" + string(mustMarshalJSON(patch)) + ");\ntext(" + string(mustMarshalJSON(report)) + ");"
+	source := mekugiApplyExecMarker + "await tools.apply_patch(" + string(mustMarshalJSON(patch)) + ");\ntext(" + string(mustMarshalJSON(report)) + ");"
 	result := mustMarshalJSON(map[string]any{
 		"type": "custom_tool_call_output", "call_id": "operation_00",
 		"output": []any{
@@ -274,7 +274,7 @@ func TestCompactionRetirementPreservesAmbiguousCalls(t *testing.T) {
 
 func TestCompactionRetirementFollowsOnlySurvivingReplacementNotes(t *testing.T) {
 	note := func(target string) string {
-		return fmt.Sprintf("[hpatch compaction: 3 source rows (1:0001 through 3:0003) retained verbatim in later tool result %q]\n", target)
+		return fmt.Sprintf("[mekugi compaction: 3 source rows (1:0001 through 3:0003) retained verbatim in later tool result %q]\n", target)
 	}
 	assertNative := func(t *testing.T, got, want []json.RawMessage) {
 		t.Helper()

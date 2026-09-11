@@ -457,8 +457,8 @@ func compactionSourceDecodeHTMLEscape(text string) (value string, width int, rec
 func compactionOutputNeedsSourcePreservation(raw json.RawMessage, referenced map[string]bool, ranges [][2]string) bool {
 	preserve := false
 	mapCompactionCompletedOutput(raw, func(text string) string {
-		if strings.HasPrefix(text, "[hpatch compaction: retired finished-operation output (") ||
-			strings.HasPrefix(text, "[hpatch: output details omitted; unavailable; original bytes=") {
+		if strings.HasPrefix(text, "[mekugi compaction: retired finished-operation output (") ||
+			strings.HasPrefix(text, "[mekugi: output details omitted; unavailable; original bytes=") {
 			preserve = true
 			return text
 		}
@@ -548,7 +548,7 @@ func compactionPruneSourceText(text string, referenced map[string]bool, ranges [
 			end++
 		}
 		count := end - index
-		note := fmt.Sprintf("[hpatch compaction: omitted %d unreferenced verified source rows (%s through %s); omitted rows are not retained]\n",
+		note := fmt.Sprintf("[mekugi compaction: omitted %d unreferenced verified source rows (%s through %s); omitted rows are not retained]\n",
 			count, tokens[index], tokens[end-1])
 		if count < 4 || size < 256 || len(note) >= size {
 			for _, line := range lines[index:end] {

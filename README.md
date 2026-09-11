@@ -118,11 +118,11 @@ Add `$GOBIN`, or `$(go env GOPATH)/bin` when unset, to the `PATH` used by both
 Mekugi and Codex. The fixed `shell` helper must be available to Codex's executor.
 
 Context compaction is handled locally, without a provider-generated summary.
-Codex still decides when to compact using your settings. Hpatch preserves the
+Codex still decides when to compact using your settings. Mekugi preserves the
 retained native history in an encrypted item and restores it before the next
 provider request. The first compaction creates an owner-only key at
-`$XDG_CONFIG_HOME/hpatch/compaction.key` (normally
-`~/.config/hpatch/compaction.key` on Linux). Keep that key to resume compacted
+`$XDG_CONFIG_HOME/mekugi/compaction.key` (normally
+`~/.config/mekugi/compaction.key` on Linux). Keep that key to resume compacted
 sessions, including when moving them to another installation.
 
 Compaction can discard unmarked historical details from older finished operations,
@@ -131,7 +131,7 @@ visible decisions, diagnostic excerpts, referenced evidence, and recent/live wor
 Recognized applied patch bodies and associated older opaque reasoning can also be
 retired. Older failed-command output and truncated documentation can lose
 unreferenced bulk while retaining errors, warnings, and provenance.
-Discarded details are not currently retrievable through Hpatch.
+Discarded details are not currently retrievable through Mekugi.
 
 Unknown or ambiguous execution states remain intact. If nothing qualifies,
 compaction reports an error rather than asking a provider for a summary.
@@ -219,7 +219,7 @@ and preservation behavior. No compaction threshold or scope is overridden.
 | `--metrics-output PATH` | Disabled | Write the final metrics snapshot on shutdown, overwriting the destination |
 | `--debug` | Disabled | Record diagnostics, capture, metrics, patched instructions, runtime reads, and an AX report; print all artifact paths on exit |
 
-To disable Hpatch tool and model-string transformations:
+To disable Mekugi tool and model-string transformations:
 
 ```sh
 mekugi --mode passthrough codex

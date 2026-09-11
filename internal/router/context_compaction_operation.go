@@ -89,8 +89,8 @@ func compactionCodeModeOperation(source string) (compactionOperation, bool) {
 		return value, err == nil
 	}
 	// This is the router's own translated-patch carrier. Its awaited host
-	// error propagates before the report; see hpatchHistory.carrierInput.
-	if strings.HasPrefix(source, hpatchApplyExecMarker) && len(statements) == 2 {
+	// error propagates before the report; see mekugiHistory.carrierInput.
+	if strings.HasPrefix(source, mekugiApplyExecMarker) && len(statements) == 2 {
 		first, second := statements[0], statements[1]
 		if first.Kind() != "expression_statement" || second.Kind() != "expression_statement" {
 			return compactionOperation{}, false

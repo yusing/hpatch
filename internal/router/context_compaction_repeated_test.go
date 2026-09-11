@@ -109,7 +109,7 @@ func TestCompactionRepeatedCodeModeSource(t *testing.T) {
 
 func TestCompactionReferencedResultsScansOnlySpecialResultNotes(t *testing.T) {
 	note := fmt.Sprintf(
-		"[hpatch compaction: 3 source rows (1:0001 through 3:0003) retained verbatim in later tool result %q]\n",
+		"[mekugi compaction: 3 source rows (1:0001 through 3:0003) retained verbatim in later tool result %q]\n",
 		"later-source",
 	)
 	failed := compactTestOutput("failed-consumer", note, 1)
@@ -174,9 +174,9 @@ func compactionReplayAllowsOnlyMetadataCleanup(before, after json.RawMessage) bo
 // Opt-in private-history replay. Only aggregate sizes are reported; no
 // conversation text is copied into fixtures or printed on failure.
 func TestCompactionRolloutReplay(t *testing.T) {
-	path := os.Getenv("HPATCH_COMPACTION_ROLLOUT")
+	path := os.Getenv("MEKUGI_COMPACTION_ROLLOUT")
 	if path == "" {
-		t.Skip("set HPATCH_COMPACTION_ROLLOUT to check a local rollout")
+		t.Skip("set MEKUGI_COMPACTION_ROLLOUT to check a local rollout")
 	}
 	file, err := os.Open(path)
 	if err != nil {
@@ -352,10 +352,10 @@ func TestCompactionRolloutReplay(t *testing.T) {
 		logCompactionTokenProfile(t, nil, buckets[reason])
 	}
 	retainedTokens := logCompactionTokenProfile(t, input, reduced)
-	if requested := os.Getenv("HPATCH_COMPACTION_MAX_TOKENS"); requested != "" {
+	if requested := os.Getenv("MEKUGI_COMPACTION_MAX_TOKENS"); requested != "" {
 		limit, err := strconv.Atoi(requested)
 		if err != nil || limit <= 0 {
-			t.Fatal("HPATCH_COMPACTION_MAX_TOKENS must be a positive integer")
+			t.Fatal("MEKUGI_COMPACTION_MAX_TOKENS must be a positive integer")
 		}
 		if retainedTokens > limit {
 			t.Errorf("retained visible context exceeds target: %d > %d tokens", retainedTokens, limit)

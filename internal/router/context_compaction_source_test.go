@@ -75,7 +75,7 @@ func TestCompactionSourcePrunesOnlyUnreferencedRows(t *testing.T) {
 		rows[6],
 		rows[7],
 		"warning: keep this non-row diagnostic",
-		"[hpatch compaction: omitted",
+		"[mekugi compaction: omitted",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("source pruning lost %q", want)
@@ -159,7 +159,7 @@ func TestCompactionSourceUsesCompletedCodeModeBody(t *testing.T) {
 
 	got := reduceContextCompaction(items)
 	text := compactionSourceTestOutputText(t, got[1])
-	if !strings.Contains(text, "[hpatch compaction: omitted") || strings.Contains(text, "10:000a source declaration") {
+	if !strings.Contains(text, "[mekugi compaction: omitted") || strings.Contains(text, "10:000a source declaration") {
 		t.Fatal("completed Code Mode source body was not pruned")
 	}
 }
@@ -338,7 +338,7 @@ func TestCompactionSourceGeneratedCarrierReferences(t *testing.T) {
 	got := reduceContextCompaction(base)
 	text := compactionSourceTestOutputText(t, got[2])
 	if string(got[2]) == string(base[2]) || strings.Contains(text, "10:000a source declaration") ||
-		!strings.Contains(text, "[hpatch:") {
+		!strings.Contains(text, "[mekugi:") {
 		t.Fatal("generated carrier self metadata pinned its own source output")
 	}
 
@@ -356,7 +356,7 @@ func TestCompactionSourceFailedPatchRetainsOriginalReferences(t *testing.T) {
 	sourceRows := compactionSourceTestRows("", 18)
 	patch := "*** Begin Patch\n*** Update File: source.go\n@@\n-" + strings.TrimSuffix(sourceRows[2], "\n") + "\n+replacement\n*** End Patch\n"
 	report := "in source.go\nfiles add=0 update=1 move=0 delete=0\n"
-	patchInput := hpatchApplyExecMarker + "await tools.apply_patch(" + string(mustMarshalJSON(patch)) + ");\ntext(" + string(mustMarshalJSON(report)) + ");"
+	patchInput := mekugiApplyExecMarker + "await tools.apply_patch(" + string(mustMarshalJSON(patch)) + ");\ntext(" + string(mustMarshalJSON(report)) + ");"
 	patchCall := mustMarshalJSON(map[string]any{
 		"type": "custom_tool_call", "name": "exec", "call_id": "patch-consumer", "input": patchInput,
 	})

@@ -4,7 +4,7 @@
 
 Codex owns when to compact: its effective model context window, automatic
 compaction threshold and counting scope, model changes, and manual compaction
-requests remain unchanged. Hpatch does not rewrite Codex settings or schedule
+requests remain unchanged. Mekugi does not rewrite Codex settings or schedule
 an earlier trigger.
 
 The launcher preserves the `OpenAI` provider identity for its fixed ChatGPT
@@ -153,7 +153,7 @@ Existing provider-owned compaction payloads remain untouched; reasoning retireme
 Malformed, unknown-version, nested, unauthenticated, or unreadable local envelopes
 fail closed. Both encoded requests and restored history obey router memory bounds.
 
-The installation-owned key is `compaction.key` in Hpatch's configuration directory.
+The installation-owned key is `compaction.key` in Mekugi's configuration directory.
 It is created lazily with owner-only permissions, shared safely across simultaneous
 routers, and retained across process exits. Resuming on another installation needs
 the same key. The original key is never silently replaced. There is no transcript

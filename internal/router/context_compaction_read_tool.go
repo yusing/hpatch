@@ -114,7 +114,7 @@ func compactionRetiredTruncatedReadToolOutput(parts []map[string]json.RawMessage
 			continue
 		}
 		replacement := fmt.Sprintf(
-			"[hpatch compaction: client-truncated historical documentation body had %d retained encoded bytes around an unavailable middle; unambiguous body span omitted]\n%s",
+			"[mekugi compaction: client-truncated historical documentation body had %d retained encoded bytes around an unavailable middle; unambiguous body span omitted]\n%s",
 			end-start, evidence)
 		encoded, ok := compactionEncodeEscapedJSONStringBody(replacement)
 		if !ok || len(encoded) >= end-start {
@@ -201,7 +201,7 @@ func compactionTruncatedEscapedBodyEvidence(raw string, markerStart, markerEnd i
 
 	var result strings.Builder
 	result.WriteString(compactionReadBodyEvidence(prefix))
-	result.WriteString("[hpatch: exact encoded truncation-boundary line follows]\n")
+	result.WriteString("[mekugi: exact encoded truncation-boundary line follows]\n")
 	result.WriteString(raw[prefixEnd:suffixStart])
 	result.WriteByte('\n')
 	result.WriteString(compactionReadBodyEvidence(suffix))
@@ -237,7 +237,7 @@ func compactionRetiredReadToolText(tool, body string) (string, bool) {
 }
 
 func compactionSuccessfulReadHeader(originalBytes int, kind string) string {
-	return fmt.Sprintf("[hpatch compaction: successful read-tool return; %s was %d original bytes; unmarked historical body omitted and not currently retrievable]\n", kind, originalBytes)
+	return fmt.Sprintf("[mekugi compaction: successful read-tool return; %s was %d original bytes; unmarked historical body omitted and not currently retrievable]\n", kind, originalBytes)
 }
 
 func compactionRetiredSearchResults(text string) (string, bool) {
@@ -463,7 +463,7 @@ func compactionRetiredReadBodyObject(object map[string]json.RawMessage) (map[str
 }
 
 func compactionRetiredReadBodyString(text string) string {
-	return fmt.Sprintf("[hpatch compaction: historical document body retired (%d original bytes); selected provenance and diagnostics follow]\n%s",
+	return fmt.Sprintf("[mekugi compaction: historical document body retired (%d original bytes); selected provenance and diagnostics follow]\n%s",
 		len(text), compactionReadBodyEvidence(text))
 }
 
@@ -558,7 +558,7 @@ func compactionRetiredOpenAPI(text string) (string, bool) {
 						continue
 					}
 					reducedOperation[bodyKey] = mustMarshalJSON(fmt.Sprintf(
-						"[hpatch compaction: historical OpenAPI %s retired (%d serialized bytes)]", bodyKey, len(body)))
+						"[mekugi compaction: historical OpenAPI %s retired (%d serialized bytes)]", bodyKey, len(body)))
 					changed = true
 				}
 				reducedItem[key] = mustMarshalJSON(reducedOperation)
@@ -567,7 +567,7 @@ func compactionRetiredOpenAPI(text string) (string, bool) {
 			if key == "description" || key == "parameters" {
 				if len(value) >= 64 {
 					reducedItem[key] = mustMarshalJSON(fmt.Sprintf(
-						"[hpatch compaction: historical OpenAPI path %s retired (%d serialized bytes)]", key, len(value)))
+						"[mekugi compaction: historical OpenAPI path %s retired (%d serialized bytes)]", key, len(value)))
 					changed = true
 				}
 			}
@@ -583,7 +583,7 @@ func compactionRetiredOpenAPI(text string) (string, bool) {
 			continue
 		}
 		reduced[key] = mustMarshalJSON(fmt.Sprintf(
-			"[hpatch compaction: historical OpenAPI %s retired (%d serialized bytes)]", key, len(raw)))
+			"[mekugi compaction: historical OpenAPI %s retired (%d serialized bytes)]", key, len(raw)))
 		changed = true
 	}
 	if !changed {

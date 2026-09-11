@@ -235,8 +235,8 @@ func TestCompactionWebSocketFailsClosed(t *testing.T) {
 		name, input, metadata string
 		status                int
 	}{
-		{"damaged", `[{"type":"compaction","encrypted_content":"hpatch\u002ecompaction\u002ev1:broken"}]`, "", 422},
-		{"unknown_version", `[{"type":"compaction","encrypted_content":"hpatch.compaction.v999:broken"}]`, "", 422},
+		{"damaged", `[{"type":"compaction","encrypted_content":"mekugi\u002ecompaction\u002ev1:broken"}]`, "", 422},
+		{"unknown_version", `[{"type":"compaction","encrypted_content":"mekugi.compaction.v999:broken"}]`, "", 422},
 		{"unsupported", `[{"type":"message","role":"user","content":"Keep this."}]`, `{"request_kind":"compaction","compaction":{"implementation":"unknown"}}`, 422},
 		{"no_reduction", `[{"type":"message","role":"user","content":"Keep this."}]`, `{"request_kind":"compaction","compaction":{"implementation":"responses_compaction_v2"}}`, 422},
 	} {

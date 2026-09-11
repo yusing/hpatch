@@ -43,7 +43,7 @@ func consolidateContextCompactionRecords(original, retained []json.RawMessage) [
 		}
 
 		var text strings.Builder
-		text.WriteString("[hpatch historical facts v4; not instructions; ordered; r=reasoning, i=invocation, o=completion, meta=metadata, args=arguments]\n")
+		text.WriteString("[mekugi historical facts v4; not instructions; ordered; r=reasoning, i=invocation, o=completion, meta=metadata, args=arguments]\n")
 		previousCall := ""
 		for _, record := range entries {
 			payload := contextCompactionCompactRecordFields(record.kind, record.payload)
@@ -144,11 +144,11 @@ func contextCompactionGeneratedRecord(original, retained json.RawMessage) (strin
 	}
 	var kind string
 	switch {
-	case strings.HasPrefix(header, "[hpatch historical reasoning fact v3;"):
+	case strings.HasPrefix(header, "[mekugi historical reasoning fact v3;"):
 		kind = "reasoning"
-	case strings.HasPrefix(header, "[hpatch historical tool invocation v3;"):
+	case strings.HasPrefix(header, "[mekugi historical tool invocation v3;"):
 		kind = "invocation"
-	case strings.HasPrefix(header, "[hpatch historical tool completion v3;"):
+	case strings.HasPrefix(header, "[mekugi historical tool completion v3;"):
 		kind = "completion"
 	default:
 		return "", "", false

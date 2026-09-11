@@ -99,7 +99,7 @@ func reduceContextCompaction(input []json.RawMessage) []json.RawMessage {
 				}
 			}
 			if removed > 0 {
-				reduced = fmt.Sprintf("[hpatch: omitted %d Go test progress/pass lines]\n%s", removed, kept.String())
+				reduced = fmt.Sprintf("[mekugi: omitted %d Go test progress/pass lines]\n%s", removed, kept.String())
 			}
 		case "search":
 			// A later byte-identical output is explicit replacement evidence,
@@ -134,7 +134,7 @@ func reduceContextCompaction(input []json.RawMessage) []json.RawMessage {
 				_, evidence, ok := contextCompactionOutput(candidate.Output)
 				if ok && evidence == text {
 					protected[candidate.CallID] = true
-					reduced = fmt.Sprintf("[hpatch compaction: matching search listing retained verbatim in tool result %q; original command and successful exit status retained]\n", candidate.CallID)
+					reduced = fmt.Sprintf("[mekugi compaction: matching search listing retained verbatim in tool result %q; original command and successful exit status retained]\n", candidate.CallID)
 					break
 				}
 			}

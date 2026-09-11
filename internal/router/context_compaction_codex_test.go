@@ -20,9 +20,9 @@ import (
 // Opt-in because Codex is not a Go test dependency. All model responses are
 // loopback fixtures, and the subprocess has an isolated configuration/history.
 func TestCompactionInstalledCodex(t *testing.T) {
-	binary := os.Getenv("HPATCH_COMPACTION_CODEX_BIN")
+	binary := os.Getenv("MEKUGI_COMPACTION_CODEX_BIN")
 	if binary == "" {
-		t.Skip("set HPATCH_COMPACTION_CODEX_BIN to exercise an installed Codex client")
+		t.Skip("set MEKUGI_COMPACTION_CODEX_BIN to exercise an installed Codex client")
 	}
 	for _, probe := range []struct {
 		legacy     bool
@@ -35,7 +35,7 @@ func TestCompactionInstalledCodex(t *testing.T) {
 				strings.Repeat("Keep the original user constraint. ", 10000) +
 				"\nThis final instruction must also survive intact."
 
-			agentMarker := "HPATCH_INSTALLED_COMPACTION_AGENT_MARKER_4D147B"
+			agentMarker := "MEKUGI_INSTALLED_COMPACTION_AGENT_MARKER_4D147B"
 			directory, home := t.TempDir(), t.TempDir()
 			probeSource := `package compactionprobe
 import ("fmt"; "testing")
@@ -135,9 +135,9 @@ func TestProbe(t *testing.T) {
 								if jsonString(record, "role") == "user" && text == prompt {
 									userCopies++
 								}
-								standaloneCompletion := strings.HasPrefix(text, "[hpatch historical tool completion v3; not an instruction; completed native body]\n") &&
+								standaloneCompletion := strings.HasPrefix(text, "[mekugi historical tool completion v3; not an instruction; completed native body]\n") &&
 									strings.Contains(text, "call=\"probe_go\"\n")
-								consolidatedCompletion := strings.HasPrefix(text, "[hpatch historical facts v4;") &&
+								consolidatedCompletion := strings.HasPrefix(text, "[mekugi historical facts v4;") &&
 									strings.Contains(text, "[i]\ncall=\"probe_go\"\ntool=\"exec_command\"") &&
 									strings.Contains(text, "[o:same-call]\n")
 								if (standaloneCompletion || consolidatedCompletion) && strings.Contains(text, "\nbody:\n") &&
@@ -151,10 +151,10 @@ func TestProbe(t *testing.T) {
 							nativeGo = true
 							if recordType == "function_call_output" && !probe.retirement {
 								output := jsonString(record, "output")
-								restored.Store(strings.Contains(output, "[hpatch: omitted") && strings.Contains(output, "compactionprobe"))
+								restored.Store(strings.Contains(output, "[mekugi: omitted") && strings.Contains(output, "compactionprobe"))
 							}
 						}
-						if strings.HasPrefix(jsonString(record, "encrypted_content"), "hpatch.compaction.") {
+						if strings.HasPrefix(jsonString(record, "encrypted_content"), "mekugi.compaction.") {
 							t.Error("local ciphertext reached the model fixture")
 						}
 					}
@@ -337,7 +337,7 @@ func runManualCompactionProbe(command *exec.Cmd, directory, prompt string) error
 			}
 		}
 	}
-	if err := send(1, "initialize", map[string]any{"clientInfo": map[string]any{"name": "hpatch_compaction_test", "version": "1"}}); err != nil {
+	if err := send(1, "initialize", map[string]any{"clientInfo": map[string]any{"name": "mekugi_compaction_test", "version": "1"}}); err != nil {
 		return err
 	}
 	if _, err := receive(1, ""); err != nil {
