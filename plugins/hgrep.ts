@@ -395,6 +395,11 @@ function conciseDiagnostic(diagnostic: string): string {
         return details.slice(messageStart.length);
       }
     }
+    // Older ripgrep versions omit the repeated operation path.
+    const osError = /^rg: .*: ([^:\r\n]+ \(os error [0-9]+\))$/u.exec(line);
+    if (osError !== null) {
+      return osError[1];
+    }
     return line;
   }
   return diagnostic;
