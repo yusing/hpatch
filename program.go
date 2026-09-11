@@ -176,8 +176,8 @@ func parse(source string) (*program, error) {
 		switch {
 		case frameErr != nil:
 			err = scriptError(sourceLine, frameErr.Error())
-		case frame.Delimiter != "":
-			header := strings.TrimSuffix(line, " <<PATCH")
+		case frame.Marker != "":
+			header := strings.TrimSuffix(line, " "+frame.Marker)
 			if header == "type" {
 				command = instruction{line: sourceLine, operation: "type", text: frame.Body}
 			} else {
@@ -208,7 +208,7 @@ func parse(source string) (*program, error) {
 			continue
 		}
 		command.source = line
-		command.delimiter = frame.Delimiter
+		command.delimiter = frame.Marker
 		command.lineTerminator = lines[headerIndex].Terminator
 		program.instructions = append(program.instructions, command)
 	}

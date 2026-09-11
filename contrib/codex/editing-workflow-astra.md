@@ -31,8 +31,8 @@ position distinguishes repeated text. For follow-up edits, reuse unchanged saved
 final-state rows, confirmed mappings, or exact authored current text as the shared validity rules
 allow. Newly authored text is available as a literal target in the next call. Obtain a focused
 read only when the target is still unknown or ambiguous; copy emitted row identities exactly.
-Use `<<PATCH` for multiline or escape-heavy values so source escaping stays separate from
-HPATCH string escaping. Follow the shared rejection contract to repair the reported failure
+Use heredoc values for multiline or escape-heavy text; choose `<<PATCH` or `<<PATCH-`
+using the shared final-newline rules. Follow the shared rejection contract to repair the reported failure
 without discarding unaffected edits.
 
 ## Target acquisition

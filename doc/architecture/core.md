@@ -13,15 +13,15 @@ The workspace owner retains each touched file's invocation-original identity and
 current logical path, pending lifecycle action, and ordered pending splices. Returning to
 a file reuses those values. Each splice owns any detected indentation candidate. Finalization
 resolves those candidates against the file's final path, orders the effective splices once,
-and performs indentation correction, Go formatting or Tree-sitter syntax validation, and
-changed-line whitespace cleanup as one original-to-final render. It retains the final content
-and its composed offset map for reporting. No command materializes an intermediate baseline,
+and performs indentation correction, Go formatting or Tree-sitter syntax validation as one
+original-to-final render. It retains the final content and its language-formatting offset map
+for reporting. No command materializes an intermediate baseline,
 and all targets continue to resolve against the invocation-original content.
 
 `editor_projection.go` owns the ordered splice projection for each immutable edit snapshot.
 Each projected splice retains its baseline edit and one half-open, pre-format rendered byte
-span, including collapsed deletion spans. Content rendering, reporting, whitespace cleanup,
-indentation probes, and syntax attribution consume that projection rather than independently
+span, including collapsed deletion spans. Content rendering, reporting, indentation probes,
+and syntax attribution consume that projection rather than independently
 accumulating rendered offsets. The editor caches its current snapshot and invalidates it on
 initialization, accepted edits, and actual indentation corrections. Hypothetical indentation
 and syntax-subset snapshots use the same projector without replacing the editor's snapshot.

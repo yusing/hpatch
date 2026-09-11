@@ -97,11 +97,16 @@ and without CTP. The variants teach the following tool workflow:
    pre-edit rows or ranges covered by confirmed routed mappings. Use returned final-state rows
    or exact unanchored current text for other changed content. Acquire a focused read when these
    forms do not identify the intended current target; rereading solely to recover an available
-   target is unnecessary. Use HPATCH's `<<PATCH` value form for regular expressions and other
-   escape-heavy edit values.
+   target is unnecessary. Use heredoc values for regular expressions and other escape-heavy
+   edit values, selecting the final-newline mode from the shared reference.
 8. Use nonempty `type` to replace and empty target-bearing `type` to delete. Use `add` to
    insert before a line or text destination and `add EOF` to append. Use inline values for
-   short text and `<<PATCH` for multiline or escape-heavy values.
+   short text and heredocs for multiline or escape-heavy values. Teach `<<PATCH` for values
+   including their final body terminator and `<<PATCH-` for values omitting exactly that
+   terminator. Prefer row/range targets for whole-line replacements; literal targets own only
+   their exact matched bytes. Insertions account for existing separators, and whole-line
+   deletion includes the line terminator. Language-aware formatting and indentation correction
+   remain distinct from authored whitespace, which otherwise stays intact.
 9. After a wholly row-stale routed rejection, use `functions.hpatch_recover` with one current
    `C... TARGET` line per listed command. Submit every listed target correction in one atomic
    payload. Use one complete ordinary script for non-target or mixed corrections. After

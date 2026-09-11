@@ -247,19 +247,6 @@ func (file *fileState) renderContent(ctx context.Context) ([]*commandError, erro
 		}
 	}
 
-	if !isGitDefaultBinary(file.original) && !isGitDefaultBinary(final) {
-		fixed, deletions := fixChangedLineWhitespace(final, file.editor.renderedEdits(), offsets)
-		if fixed != final {
-			cleanupOffsets := newWhitespaceOffsetMap(len(final), deletions)
-			if offsets == nil {
-				offsets = cleanupOffsets
-			} else {
-				offsets.subsequent = cleanupOffsets
-			}
-			final = fixed
-		}
-	}
-
 	language, name, supported := languageSyntaxForPath(file.path)
 	if supported && (file.created || file.originalPath != file.path || file.original != final) {
 		syntaxFailures := collapseLanguageSyntaxCascades(ctx, final, language, findLanguageSyntaxFailures(final, language))

@@ -18,9 +18,9 @@ type PhysicalLine struct {
 
 // CommandFrame describes one inline command or complete heredoc command.
 type CommandFrame struct {
-	Delimiter string
-	Body      string
-	Next      int
+	Marker string
+	Body   string
+	Next   int
 }
 
 // SplitPhysicalLines splits LF and CRLF scripts without losing body terminators.
@@ -49,17 +49,23 @@ func SplitPhysicalLines(source string) []PhysicalLine {
 // parsers and diagnostics do not reinterpret payload-shaped data as commands.
 func FrameCommand(lines []PhysicalLine, headerIndex int, command string) (CommandFrame, error) {
 	frame := CommandFrame{Next: headerIndex + 1}
-	delimiter, err := heredocDelimiter(command)
+	marker, err := heredocMarker(command)
 	if err != nil {
 		// An invalid heredoc header owns the remaining physical lines.
 		frame.Next = len(lines)
 		return frame, err
 	}
-	frame.Delimiter = delimiter
-	if delimiter != "" {
-		frame.Body, frame.Next, err = decodeHeredoc(lines, headerIndex, delimiter)
+	frame.Marker = marker
+	if marker != "" {
+		frame.Body, frame.Next, err = decodeHeredoc(lines, headerIndex, "PATCH")
+		if err == nil && marker == "<<PATCH-" && frame.Next > headerIndex+2 {
+			// Remove only the final physical body terminator, not trailing
+			// spaces or any preceding blank lines.
+			frame.Body = strings.TrimSuffix(frame.Body, lines[frame.Next-2].Terminator)
+		}
 		return frame, err
 	}
+
 	if !isInlineQuotedCommand(command) {
 		return frame, nil
 	}
@@ -104,7 +110,7 @@ func scanQuotedOperand(text string, quoteOpen bool) bool {
 	return quoteOpen
 }
 
-func heredocDelimiter(command string) (string, error) {
+func heredocMarker(command string) (string, error) {
 	operation, _, _ := strings.Cut(command, " ")
 	if operation != "type" && operation != "add" {
 		return "", nil
@@ -113,10 +119,13 @@ func heredocDelimiter(command string) (string, error) {
 	if marker < 0 {
 		return "", nil
 	}
-	if marker > 0 && command[marker-1] == ' ' && command[marker:] == "<<PATCH" {
-		return "PATCH", nil
+	if marker > 0 && command[marker-1] == ' ' {
+		switch command[marker:] {
+		case "<<PATCH", "<<PATCH-":
+			return command[marker:], nil
+		}
 	}
-	return "", errors.New("invalid heredoc; HPATCH/2 requires an unquoted <<PATCH final operand")
+	return "", errors.New("invalid heredoc; HPATCH/2 requires an unquoted <<PATCH or <<PATCH- final operand")
 }
 
 func unquotedDoubleLess(text string) int {

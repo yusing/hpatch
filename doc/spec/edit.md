@@ -20,8 +20,11 @@ standalone-CR terminator, nonempty `type` preserves that exact final terminator 
 replacement does not end in a terminator. A replacement-supplied final terminator is
 authoritative and is not doubled. No terminator is synthesized for an unterminated selected
 final line. An empty target-bearing `type` value removes owned terminators. Inserted values
-are otherwise byte-exact decoded UTF-8. Existing line endings outside explicit inserted or
-replaced text remain unchanged.
+are otherwise byte-exact decoded UTF-8. A literal target does not own an adjacent line
+terminator or blank line unless the target explicitly includes those bytes. Insertion
+preserves any existing separators at its destination. Existing line endings outside explicit
+inserted or replaced text remain unchanged, subject only to the language-aware finalization
+defined in `REQ-OUTPUT-001`.
 
 The engine orders registered immutable-baseline edits once and renders one final content
 value per file. It never reads pending mutated content while resolving a later target.

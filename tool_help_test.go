@@ -56,10 +56,11 @@ func TestMekugi2ToolGrammarMatchesPublicCommands(t *testing.T) {
 		`path_command: PATH_OP SP PATH`,
 		`inline_mutation: "type" SP target SP QUOTED`,
 		`| "add" SP add_destination SP QUOTED`,
-		`heredoc_mutation: "type" SP target SP "<<PATCH" NL _patch_body "PATCH"`,
-		`| "add" SP add_destination SP "<<PATCH" NL _patch_body "PATCH"`,
+		`heredoc_mutation: "type" SP target SP HEREDOC_MARKER NL _patch_body "PATCH"`,
+		`| "add" SP add_destination SP HEREDOC_MARKER NL _patch_body "PATCH"`,
 		`inline_initializer: "type" SP QUOTED`,
-		`heredoc_initializer: "type" SP "<<PATCH" NL _patch_body "PATCH"`,
+		`heredoc_initializer: "type" SP HEREDOC_MARKER NL _patch_body "PATCH"`,
+		`HEREDOC_MARKER: "<<PATCH" | "<<PATCH-"`,
 		`ROW: /[1-9][0-9]*:[0-9a-f]{4}/`,
 		`| "EOF"`,
 		`| TARGET_QUOTED (SP POSINT)?`,
@@ -89,6 +90,14 @@ func TestMekugi2ToolGrammarLineTerminators(t *testing.T) {
 		" type <<PATCH\n":                    true,
 		"type <<PATCH extra\n":               true,
 		"add-not-an-opener <<PATCH\n":        true,
+		"type <<PATCH-\n":                    false,
+		"type 1:a2b3 <<PATCH-\n":             false,
+		"add EOF <<PATCH-\r\n":               false,
+		"type <<PATCH- extra\n":              true,
+		"type <<PATCH--\n":                   true,
+		"type x<<PATCH-\n":                   true,
+		"type <<PATC-\n":                     true,
+		" type <<PATCH-\n":                   true,
 		"type <<PATCH\n":                     false,
 		"type 1:a2b3 <<PATCH\n":              false,
 		"add 1:a2b3 <<PATCH\r\n":             false,
@@ -96,6 +105,37 @@ func TestMekugi2ToolGrammarLineTerminators(t *testing.T) {
 	} {
 		if got := matchesBodyLine(value); got != want {
 			t.Errorf("patch body matches %q = %v, want %v", value, got, want)
+		}
+	}
+}
+
+func TestMekugi2ToolGrammarHeredocSuffixes(t *testing.T) {
+	bodyLine := grammarTerminalRegexp(t, "PATCH_BODY_LINE")
+	// Exercise every suffix boundary and one-character near miss. The body
+	// grammar reserves only complete unindented heredoc opener-shaped lines.
+	for _, operation := range []string{"type", "add", " type", "add-not-an-opener"} {
+		for _, prefix := range []string{"", "1:abcd ", `1:abcd "literal" 2 `, "x", "x "} {
+			for _, marker := range []string{"<<PATCH", "<<PATCH-"} {
+				candidates := []string{marker, marker + "-", marker + " ", marker + " extra"}
+				for i := range len(marker) {
+					candidates = append(candidates, marker[:i], marker[:i]+"x"+marker[i+1:])
+				}
+				for _, suffix := range candidates {
+					line := operation + " " + prefix + suffix
+					operands := strings.TrimPrefix(line, operation+" ")
+					reserved := false
+					if operation == "type" || operation == "add" {
+						for _, opener := range []string{"<<PATCH", "<<PATCH-"} {
+							reserved = reserved || operands == opener || strings.HasSuffix(operands, " "+opener)
+						}
+					}
+					for _, ending := range []string{"\n", "\r\n"} {
+						if got := bodyLine.MatchString(line + ending); got == reserved {
+							t.Fatalf("body accepts %q = %v, reserved = %v", line+ending, got, reserved)
+						}
+					}
+				}
+			}
 		}
 	}
 }

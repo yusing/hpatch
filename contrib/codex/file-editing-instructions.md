@@ -212,7 +212,11 @@ add 37:8c2f "// parseCommand parses one physical script line.\n"
 type "return oldResult, nil" "return newResult, nil"
 ```
 
-Use the fixed `<<PATCH` frame for multiline or escape-heavy values:
+For multiline or escape-heavy values, choose the final-newline behavior explicitly:
+`<<PATCH` keeps every body terminator; `<<PATCH-` removes exactly the final body terminator.
+Both close with `PATCH` and preserve all other body bytes, including spaces and earlier blank lines.
+
+Use row/range targets with `<<PATCH` for whole-line replacements:
 
 ```text
 in service.go
@@ -223,9 +227,26 @@ func calculateResult(input Input) (Result, error) {
 PATCH
 ```
 
-An unindented heredoc body line that begins with `type ` or `add ` and then
-contains only `<<PATCH` or ends with ` <<PATCH` is reserved as a nested opener. Close the
-current frame first; use an inline value or indent literal HPATCH examples.
+For a literal replacement that should keep the existing following newline or inline suffix,
+use `<<PATCH-` (or an inline value without a final newline):
+
+```text
+in notes.md
+type "old paragraph" <<PATCH-
+first replacement line
+last replacement line
+PATCH
+```
+
+Literal targets own only their matched bytes. To delete a whole line, use a row target or
+include its terminator in the literal target; deleting text alone leaves the line terminator.
+For insertions, count separators already at the destination and include only the missing ones.
+Authored spaces and blank lines are preserved except for language-aware formatting and
+indentation correction.
+
+An unindented heredoc body line beginning with `type ` or `add ` and ending with either
+heredoc marker is reserved as a nested opener when the marker is its sole operand or follows
+a space. Close the current frame first; use an inline value or indent literal HPATCH examples.
 
 Existing-file edits require a target. Targetless `type VALUE` is valid only immediately after
 `new`; create a file with at most one such initializer:

@@ -39,9 +39,9 @@ For exact content you just authored in a new file, use an unanchored literal tar
 invocation instead of inventing a row hash or rereading the file. Use focused hcat or hgrep only
 when none of those forms identifies the target.
 
-Use HPATCH's `<<PATCH` value form for regular expressions and other escape-heavy edit values
-so HPATCH quoted-string escaping stays separate from source escaping. Acquire only an exact missing
-target.
+Use heredoc values for regular expressions and other multiline or escape-heavy text.
+Choose `<<PATCH` or `<<PATCH-` using the shared final-newline rules. Acquire only an exact
+missing target.
 
 ## Target acquisition
 

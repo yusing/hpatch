@@ -29,8 +29,6 @@ type formattedOffsetMap struct {
 	afterLength  int
 	before       []formatToken
 	after        []formatToken
-	deletions    []whitespaceDeletion
-	subsequent   *formattedOffsetMap
 }
 
 // newFormattedOffsetMap creates a mapping between pre- and post-formatted Go source offsets.
@@ -332,13 +330,7 @@ func (m *formattedOffsetMap) mapOffset(offset int) int {
 	if m == nil {
 		return offset
 	}
-	var mapped int
-	if len(m.deletions) != 0 {
-		mapped = m.mapDeletedOffset(offset)
-	} else {
-		mapped = m.mapTokenOffset(offset)
-	}
-	return m.subsequent.mapOffset(mapped)
+	return m.mapTokenOffset(offset)
 }
 
 // mapExtent projects the whole half-open source extent. Formatting can move
@@ -351,9 +343,6 @@ func (m *formattedOffsetMap) mapExtent(extent renderedSpan) renderedSpan {
 	if extent.start == extent.end {
 		point := m.mapOffset(extent.start)
 		return renderedSpan{start: point, end: point}
-	}
-	if len(m.deletions) != 0 {
-		return m.subsequent.mapExtent(renderedSpan{start: m.mapDeletedOffset(extent.start), end: m.mapDeletedOffset(extent.end)})
 	}
 	start, end := m.mapTokenOffset(extent.start), m.mapTokenOffset(extent.end)
 	// At a shared anchor boundary, the exclusive end belongs to the anchor
@@ -380,23 +369,7 @@ func (m *formattedOffsetMap) mapExtent(extent renderedSpan) renderedSpan {
 		result.start = min(result.start, after.start+part.start)
 		result.end = max(result.end, after.start+part.end)
 	}
-	return m.subsequent.mapExtent(result)
-}
-
-// mapDeletedOffset maps an offset through whitespace deletions.
-func (m *formattedOffsetMap) mapDeletedOffset(offset int) int {
-	offset = min(max(offset, 0), m.beforeLength)
-	removed := 0
-	for _, deletion := range m.deletions {
-		if offset <= deletion.start {
-			return offset - removed
-		}
-		if offset < deletion.end {
-			return deletion.start - removed
-		}
-		removed += deletion.end - deletion.start
-	}
-	return offset - removed
+	return result
 }
 
 // mapTokenOffset maps an offset through token-based formatting changes.
@@ -438,17 +411,4 @@ func (m *formattedOffsetMap) mapTokenOffset(offset int) int {
 		return max(afterEnd, 0)
 	}
 	return afterStart + (offset-beforeStart)*(afterEnd-afterStart)/(beforeEnd-beforeStart)
-}
-
-// newWhitespaceOffsetMap creates an offset map for whitespace deletions.
-func newWhitespaceOffsetMap(contentLength int, deletions []whitespaceDeletion) *formattedOffsetMap {
-	removed := 0
-	for _, deletion := range deletions {
-		removed += deletion.end - deletion.start
-	}
-	return &formattedOffsetMap{
-		beforeLength: contentLength,
-		afterLength:  contentLength - removed,
-		deletions:    deletions,
-	}
 }

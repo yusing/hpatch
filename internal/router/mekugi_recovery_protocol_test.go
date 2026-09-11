@@ -75,6 +75,25 @@ func TestRecoverScriptRetargetsBatchAndPreservesOtherFields(t *testing.T) {
 	}
 }
 
+func TestRecoverScriptPreservesHeredocFraming(t *testing.T) {
+	for _, marker := range []string{"<<PATCH", "<<PATCH-"} {
+		for _, body := range []string{"", "\n", "first\r\nsecond \t\n", "first\n\n"} {
+			for _, finalTerminator := range []string{"", "\n", "\r\n"} {
+				script := "in file.txt\ntype 1:aaaa " + marker + "\r\n" + body + "PATCH" + finalTerminator
+				command := recoveryCommands(script)[1]
+				if !command.parts.parsed {
+					t.Fatalf("unparsed command: %+v", command)
+				}
+				got, err := recoverScriptForTest(t.Context(), script, command.handle+` "current"`)
+				want := strings.Replace(script, "1:aaaa", `"current"`, 1)
+				if err != nil || got != want {
+					t.Fatalf("recover %q = %q, %v; want %q", script, got, err, want)
+				}
+			}
+		}
+	}
+}
+
 func TestRecoverScriptRetargetsObservedBatchSize(t *testing.T) {
 	var script strings.Builder
 	var want strings.Builder

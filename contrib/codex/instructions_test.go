@@ -46,6 +46,24 @@ func TestInstructionsSelectModelWorkflowIndependentlyOfTransport(t *testing.T) {
 	}
 }
 
+func TestInstructionsTeachExplicitNewlineOwnership(t *testing.T) {
+	for _, model := range []string{"gpt-6-astra", "gpt-5.6-sol"} {
+		for _, compact := range []bool{false, true} {
+			got := InstructionsForModel(model, compact)
+			for _, required := range []string{
+				"`<<PATCH-` removes exactly the final body terminator",
+				"Literal targets own only their matched bytes",
+				"count separators already at the destination",
+				"deleting text alone leaves the line terminator",
+			} {
+				if !strings.Contains(got, required) {
+					t.Errorf("model %q compact %v omits %q", model, compact, required)
+				}
+			}
+		}
+	}
+}
+
 func TestInstructionsOwnCTP2Representation(t *testing.T) {
 	for _, required := range []string{
 		"## CTP/2 transport",

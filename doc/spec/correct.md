@@ -11,8 +11,8 @@ Each rejected-script command has a `C<number>:<hash>` handle covering its comple
 command frame. Recovery has exactly one form per line: `C<number>:<hash> TARGET`. `TARGET` uses
 the ordinary HPATCH/2 row, range, anchored-literal, or unanchored-literal target syntax and must
 denote a different target from the retained command. Recovery
-has no operation keyword and cannot change operations, values, heredoc bodies, command count or
-order, or file context. Target parsing and script rebuilding preserve the public target literal's
+has no operation keyword and cannot change operations, values, heredoc modes or physical bodies,
+command count or order, or file context. Target parsing and script rebuilding preserve the public target literal's
 exact decoded bytes, including escaped LF, and enforce the same empty, CR, and control
 exclusions.
 

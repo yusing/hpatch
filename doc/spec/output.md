@@ -35,7 +35,10 @@ command's script row when no physical value row exists. Each retained location i
 most two generated lines before and after the failing line; neighboring lines are capped at
 64 runes and the failing line at 200. Supported baseline-aware indentation corrections are
 applied before validation; unsupported extensions remain byte-exact or reject under
-indentation policy.
+indentation policy. Finalization performs no generic whitespace cleanup: authored trailing
+spaces, spaces before tabs, interior blank lines, and blank lines at EOF are preserved unless
+changed by the language-aware formatting or indentation corrections above. This applies to
+new files, replacements, insertions, and deletions through both apply and translation.
 An unchanged apply change set performs no filesystem operation and succeeds. An unchanged basic
 translation returns an empty patch. A host variant additionally reports the already-satisfied
 final state in `HostTranslation`.
@@ -239,7 +242,8 @@ Acceptance:
    rejects the transaction without mutation. Literal normalization, comment rewriting, and
    import sorting or deduplication preserve usable final report rows and replacement aliases;
    supported changed Python, JavaScript, and TypeScript files are syntax-checked and receive
-   supported automatic indentation correction.
+   supported automatic indentation correction. Other authored whitespace remains intact,
+   including Markdown hard breaks, string and fixture content, and explicit EOF blank lines.
 5. Malformed input, missing, stale, reversed, or incomplete targets, edit conflicts,
    unknown or future commands, invalid UTF-8, missing or non-regular files, path collisions,
    staging failure, translation failure, and cancellation observed before staging/commit produce

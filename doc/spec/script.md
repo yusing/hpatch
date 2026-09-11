@@ -48,7 +48,8 @@ physical newlines, CR in every representation, and every other C0 control are fo
 Matching is left-to-right and resumes after each complete match. The target contains the first
 `COUNT` non-overlapping matches and rejects if fewer exist.
 
-`VALUE` is either a JSON-compatible quoted string or the fixed heredoc header `<<PATCH`.
+`VALUE` is either a JSON-compatible quoted string or a heredoc headed by `<<PATCH` or
+`<<PATCH-`. Both forms close with the fixed delimiter `PATCH`.
 Inline strings decode JSON escapes and Unicode escapes and additionally accept literal
 horizontal tabs. Quotes, backslashes, line terminators, NUL, and other C0 controls remain
 escaped. A heredoc consists of its command header, following literal UTF-8 body, and an
@@ -61,12 +62,21 @@ text
 PATCH
 ```
 
-No escape, interpolation, dedent, or delimiter substitution occurs. Payload bytes begin
-after the header terminator and end before the closing delimiter. A nonempty final body
-line therefore contributes its physical terminator. The header, body, and delimiter are
-one command attributed to the header. An exact `PATCH` payload line must use inline escaped
-text instead. Unterminated or oversized heredocs fail as one bounded header-owned syntax
-error.
+No escape, interpolation, dedent, or delimiter substitution occurs. For `<<PATCH`, payload
+bytes begin after the header terminator and end before the closing delimiter. Every body
+line contributes its physical terminator. `<<PATCH-` removes exactly the final body line's
+terminator (LF or CRLF) from that same payload. An empty body remains empty; one empty body
+line also decodes to empty in this mode. Other bytes, including trailing spaces, interior
+terminators, and earlier blank lines, remain unchanged. Validation and the body-size limit
+apply to the original body before removing its final terminator.
+
+The mode is independent of the operation and target. Whole-line replacement still applies
+the terminator-preservation rule in `REQ-EDIT-001` after decoding the value. Literal targets
+own only their exact matched bytes; neither mode consumes adjacent baseline whitespace.
+
+The header, body, and delimiter are one command attributed to the header. An exact `PATCH`
+payload line must use inline escaped text instead. Unterminated or oversized heredocs fail
+as one bounded header-owned syntax error.
 
 The grammar is unambiguous by operand shape. For example:
 
@@ -99,8 +109,9 @@ Acceptance:
 3. Anchored and unanchored text targets accept JSON-escaped LF and exact multiline or
    trailing-LF matches while raw physical newlines, CR, empty literals, and other forbidden
    controls reject.
-4. JSON-compatible values and the fixed `<<PATCH` heredoc reproduce their exact decoded
-   payloads without parsing body lines as commands.
+4. JSON-compatible values and both fixed-delimiter heredoc forms reproduce their exact decoded
+   payloads without parsing body lines as commands. `<<PATCH-` removes exactly one final body
+   terminator, independently of target shape, preserving all other bytes.
 5. Invalid rows, ranges, counts, strings, heredocs, operands, and commands fail before
    filesystem mutation, patch output, or final-state reporting.
 6. File and mutation commands may be interleaved while all targets retain the immutable

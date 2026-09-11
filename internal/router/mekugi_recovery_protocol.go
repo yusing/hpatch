@@ -83,8 +83,8 @@ func recoveryCommandPartsOf(header string, frame hpatchsyntax.CommandFrame) reco
 	if operation != "type" && operation != "add" {
 		return recoveryCommandParts{}
 	}
-	if frame.Delimiter != "" {
-		target := strings.TrimSpace(strings.TrimSuffix(operands, "<<PATCH"))
+	if frame.Marker != "" {
+		target := strings.TrimSpace(strings.TrimSuffix(operands, frame.Marker))
 		parts := recoveryCommandParts{
 			operation: operation,
 			target:    target,
@@ -269,13 +269,7 @@ func planRecoveryEdits(script string, operations []recoveryOperation) ([]recover
 		if err != nil {
 			return nil, recoveryError(operation.sequence, err.Error())
 		}
-		replacement := renderRecoveryMutation(
-			operation.command,
-			operation.command.parts.operation,
-			operation.target,
-			operation.command.parts.value,
-			operation.command.parts.multiline,
-		)
+		replacement := renderRecoveryMutation(operation.command, operation.target)
 		edits = append(edits, recoveryEdit{
 			sequence: operation.sequence,
 			script:   "type " + commandTarget + " " + strconv.Quote(replacement),
@@ -284,21 +278,16 @@ func planRecoveryEdits(script string, operations []recoveryOperation) ([]recover
 	return edits, nil
 }
 
-func renderRecoveryMutation(
-	command *recoveryCommandReference,
-	operation, target, value string,
-	multiline bool,
-) string {
-	terminator := recoveryTerminator(hpatchsyntax.SplitPhysicalLines(command.source)[0])
-	finalTerminator := recoveryTerminatorSuffix(command.source)
-	header := operation
-	if target != "" {
-		header += " " + target
+func renderRecoveryMutation(command *recoveryCommandReference, target string) string {
+	header := command.parts.operation + " " + target
+	if command.parts.multiline {
+		originalHeader := hpatchsyntax.SplitPhysicalLines(command.source)[0].Text
+		marker := originalHeader[strings.LastIndex(originalHeader, " ")+1:]
+		// Retarget only the header. Preserve the value's framing mode and
+		// physical bytes, including mixed terminators and an empty body.
+		return header + " " + marker + command.source[len(originalHeader):]
 	}
-	if multiline {
-		return header + " <<PATCH" + terminator + value + "PATCH" + finalTerminator
-	}
-	return header + " " + strconv.Quote(value) + finalTerminator
+	return header + " " + strconv.Quote(command.parts.value) + recoveryTerminatorSuffix(command.source)
 }
 
 func recoveryPhysicalTarget(script string, logicalRows [][]int, start, end int) (string, error) {
@@ -362,13 +351,6 @@ func recoveryToken(value string) (string, string) {
 func recoveryHash(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:2])
-}
-
-func recoveryTerminator(line hpatchsyntax.PhysicalLine) string {
-	if line.Terminator != "" {
-		return line.Terminator
-	}
-	return "\n"
 }
 
 func recoveryTerminatorSuffix(value string) string {

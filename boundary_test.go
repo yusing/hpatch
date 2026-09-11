@@ -127,6 +127,9 @@ func TestMekugi2HeredocFailuresAreHeaderOwnedAndAtomic(t *testing.T) {
 		want   string
 	}{
 		{name: "substituted delimiter", script: "new file.txt\ntype <<BODY\nraw\nBODY\n", want: "requires an unquoted <<PATCH"},
+		{name: "unknown mode", script: "new file.txt\ntype <<PATCH--\nraw\nPATCH\n", want: "requires an unquoted <<PATCH"},
+		{name: "unterminated chomp", script: "new file.txt\ntype <<PATCH-\nraw\n", want: "unterminated heredoc"},
+		{name: "chomp wrong delimiter", script: "new file.txt\ntype <<PATCH-\nraw\nPATCH-\n", want: "unterminated heredoc"},
 		{name: "unterminated", script: "new file.txt\ntype <<PATCH\nraw\n", want: "unterminated heredoc"},
 		{name: "oversized", script: "new file.txt\ntype <<PATCH\n" + strings.Repeat("x", hpatchsyntax.MaxHeredocBodyBytes+1) + "\nPATCH\n", want: "heredoc body exceeds"},
 		{name: "invalid UTF-8", script: "new file.txt\ntype <<PATCH\n" + string([]byte{0xff}) + "\nPATCH\n", want: "heredoc body is not UTF-8"},
