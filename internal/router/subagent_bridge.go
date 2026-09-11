@@ -60,9 +60,30 @@ func prepareSubagentBridge(request *parsedResponsesRequest) (*subagentBridge, er
 							}
 							delete(message, "encrypted")
 							properties["message"] = mustMarshalJSON(message)
-							schema["properties"] = mustMarshalJSON(properties)
-							fn["parameters"] = mustMarshalJSON(schema)
 						}
+						if jsonString(fn, "name") == "spawn_agent" {
+							for name, note := range map[string]string{
+								"model":            "Grok override: grok:grok-4.6 requires fork_turns=\"none\". Native role restrictions still apply.",
+								"fork_turns":       "For grok:grok-4.6, explicitly use \"none\" and include the complete task in message; encrypted OpenAI history cannot be inherited.",
+								"reasoning_effort": "For grok:grok-4.6: low, medium, high, or xhigh. Native role restrictions still apply.",
+							} {
+								raw, exists := properties[name]
+								if !exists {
+									continue
+								}
+								var property map[string]json.RawMessage
+								if err := json.Unmarshal(raw, &property); err != nil {
+									return nil, err
+								}
+								if property == nil {
+									continue
+								}
+								property["description"] = mustMarshalJSON(strings.TrimSpace(jsonString(property, "description") + "\n" + note))
+								properties[name] = mustMarshalJSON(property)
+							}
+						}
+						schema["properties"] = mustMarshalJSON(properties)
+						fn["parameters"] = mustMarshalJSON(schema)
 					}
 					if description := jsonString(fn, "description"); description != "" {
 						fn["description"] = mustMarshalJSON(strings.ReplaceAll(description, "collaboration.", subagentBridgeNamespace+"."))

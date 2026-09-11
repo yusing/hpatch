@@ -39,6 +39,12 @@ native calls back to their provider-visible identities. Both ordinary and additi
 are covered. The reserved OpenAI collaboration schema is not modified in place, because the provider
 rejects that operation. User-visible agent lifecycle remains native.
 
+The projected spawn catalog places Grok's fresh-context and reasoning requirements beside
+existing `model`, `fork_turns`, and `reasoning_effort` arguments, retaining their native
+descriptions. It does not add absent arguments, change defaults or validation constraints,
+or relax role restrictions. The caller still explicitly selects fresh context and supplies
+a self-contained assignment; projection never changes submitted arguments.
+
 Grok uses streaming Chat Completions, either through the public xAI API with `XAI_API_KEY`, or through
 the Grok CLI chat proxy with the existing Grok OAuth credential store. An API key takes precedence.
 `--grok-auth-file` selects a different credential file; otherwise the router uses the current user's
@@ -86,3 +92,6 @@ Acceptance:
 6. Downstream cancellation aborts upstream work; missing terminal markers, partial tool arguments,
    provider errors and idle timeouts cannot be reported as completed responses.
 7. Provider transport, usage, final output and tool-call metrics remain correlated and sanitized.
+8. Ordinary and additional-tool spawn catalogs retain native role, context, permission,
+   required-field, and validation constraints while exposing Grok requirements at the
+   relevant existing arguments. JSON/SSE restoration preserves submitted arguments exactly.
