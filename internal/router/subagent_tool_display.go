@@ -53,11 +53,12 @@ func subagentToolActivityTexts(item map[string]json.RawMessage, qualifiedName st
 			return displays
 		}
 	}
-	if label := toolActivityBuiltinLabel(shortName); label != "" {
-		return []string{toolActivityDetail(label, input)}
-	}
 	var arguments map[string]json.RawMessage
 	_ = json.Unmarshal([]byte(input), &arguments)
+	// Cell waits use the operation-aware display below, not the generic helper label.
+	if label := toolActivityBuiltinLabel(shortName); label != "" && (shortName != "wait" || arguments["cell_id"] == nil) {
+		return []string{toolActivityDetail(label, input)}
+	}
 	if kind := jsonString(item, "type"); kind == "local_shell_call" || kind == "shell_call" {
 		var action struct {
 			Command  []string `json:"command"`
