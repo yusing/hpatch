@@ -51,9 +51,10 @@ Before lossy retirement, evidence reducers can shorten redundant output:
   structured shell output; it does not require interpreting the script.
 
 Finished-operation retirement:
-- Keep the newest eight tool invocations and their results, live/unmatched or
-  duplicate identities, unknown completion states, and explicitly
-  referenced calls or retained-script producers. Referenced verified rows and
+- By default keep the newest eight tool invocations and their results. The
+  budget policy below may relax this warm recency buffer, never the newest
+  invocation/result, live/unmatched or duplicate identities, unknown completion
+  states, or explicitly referenced calls and retained-script producers. Referenced verified rows and
   numeric ranges may survive exactly in factual records instead of pinning their
   whole successful group. Reference matching decodes nested argument/result
   envelopes and supported escaped text; suspicious encodings retain evidence.
@@ -100,8 +101,9 @@ Finished-operation retirement:
   Older completed shell outputs may also shrink without changing native calls or
   reasoning in a blocked group. Whole-output references stay intact; referenced
   full or partial verified rows and numeric ranges remain exact. Live,
-  unknown, and recent output is not made eligible by this output-only pass;
-  failed output obeys the diagnostic-preservation rule above.
+  unknown, and output inside the selected recent frontier is not made eligible
+  by this output-only pass; failed output obeys the diagnostic-preservation rule
+  above.
   Existing provider-owned compaction items remain untouched.
   Factual records use a compact versioned representation with exact invocation
   values, ordered output parts, and unknown metadata. Unreferenced transport item
@@ -126,13 +128,37 @@ Operation completion is not task completion. Execution records report observed
 facts without inventing scope closure, successful validation, or a workspace
 version. User corrections and visible reasoning/decision text are not blanket-pruned.
 
-If no supported reduction is available, compaction fails with HTTP 422. It does not
-discard protected context just to fit a budget, report a fabricated summary,
-or fall back to provider compaction. The target replay must retain 50,000 or fewer
-visible-string tokens using the first native replay boundary and `o200k_base`,
-excluding opaque reasoning and request/tool framing. This acceptance target is
-not a universal cap on arbitrary histories or a complete provider-context count.
-Encoded size and downstream projection savings do not establish this target.
+The working-set selector targets 50,000 visible-string tokens with a maximum
+30,000-token overshoot: no newly completed compaction may retain more than
+80,000 tokens under this metric. Count the selected native item array at the
+first replay boundary using `o200k_base`, excluding opaque `encrypted_content`
+and request/tool framing. Encoded size and downstream projection savings do not
+establish this target. This is not a complete provider-context count and does not
+cap fresh instructions or subsequent input appended after the selected snapshot.
+
+Selection evaluates retention plans in this order: keep the newest eight
+operations and eight outputs; keep eight operations but only one output from
+output-only reduction; then keep four, two, or one operations, still protecting
+the newest output. These counts constrain eligibility, not hard protections:
+user/developer authority, live/unknown states, references, diagnostic preservation
+and complete reasoning/tool-group rules apply to every plan. No plan infers
+irrelevance merely from age or completion. Metadata and narration reduction keep
+their existing frontier. Output reduction precedes more aggressive group
+retirement so native invocation and reasoning context can survive historical bulk.
+
+Each candidate is compiled independently from the same original history and
+measured before sealing. Stop at the first candidate reaching the target;
+otherwise retain the smallest candidate within the overshoot allowance, preferring
+the earlier plan on equal token counts. Do not escalate an already-small history
+when the normal pass cannot shrink it. Repeated items each contribute to the
+metric even when tokenization of their identical bytes is cached for the request.
+
+If no supported token reduction is available, token counting fails, or every
+candidate exceeds 80,000 tokens, compaction fails with HTTP 422 before sealing.
+Budget failures report the measured before/after counts and target/ceiling.
+Removing a V2 trigger is not token savings, and trigger-only input cannot produce
+an empty capsule. Never discard protected context to force admission, fabricate
+a summary or provider usage, or fall back to provider compaction.
 
 The retained native timeline travels inline in an authenticated, encrypted
 router-owned compaction item. Legacy output also carries original real-user messages
@@ -162,6 +188,9 @@ archive, session cache requirement, or model-operated retrieval step.
 Acceptance checks cover local HTTP completion without provider calls, native
 restoration with fresh context and suffixes, repeated compaction, restart and
 concurrent key creation, damaged or missing keys, and conservative output pruning.
+Budget checks cover candidate independence, output-first selection, non-monotonic
+costs, exact target/overshoot boundaries, no-op and cancellation failures, repeated
+item accounting, preserved native evidence, and admission before envelope sealing.
 Installed Codex 0.153.4 has passed loopback legacy and V2 round trips with
 synthetic ChatGPT authentication: automatic compaction with both counting scopes,
 and the manual compact operation used by `/compact`. A large user request is

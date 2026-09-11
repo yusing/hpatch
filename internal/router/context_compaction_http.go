@@ -144,9 +144,11 @@ func (c *contextCompactor) prepare(ctx context.Context, parsed *parsedResponsesR
 			input = input[:len(input)-1]
 		}
 	}
-	reduced := reduceContextCompaction(input)
-	if slices.EqualFunc(input, reduced, func(a, b json.RawMessage) bool { return bytes.Equal(a, b) }) {
-		return fail(http.StatusUnprocessableEntity, "no supported context reduction is available for this history; protected context was not discarded and no provider compaction was requested")
+	reduced, _, err := selectCompactionWorkingSet(ctx, input,
+		compactionTargetTokens, compactionOvershootTokens,
+		reduceContextCompactionWithPlan, compactionVisibleStringTokens)
+	if err != nil {
+		return fail(http.StatusUnprocessableEntity, err.Error())
 	}
 	capsule, err := c.seal(ctx, reduced)
 	if err != nil {

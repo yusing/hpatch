@@ -28,6 +28,11 @@ type compactionRetirement struct {
 }
 
 func retireCompactionOperations(input []json.RawMessage) []json.RawMessage {
+	return retireCompactionOperationsWithFrontier(input, compactionRecentOperations)
+}
+
+func retireCompactionOperationsWithFrontier(input []json.RawMessage, recent int) []json.RawMessage {
+	recent = max(1, recent)
 	fields := make([]map[string]json.RawMessage, len(input))
 	calls, results := make(map[string][]int), make(map[string][]int)
 	var callOrder []int
@@ -42,10 +47,10 @@ func retireCompactionOperations(input []json.RawMessage) []json.RawMessage {
 			results[id] = append(results[id], index)
 		}
 	}
-	if len(callOrder) <= compactionRecentOperations {
+	if len(callOrder) <= recent {
 		return input
 	}
-	cutoff := callOrder[len(callOrder)-compactionRecentOperations]
+	cutoff := callOrder[len(callOrder)-recent]
 	plans := make(map[string]*compactionRetirement)
 	for id, positions := range calls {
 		if id == "" || len(positions) != 1 || len(results[id]) != 1 || !compactionCallID.MatchString(id) {

@@ -13,8 +13,12 @@ import (
 
 // reduceContextCompaction retains authority and the active frontier while
 // reducing redundant evidence and retiring eligible finished operations under
-// the explicit lossy retention policy. It does not guarantee a fixed token cap.
+// the explicit lossy retention policy. Token admission belongs to the selector.
 func reduceContextCompaction(input []json.RawMessage) []json.RawMessage {
+	return reduceContextCompactionWithPlan(input, compactionRetentionPlan{compactionRecentOperations, compactionRecentOperations})
+}
+
+func reduceContextCompactionWithPlan(input []json.RawMessage, plan compactionRetentionPlan) []json.RawMessage {
 	// Clean transport metadata while stable native IDs are still present.
 	// Narration reduction may remove an unreferenced ordinary-assistant ID,
 	// after which the metadata pass must conservatively leave that item alone.
@@ -149,8 +153,8 @@ func reduceContextCompaction(input []json.RawMessage) []json.RawMessage {
 		fields["output"] = encode(reduced)
 		output[index] = mustMarshalJSON(fields)
 	}
-	retained := reduceContextCompactionSource(input,
-		retireCompactionOperations(reduceRepeatedCompactionRows(output, protected)))
+	retained := reduceContextCompactionSourceWithFrontier(input,
+		retireCompactionOperationsWithFrontier(reduceRepeatedCompactionRows(output, protected), plan.operations), plan.outputs)
 	return consolidateContextCompactionRecords(input, retained)
 }
 

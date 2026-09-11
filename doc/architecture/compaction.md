@@ -8,10 +8,32 @@ restoration of its own input envelopes, and bounded request decoding. Codex owns
 configuration resolution, trigger timing, retained client-side context, and
 installation of the returned compaction result.
 
-The selector owns evidence reduction and the approved lossy retirement of finished
+Evidence reducers own reduction and the approved lossy retirement of finished
 operations. Static carrier parsing establishes invocation facts; terminal output
 establishes completion, not task closure. It does not execute scripts or interpret
 opaque reasoning. Unknown lifecycle/dependency states stay protected.
+
+The working-set selector owns token pressure and admission, not relevance
+inference. It measures candidate native histories before envelope sealing using
+the existing visible-string metric. Its 50,000-token target permits at most
+30,000 tokens of overshoot; an inadmissible history fails explicitly rather than
+relaxing authority, lifecycle, reference, diagnostic or reasoning-group rules.
+These budgets do not change Codex's scheduling or model context configuration.
+
+The default eight-operation continuity buffer is a warm retention preference,
+not the definition of live work. Under pressure the selector first reduces
+eligible completed output while retaining native calls and reasoning, then may
+retire more complete historical groups. The newest operation, all live or unknown
+operations, and dependency closure remain protected under every plan. Metadata
+and narration reducers keep their existing conservative frontier.
+
+Each retention plan runs against the same original input. Selection never chains
+lossy candidates or assumes that a more aggressive plan must be smaller. It stops
+at the first candidate reaching the target; otherwise it selects the lowest-cost
+admissible candidate, favoring the earlier plan on ties. An already-small history
+cannot justify escalation merely to manufacture successful compaction. The
+request-local item-cost cache only avoids duplicate tokenization; it is not an
+archive, a shared mutable policy, or a provider token-usage claim.
 
 Retirement records replace complete native call/result pairs in their original
 relative order. Consecutive newly generated records may share framing after
@@ -44,7 +66,7 @@ User/developer authority and the active frontier do not become historical narrat
 merely because they are old. No reduction step calls a provider or claims that
 omitted details can be retrieved.
 
-The selector may remove unreferenced transport turn/time fields from older native
+The metadata reducer may remove unreferenced transport turn/time fields from older native
 items only when unique stable IDs preserve reconciliation, and from factual records
 only when retained content does not reference their exact values. Content
 classifications, roles, phases, opaque payloads, and unknown metadata remain with

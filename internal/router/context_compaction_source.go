@@ -18,6 +18,11 @@ type compactionSourcePair struct {
 }
 
 func reduceContextCompactionSource(original, retained []json.RawMessage) []json.RawMessage {
+	return reduceContextCompactionSourceWithFrontier(original, retained, compactionRecentOperations)
+}
+
+func reduceContextCompactionSourceWithFrontier(original, retained []json.RawMessage, recent int) []json.RawMessage {
+	recent = max(1, recent)
 	if len(original) != len(retained) {
 		return retained
 	}
@@ -40,10 +45,10 @@ func reduceContextCompactionSource(original, retained []json.RawMessage) []json.
 			results[id] = append(results[id], index)
 		}
 	}
-	if len(callOrder) <= compactionRecentOperations {
+	if len(callOrder) <= recent {
 		return retained
 	}
-	cutoff := callOrder[len(callOrder)-compactionRecentOperations]
+	cutoff := callOrder[len(callOrder)-recent]
 
 	pairs := make(map[string]compactionSourcePair)
 	for id, callPositions := range calls {
