@@ -629,6 +629,17 @@ if python3 "$benchmark_root/analyze_capture.py" "$fixture/mekugi-metrics.json" \
     printf 'validator accepted old capture output accounting\n' >&2; exit 1
 fi
 
+jq '.exchanges[0].provider_attempts[0].transport = "websocket" |
+    .exchanges[0].provider_attempts[0].native_request.tokens += 1 |
+    .protocol.input_payload_tokens_saved += 1' \
+    "$fixture/mekugi-metrics.json" >"$fixture/websocket-native.json"
+jq -c 'if .boundary == "provider" then
+    .transport = "websocket" | .native_request.tokens += 1
+else . end' \
+    "$fixture/captures/mekugi.jsonl" >"$fixture/websocket-native-capture.jsonl"
+python3 "$benchmark_root/analyze_capture.py" \
+    "$fixture/websocket-native.json" "$fixture/websocket-native-capture.jsonl" \
+    "$fixture/results.jsonl" mekugi >/dev/null
 jq '.exchanges[0].provider_attempts[0].native_request.tokens += 1 | .protocol.input_payload_tokens_saved += 1' "$fixture/mekugi-metrics.json" >"$fixture/false-native.json"
 jq -c 'if .boundary == "provider" then .native_request.tokens += 1 else . end' "$fixture/captures/mekugi.jsonl" >"$fixture/false-native-capture.jsonl"
 if python3 "$benchmark_root/analyze_capture.py" "$fixture/false-native.json" "$fixture/false-native-capture.jsonl" "$fixture/results.jsonl" mekugi >/dev/null 2>&1; then

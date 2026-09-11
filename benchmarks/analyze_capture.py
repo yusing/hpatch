@@ -343,6 +343,7 @@ def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> set[int]:
                 raise ValueError("raw provider usage differs from the metrics exchange")
             if (
                 raw.get("predecessor_sequence", 0) != front.get("predecessor_sequence", 0)
+                or raw.get("transport") != measured.get("transport")
                 or raw.get("cache_fingerprint") != measured.get("cache_fingerprint")
                 or raw.get("native_fingerprint") != measured.get("native_fingerprint")
                 or payload(raw.get("request")) != payload(measured.get("request"))
@@ -486,8 +487,15 @@ def validate_calculations(metrics: dict[str, Any], exchanges: list[dict[str, Any
             if not isinstance(attempt.get("native_request"), dict):
                 raise ValueError("missing post-replay native request observation")
             native_request = payload(attempt["native_request"])
-            if metrics.get("model_protocol") == "native" and native_request != payload(attempt.get("request")):
-                raise ValueError("native protocol changed the post-replay request")
+            transport_kind = attempt.get("transport")
+            if transport_kind not in {None, "websocket"}:
+                raise ValueError("provider attempt has an unsupported transport")
+            if (
+                metrics.get("model_protocol") == "native"
+                and transport_kind != "websocket"
+                and native_request != payload(attempt.get("request"))
+            ):
+                raise ValueError("native HTTP protocol changed the post-replay request")
             published_attempt_usage = attempt.get("usage")
             parsed_attempt_usage = None
             if published_attempt_usage is not None:
