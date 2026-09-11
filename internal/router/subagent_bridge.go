@@ -63,9 +63,9 @@ func prepareSubagentBridge(request *parsedResponsesRequest) (*subagentBridge, er
 						}
 						if jsonString(fn, "name") == "spawn_agent" {
 							for name, note := range map[string]string{
-								"model":            "Grok override: grok:grok-4.6 requires fork_turns=\"none\". Native role restrictions still apply.",
-								"fork_turns":       "For grok:grok-4.6, explicitly use \"none\" and include the complete task in message; encrypted OpenAI history cannot be inherited.",
-								"reasoning_effort": "For grok:grok-4.6: low, medium, high, or xhigh. Native role restrictions still apply.",
+								"model":            "Grok override: grok:grok-4.6 requires fork_turns=\"none\".",
+								"fork_turns":       "For grok:grok-4.6, explicitly use \"none\" and include the complete task in message.",
+								"reasoning_effort": "For grok:grok-4.6: low, medium, high, or xhigh.",
 							} {
 								raw, exists := properties[name]
 								if !exists {

@@ -32,8 +32,7 @@ For exact content you just authored in a new file, use an unanchored literal tar
 invocation instead of inventing a row hash or rereading the file. Use focused hcat or hgrep only
 when none of those forms identifies the target.
 
-Choose value framing and newline ownership in the shared HPATCH/2 reference.
-After rejection, use its Rejected-script recovery section to preserve unaffected edits.
+Use the shared HPATCH/2 reference for value framing, newline ownership, and rejected-script recovery.
 
 ## Target acquisition
 

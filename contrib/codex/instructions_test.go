@@ -148,6 +148,12 @@ func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 		"only `#!script=@shell/<reference>`",
 		"never mix retained scripts and workspace files",
 		"use native session facilities for interactive input or termination",
+		"`#!batch-stop=SEPARATOR`",
+		"Omitted params inherit the previous complete object",
+		"shell variables and `cd` changes do not carry over",
+		"expire at the reported deadline or earlier",
+		"Reads and edits do not renew them",
+		"Save durable source in workspace files",
 	} {
 		for _, model := range []string{"", "gpt-6-astra"} {
 			for _, compact := range []bool{false, true} {
@@ -208,14 +214,14 @@ func TestInstructionsStayWithinMekugiAndPrivateTools(t *testing.T) {
 
 func TestRecoveryGuidanceRendersDynamicReferences(t *testing.T) {
 	const references = "Rejected target commands:\n"
-	const want = "\nRepair only the stale targets in the retained rejected script. Each line is a current `C...` command handle followed directly by one different ordinary HPATCH/2 target. Submit every listed correction in one atomic payload. Recovery preserves operations, values, command order, and file context. A re-rejection changes no workspace file and makes every earlier handle stale. For other corrections, use ordinary type/add mutations through functions.hpatch_recover against retained-script text.\n\n" + references
+	const want = "\nRepair only the stale targets in the retained rejected script. Each line is a current `C...` command handle followed directly by one different ordinary HPATCH/2 target. Submit every listed correction in one atomic payload. Other commands and fields are preserved. A re-rejection changes no workspace file and makes every earlier handle stale. For other corrections, use ordinary type/add mutations through functions.hpatch_recover against retained-script text.\n\n" + references
 	if got := RecoveryGuidance(references); got != want {
 		t.Fatalf("RecoveryGuidance() = %q, want %q", got, want)
 	}
 }
 
 func TestRecoveryGuidanceWithoutReferences(t *testing.T) {
-	const want = "\nRepair only the stale targets in the retained rejected script. Each line is a current `C...` command handle followed directly by one different ordinary HPATCH/2 target. Submit every listed correction in one atomic payload. Recovery preserves operations, values, command order, and file context. A re-rejection changes no workspace file and makes every earlier handle stale. For other corrections, use ordinary type/add mutations through functions.hpatch_recover against retained-script text.\n\n"
+	const want = "\nRepair only the stale targets in the retained rejected script. Each line is a current `C...` command handle followed directly by one different ordinary HPATCH/2 target. Submit every listed correction in one atomic payload. Other commands and fields are preserved. A re-rejection changes no workspace file and makes every earlier handle stale. For other corrections, use ordinary type/add mutations through functions.hpatch_recover against retained-script text.\n\n"
 	if got := RecoveryGuidance(""); got != want {
 		t.Fatalf("RecoveryGuidance() = %q, want %q", got, want)
 	}
@@ -229,14 +235,19 @@ func TestInstructionsConsolidateDeliveredContracts(t *testing.T) {
 				"## Commentary\n",
 				"### Rejected-script recovery\n",
 				"Nonempty line and range `type` replacements preserve",
-				"Successful reports may include `advisory`",
+				"`advisory`",
 				"`<<TEXT` (keep final terminator)",
 				"`continuation` notice's `next_call`",
-				"`retention.scheduled_expiry`",
+				"Retained scripts are thread-private",
 				"`--preview-bytes N`",
 				"`inspect_file --source NAME PATH`",
 				"plain lines query the\ncurrent snapshot",
 				"For values, framing, paths, conflicting commands, or mixed corrections",
+				"not workspace files",
+				"keep the two payload forms separate",
+				"reevaluate the complete script atomically",
+				"use its script rows and refreshed command handles",
+				"Invalid corrections leave the workspace and retained baseline unchanged",
 			} {
 				if strings.Count(got, required) != 1 {
 					t.Errorf("model %q compact %v: contract %q must occur once", model, compact, required)

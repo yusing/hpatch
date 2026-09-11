@@ -16,23 +16,16 @@ const tool = plugin.tools[0];
 
 test("description stays call-local", () => {
   for (const guidance of [
-    "Run free-form scripts.",
-    "Prefer batching ready, independent, noninteractive programs",
-    "use separate calls for interactive work",
-    "omission inherits the previous object",
-    "a supplied object replaces it",
+    "Run free-form scripts",
     "#!batch=SEPARATOR",
-    "put that exact separator line between at least two nonempty programs",
-    "Single scripts need no batch header",
     "Batches require Code Mode",
     "#!batch= continues after nonzero exits",
     "#!batch-stop= stops before later programs",
-    "policy and unstarted program count",
   ]) {
     expect(tool.specification.description).toContain(guidance);
   }
 
-  for (const persistentGuidance of ["#!cmd=", "#!script=", "@shell/", "default interpreter"]) {
+  for (const persistentGuidance of ["#!cmd=", "#!script=", "@shell/", "default interpreter", "Prefer batching", "omission inherits"]) {
     expect(tool.specification.description).not.toContain(persistentGuidance);
   }
 });

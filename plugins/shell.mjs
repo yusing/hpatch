@@ -233,7 +233,7 @@ export const shellTool = {
   specification: {
     type: "custom",
     name: "shell",
-    description: `Run free-form scripts. The selected interpreter receives the exact script body, and frontend standard input remains available as program data. Prefer batching ready, independent, noninteractive programs; use separate calls for interactive work. For a batch, start with #!batch=SEPARATOR and put that exact separator line between at least two nonempty programs. Choose a separator absent from their source, without surrounding whitespace. Single scripts need no batch header; selector-like body lines stay unchanged. Each program may supply its own params object; omission inherits the previous object, while a supplied object replaces it. Batches require Code Mode and wait for each program to finish. #!batch= continues after nonzero exits; #!batch-stop= stops before later programs. Host errors stop either mode. Results include the policy and unstarted program count.`,
+    description: `Run free-form scripts with the exact body passed to the selected interpreter; standard input remains program data. Batches require Code Mode: start with #!batch=SEPARATOR and put the exact separator line between programs. #!batch= continues after nonzero exits; #!batch-stop= stops before later programs. Host errors stop either mode.`,
   },
 
   parse(input, context) {

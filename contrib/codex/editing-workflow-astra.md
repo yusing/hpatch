@@ -25,8 +25,7 @@ position distinguishes repeated text. For follow-up edits, reuse unchanged saved
 final-state rows, confirmed mappings, or exact authored current text as the shared validity rules
 allow. Newly authored text is available as a literal target in the next call. Obtain a focused
 read only when the target is still unknown or ambiguous; copy emitted row identities exactly.
-Choose value framing and newline ownership in the shared HPATCH/2 reference.
-After rejection, use its Rejected-script recovery section to preserve unaffected edits.
+Use the shared HPATCH/2 reference for value framing, newline ownership, and rejected-script recovery.
 
 ## Target acquisition
 
