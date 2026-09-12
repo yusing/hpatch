@@ -237,7 +237,7 @@ export const shellTool = {
   specification: {
     type: "custom",
     name: "shell",
-    description: `Run free-form scripts with the exact body passed to the selected interpreter; standard input remains program data. Multiline commands share one execution; shell & and wait support independent background jobs. Explicit sequential batches require Code Mode: start with #!batch=SEPARATOR and put the exact separator line between programs. #!batch= continues after nonzero exits; #!batch-stop= stops before later programs. Host errors stop either mode.`,
+    description: `Run free-form scripts with the exact body passed to the selected interpreter; standard input remains program data.`,
   },
 
   parse(input, context) {
