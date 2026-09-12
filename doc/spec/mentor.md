@@ -6,12 +6,15 @@ Mentor Handoff is a `mekugi`-mode product schedule. Subagent handoff is enabled 
 and disabled with `--mentor-handoff=false`. Main handoff is independently controlled by
 `--main-mentor-handoff`, which defaults to `false`. Passthrough mode keeps both off and
 rejects an explicit enable of either. Its
-eligible threads are main sessions (including ordinary forks) with valid Codex turn metadata,
-no subagent header, no `subagent_kind`, and a Codex thread ID; or AgentControl thread spawns
+eligible requests are main-session turns (including ordinary forks) with valid Codex metadata,
+`request_kind: turn`, no subagent header, no `subagent_kind`, and a Codex thread ID; or AgentControl thread spawns
 carrying exactly one `x-openai-subagent: collab_spawn` header and valid Codex turn metadata whose
 `subagent_kind` is `thread_spawn`. Spawned requests require a Codex thread ID.
 The router forwards the subagent header unchanged. It does not infer a subagent from lineage
 or instructions. Requests outside these boundaries remain unchanged.
+
+Main prewarm and compaction requests remain unchanged and do not start or consume the
+main handoff schedule.
 
 For an eligible request whose configured model is exactly `gpt-5.6-luna` or
 `gpt-5.6-terra`, the mentor is `gpt-5.6-sol` with `high` reasoning.

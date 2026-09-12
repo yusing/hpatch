@@ -4,7 +4,7 @@
 
 The Mentor Handoff owner in `internal/router` is a Mekugi product schedule with independent toggles:
 subagent handoff defaults on, and main handoff defaults off. It sits before Mekugi request projection and CTP
-serialization. It identifies main sessions from valid turn metadata and the absence of subagent markers,
+serialization. It identifies main turns from valid `request_kind: turn` metadata and the absence of subagent markers,
 and spawned subagents from Codex's exact thread-spawn header and turn metadata. It keeps
 process-lifetime per-thread counters, and changes only the provider-bound
 model and reasoning effort. The ordinary request owner continues to supply input history, tools, and session

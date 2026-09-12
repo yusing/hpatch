@@ -313,6 +313,13 @@ def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> set[int]:
         exchange = exchanges_by_sequence.get(front_sequence)
         if exchange is None or exchange.get("thread_id") != front.get("thread_id"):
             raise ValueError("raw capture does not reconcile a metrics exchange")
+        request_kind = front.get("request_kind")
+        if request_kind not in (None, "turn", "prewarm", "compaction"):
+            raise ValueError("capture has an unsupported request kind")
+        if exchange.get("request_kind") != request_kind:
+            raise ValueError("raw request kind differs from metrics")
+        if any(provider.get("request_kind") != request_kind for provider in providers):
+            raise ValueError("request kind changed across capture boundaries")
         if provider_expected is False:
             result_usage_excluded.add(front_sequence)
         matched_sequences.add(front_sequence)
@@ -702,7 +709,8 @@ def validate_results(
     observed = {thread: empty_usage() for thread in expected}
     seen: set[str] = set()
     actual_models: dict[str, set[str]] = defaultdict(set)
-    for exchange in metrics["exchanges"]:
+    # Snapshots retain completion order; handoff follows request sequence.
+    for exchange in sorted(metrics["exchanges"], key=lambda item: item["sequence"]):
         thread = exchange.get("thread_id")
         if thread not in allowed_models:
             raise ValueError(f"capture contains an unproved thread {thread}")
@@ -713,6 +721,13 @@ def validate_results(
             model = attempt.get("model") if isinstance(attempt, dict) else None
             if model not in allowed_models[thread]:
                 raise ValueError(f"provider model {model} violates the configured schedule")
+            # Non-turn requests do not advance the schedule. Compaction usage
+            # still counts in the result; prewarm usage remains aggregate-only.
+            if thread in main_models and (
+                exchange.get("request_kind") in {"prewarm", "compaction"}
+                or exchange["sequence"] in result_usage_excluded
+            ):
+                continue
             if thread in main_models:
                 configured = main_models[thread]
                 if model == configured and "gpt-6-astra" not in actual_models[thread]:

@@ -549,6 +549,9 @@ func executeRequest(
 		return fmt.Errorf("prepare request: %w", withRequestStartCause(ctx, err))
 	}
 	metadata, metadataValid := decodeCodexTurnMetadata(headers)
+	if metadataValid {
+		capturer.ObserveRequestKind(ctx, metadata.RequestKind)
+	}
 	threadID := codexThreadID(headers)
 	if mekugiCalls != nil && metadataValid && !metadata.activityIdentityInvalid && (metadata.ThreadID == "" || metadata.ThreadID == threadID) {
 		finalization.observeCriticalNotice = func(source, text string) { mekugiCalls.activity.collect(threadID, source, "error", text) }

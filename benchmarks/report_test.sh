@@ -37,6 +37,22 @@ write_capture "$fixture/captures/mekugi.jsonl" mekugi-id thread-mekugi 80 50 12 
 write_metrics "$fixture/control-metrics.json" thread-control 100 40 20 5 passthrough
 write_metrics "$fixture/mekugi-metrics.json" thread-mekugi 80 50 12 3 mekugi
 
+kind_capture="$fixture/request-kind.jsonl"
+kind_metrics="$fixture/request-kind-metrics.json"
+jq -c '.request_kind = "compaction"' "$fixture/captures/mekugi.jsonl" >"$kind_capture"
+jq '.exchanges[].request_kind = "compaction"' "$fixture/mekugi-metrics.json" >"$kind_metrics"
+python3 "$benchmark_root/analyze_capture.py" "$kind_metrics" "$kind_capture" "$fixture/results.jsonl" mekugi >/dev/null
+jq '.exchanges[].request_kind = "turn"' "$kind_metrics" >"$fixture/wrong-kind-metrics.json"
+if python3 "$benchmark_root/analyze_capture.py" "$fixture/wrong-kind-metrics.json" "$kind_capture" "$fixture/results.jsonl" mekugi >/dev/null 2>&1; then
+    printf 'capture validator accepted inconsistent request kind\n' >&2; exit 1
+fi
+for invalid_kind in turn 'private metadata'; do
+    jq -c --arg kind "$invalid_kind" 'if .boundary == "codex" then .request_kind = $kind else . end' "$kind_capture" >"$fixture/wrong-kind-capture.jsonl"
+    if python3 "$benchmark_root/analyze_capture.py" "$kind_metrics" "$fixture/wrong-kind-capture.jsonl" "$fixture/results.jsonl" mekugi >/dev/null 2>&1; then
+        printf 'capture validator accepted altered request kind\n' >&2; exit 1
+    fi
+done
+
 bash "$benchmark_root/report.sh" "$fixture" >/dev/null
 control_capture="$fixture/control-traffic.jsonl"
 control_metrics="$fixture/control-traffic-metrics.json"

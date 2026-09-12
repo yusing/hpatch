@@ -37,6 +37,13 @@ to native, without scheduling or importing a control. The explicit option MUST b
 rejected in other modes. Configuration, capture validation, and report labeling MUST
 agree on the selected treatment protocol; CTP acceptance criteria remain unchanged.
 
+`BENCHMARK_MAIN_MENTOR=true` MUST be opt-in and limited to diagnostic runs configured
+with `gpt-5.6` or `gpt-5.6-sol`. Main mentor validation MUST use request-sequence order,
+require Astra for the first main turn, and reject a return to Astra after handoff.
+Raw capture and snapshot request kinds MUST reconcile before non-turn requests are
+excluded from schedule checks. Compaction usage MUST remain in result accounting;
+prewarm usage remains in aggregate capture totals but not agent result usage.
+
 The RangeStream task MUST publish its initial non-CountOnly key budget (at most 10, capped by
 a positive request Limit), not leave initial batching implicit. Subsequent batches MUST adapt
 toward MaxRequestBytes with a minimum of one key and respect the remaining request Limit.
@@ -59,8 +66,9 @@ that evidence without requiring or inventing a treatment, Mekugi loop result, or
 Preparation-only MUST qualify the historical base and oracle without invoking a model. The runner
 MUST expose phase elapsed times separately from measured agent wall time.
 
-The control router MUST explicitly disable Mentor Handoff, including when it runs in
-`mekugi` mode. CTP-only arms MUST both disable Mentor; only the Mentor treatment enables it.
+The control router MUST explicitly disable both main and subagent Mentor Handoff, including
+when it runs in `mekugi` mode. CTP-only arms MUST disable both. In `mentor-handoff` mode,
+only the treatment enables subagent handoff; main handoff remains disabled.
 Mentor mode MUST permit an independently configured main model and a shared `native` or `ctp2`
 protocol for both arms. These selections MUST NOT change the router-owned child mentor schedule.
 

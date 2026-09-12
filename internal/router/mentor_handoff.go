@@ -81,7 +81,7 @@ func (m *mentorHandoff) prepare(headers http.Header, metadata codexTurnMetadata,
 				return nil, nil
 			}
 		}
-		if !metadataValid || metadata.SubagentKind != "" || codexThreadID(headers) == "" {
+		if !metadataValid || metadata.SubagentKind != "" || metadata.RequestKind != "turn" || codexThreadID(headers) == "" {
 			return nil, nil
 		}
 	}

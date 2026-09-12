@@ -190,6 +190,9 @@ func TestMentorHandoffMainBoundary(t *testing.T) {
 		{"main luna", "gpt-5.6-luna", `{"request_kind":"turn"}`, "", true},
 		{"main terra", "gpt-5.6-terra", `{"request_kind":"turn"}`, "", true},
 		{"main astra unchanged", "gpt-6-astra", `{"request_kind":"turn"}`, "", false},
+		{"main prewarm", "gpt-5.6-luna", `{"request_kind":"prewarm"}`, "", false},
+		{"main compaction", "gpt-5.6-luna", `{"request_kind":"compaction"}`, "", false},
+		{"missing request kind", "gpt-5.6-luna", `{}`, "", false},
 		{"missing metadata", "gpt-5.6-luna", "", "", false},
 		{"invalid metadata", "gpt-5.6-luna", "{", "", false},
 		{"unmarked child", "gpt-5.6-luna", `{"subagent_kind":"thread_spawn"}`, "", false},
@@ -361,6 +364,42 @@ func TestExecuteRequestMentorHandoffPreservesHistoryAndRestoresRequestedModel(t 
 		if !bytes.Contains(request.fields["input"], []byte("keep exact history")) {
 			t.Errorf("request %d lost inherited input: %s", index+1, request.fields["input"])
 		}
+	}
+}
+
+func TestExecuteRequestMainNonTurnsDoNotConsumeMentorBudget(t *testing.T) {
+	for _, kind := range []string{"prewarm", "compaction"} {
+		t.Run(kind, func(t *testing.T) {
+			provider := &serverFakeProvider{}
+			for range 2 {
+				provider.results = append(provider.results, serverForwardResult{
+					response: serverHTTPResponse(string(mustTestJSON(t, map[string]any{
+						"status": "completed",
+						"output": mentorTestItems(t, "message", "message"),
+						"usage":  map[string]any{"input_tokens": 55_000},
+					}))),
+				})
+			}
+			mentor := newMentorHandoff(true, false)
+			for index, requestKind := range []string{kind, "turn"} {
+				headers := serverMetadataHeaders(t, requestKind, nil)
+				headers.Set(threadIDHeader, "main")
+				request := mentorTestRequest(t, "gpt-5.6-sol")
+				if err := executeRequest(t.Context(), t.Context(), request, headers, "main",
+					provider, io.Discard, nil, nil, nil, mentor); err != nil {
+					t.Fatal(err)
+				}
+				if index == 0 && len(mentor.sessions) != 0 {
+					t.Fatal("non-turn response started or consumed the main schedule")
+				}
+			}
+			for index, want := range []string{"gpt-5.6-sol medium", "gpt-6-astra low"} {
+				request, err := parseResponsesRequest(provider.forwarded[index])
+				if err != nil || request.modelDescription() != want {
+					t.Fatalf("request %d = %q, err=%v, want %q", index, request.modelDescription(), err, want)
+				}
+			}
+		})
 	}
 }
 

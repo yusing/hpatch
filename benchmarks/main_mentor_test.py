@@ -32,8 +32,8 @@ class MainMentorTests(unittest.TestCase):
             },
         }
         self.metrics = {"exchanges": [
-            {"thread_id": "main", "provider_attempts": [{"model": model}]}
-            for model in ("gpt-6-astra", "gpt-5.6-sol")
+            {"sequence": index, "thread_id": "main", "provider_attempts": [{"model": model}]}
+            for index, model in enumerate(("gpt-6-astra", "gpt-5.6-sol"), 1)
         ]}
 
     def test_main_schedule(self):
@@ -56,11 +56,54 @@ class MainMentorTests(unittest.TestCase):
         ):
             with self.subTest(models=models):
                 self.metrics["exchanges"] = [
-                    {"thread_id": "main", "provider_attempts": [{"model": model}]}
-                    for model in models
+                    {"sequence": index, "thread_id": "main", "provider_attempts": [{"model": model}]}
+                    for index, model in enumerate(models, 1)
                 ]
                 with self.assertRaisesRegex(ValueError, "main schedule"):
                     validate_results(self.metrics, self.results, "mekugi", self.config)
+
+    def test_out_of_order_completion(self):
+        self.metrics["exchanges"].reverse()
+        self.assertEqual(validate_results(self.metrics, self.results, "mekugi", self.config), 1)
+
+    def test_prewarm_does_not_start_or_end_schedule(self):
+        for model in ("gpt-5.6-sol", "gpt-6-astra"):
+            with self.subTest(model=model):
+                metrics = copy.deepcopy(self.metrics)
+                for exchange in metrics["exchanges"]:
+                    exchange["sequence"] += 1
+                metrics["exchanges"].insert(0, {
+                    "sequence": 1, "thread_id": "main",
+                    "provider_attempts": [{"model": model}],
+                })
+                self.assertEqual(validate_results(metrics, self.results, "mekugi", self.config, {1}), 1)
+                metrics["exchanges"] = metrics["exchanges"][:1]
+                with self.assertRaisesRegex(ValueError, "never routed"):
+                    validate_results(metrics, self.results, "mekugi", self.config, {1})
+
+    def test_compaction_does_not_advance_schedule_but_retains_usage(self):
+        self.metrics["exchanges"] = [
+            {"sequence": index, "thread_id": "main", "request_kind": kind,
+             "provider_attempts": [{"model": model}],
+             "usage": {"input_tokens": 10, "cached_input_tokens": 0,
+                       "output_tokens": 1, "reasoning_tokens": 0}}
+            for index, (kind, model) in enumerate((
+                ("compaction", "gpt-5.6-sol"),
+                ("turn", "gpt-6-astra"),
+                ("compaction", "gpt-5.6-sol"),
+                ("turn", "gpt-6-astra"),
+                ("turn", "gpt-5.6-sol"),
+            ), 1)
+        ]
+        result = json.loads(self.results.read_text())
+        result["agent"]["usage"]["input_tokens"] = 50
+        result["agent"]["usage"]["output_tokens"] = 5
+        self.results.write_text(json.dumps(result) + "\n")
+        self.assertEqual(validate_results(self.metrics, self.results, "mekugi", self.config), 1)
+        result["agent"]["usage"]["input_tokens"] = 30
+        self.results.write_text(json.dumps(result) + "\n")
+        with self.assertRaisesRegex(ValueError, "usage differs"):
+            validate_results(self.metrics, self.results, "mekugi", self.config)
 
     def test_completion_before_handoff(self):
         self.metrics["exchanges"] = self.metrics["exchanges"][:1]

@@ -92,6 +92,7 @@ type captureRecord struct {
 	SessionID           string                             `json:"session_id,omitempty"`
 	ThreadID            string                             `json:"thread_id,omitempty"`
 	Subagent            string                             `json:"subagent,omitempty"`
+	RequestKind         string                             `json:"request_kind,omitempty"`
 	ProviderExpected    *bool                              `json:"provider_expected,omitempty"`
 	RequestModel        string                             `json:"request_model,omitempty"`
 	Request             payloadMetrics                     `json:"request"`
@@ -129,6 +130,7 @@ type Recorder struct {
 }
 
 type requestState struct {
+	requestKind         string
 	instructionRewrite  *InstructionRewrite
 	predecessorSequence uint64
 	recorder            *Recorder
@@ -154,6 +156,22 @@ type requestState struct {
 type requestRouting struct {
 	sessionKey string
 	turnState  string
+}
+
+// ObserveRequestKind records only the router's validated, content-free request kind.
+func ObserveRequestKind(ctx context.Context, kind string) {
+	switch kind {
+	case "turn", "prewarm", "compaction":
+	default:
+		return
+	}
+	state, ok := ctx.Value(captureKey{}).(*requestState)
+	if !ok {
+		return
+	}
+	state.mu.Lock()
+	state.requestKind = kind
+	state.mu.Unlock()
 }
 
 // ObserveProviderUsage supplies the provider-authoritative usage parsed by the
@@ -395,6 +413,7 @@ func (r *Recorder) recordExchange(state *requestState, boundary string, attempt 
 		Usage:           state.observedUsage(boundary, attempt),
 	}
 	state.mu.Lock()
+	record.RequestKind = state.requestKind
 	if state.instructionRewrite != nil {
 		record.InstructionRewrite = new(*state.instructionRewrite)
 	}

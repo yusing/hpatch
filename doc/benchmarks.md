@@ -111,8 +111,10 @@ MODEL=gpt-5.6-sol REASONING_EFFORT=high BENCHMARK_MODE=mekugi-diagnostic \
 `gpt-5.6` or `gpt-5.6-sol`. It enables `--main-mentor-handoff` while leaving subagent handoff off. The normal router
 mapping starts these requests on Astra with
 one lower reasoning level, capped at xhigh, then hands back to the configured main model.
-The report records the configured schedule and requires the measured main thread to start
-on Astra, with no return to Astra after handoff. Comparing this run with an earlier Astra/CTP/2 baseline changes both
+The report records the configured schedule and checks requests in sequence order, requiring
+main turns to start on Astra with no return after handoff. Captured request-kind evidence
+excludes prewarm and compaction from schedule progression. Compaction usage remains in the
+agent result; prewarm usage remains in aggregate totals only. Comparing this run with an earlier Astra/CTP/2 baseline changes both
 the model schedule and protocol; it is a descriptive comparison, not an isolated handoff test.
 
 Native Mekugi versus CTP/2:
