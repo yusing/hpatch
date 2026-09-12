@@ -17,7 +17,7 @@ model calls to their names are not routed, and no executable frontend is install
 The private `hcat` command accepts exactly one file:
 
 ```text
-hcat [--max-tokens N] [--preview-bytes N] PATH [START:END]
+hcat [--max-tokens N] [--preview-bytes N] [--tail] PATH [START:END]
 ```
 
 The shell owns quoting and argument separation. A path containing whitespace is therefore one
@@ -79,6 +79,20 @@ a Unicode character. Preview records themselves count against the same stdout
 token budget. Preview byte omissions are intentional and counted in each record;
 omitting an entire record at the token ceiling is still incomplete and nonzero.
 
+Exact token counting must remain practical for long unbroken words and whitespace up to
+the bounded candidate size. The pinned model's token identities and splitting rules
+remain unchanged; large pieces must not require quadratic repeated merge scans.
+
+Hcat additionally accepts a leading `--tail`, at most once and only with an explicit
+`--max-tokens`. It selects a suffix of complete formatted rows from the file or requested
+range, in original source order, within the strict token ceiling. It never cuts a row or
+skips an oversized final row to show earlier content. Preview mode still takes each
+selected source row's prefix. Omitted earlier rows use the existing incomplete/nonzero
+contract; a complete suffix covering every selected row is successful. Empty files succeed.
+Tail reads scan and validate the whole file with bounded candidate storage, including
+source beyond the requested range. A source-bound row clears earlier tail candidates;
+later verifiable rows may still be retained. Hgrep does not accept this option.
+
 Hcat retains its bounded whole-row candidate storage in preview mode. A source
 row exceeding 1,984,000 UTF-8 bytes cannot be verified by this reader; it is omitted
 with a distinct source-bound diagnostic and nonzero status. Use a byte-window
@@ -109,3 +123,7 @@ Acceptance:
 9. Invalid and duplicate options reject before source content is read. Retained
    path resolution can precede option validation. Quoted paths, line ranges,
    and thread-private retained reads work with either leading option order.
+10. Tail selection works with either option order, quoted paths, ranges, previews,
+    and retained descriptors. Missing budgets and repeated `--tail` reject before reading.
+    Long and source-bound rows cannot cause unbounded storage or prevent retaining later
+    rows; invalid UTF-8 anywhere in the file still fails.

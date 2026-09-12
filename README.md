@@ -351,6 +351,7 @@ programs**, not as standalone utilities in your terminal:
 
 | Command | Purpose | Extra prerequisite on the executor's `PATH` |
 | --- | --- | --- |
+| `hrun` | Bound an external command's output, optionally keeping its ending | The wrapped command |
 | `hcat` | Read verified source rows | None |
 | `hgrep` | Search text with verified row references | `rg` |
 | `hsymbol` | Look up definitions and references | `gopls` for Go; TypeScript 7 as `tsc` for JS, TS, and JSON; `pyright-langserver` for Python |
@@ -373,6 +374,18 @@ Preview records include the complete row's verified identity, a UTF-8 prefix,
 and omitted-byte counts. Without preview mode, rows remain exact. A caller's
 token ceiling is strict; omitted records are reported as incomplete, not silently
 cut. See the [reader contract](doc/spec/read.md) for ranges and bounds.
+
+Use `hcat --tail --max-tokens 2000 source.ts` to keep the final complete rows.
+For external command output:
+
+```sh
+hrun --max-tokens 2000 --tail -- go test ./internal/router
+```
+
+Hrun keeps the beginning unless `--tail` is supplied. It runs to completion and
+preserves the command's exit status. Stdout and stderr share the budget, with stderr
+taking priority; omissions are reported. See the [shell contract](doc/spec/shell.md)
+for details.
 
 Retained programs use thread-local `@shell/` references. Their result metadata
 reports the original scheduled expiry and non-durable scope. They expire after

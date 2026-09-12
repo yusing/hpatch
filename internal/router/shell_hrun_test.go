@@ -1,0 +1,151 @@
+package router
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/tiktoken-go/tokenizer"
+)
+
+func TestHRunCapture(t *testing.T) {
+	for _, tail := range []bool{false, true} {
+		for _, chunks := range [][]string{
+			{}, {""}, {"abc"}, {"12345678"}, {"123456789012"},
+			{"abc", "def", "ghi", "jkl", "mn"}, {"123456789012", "x", "yz"},
+			{"1234567", "ab", "12345678", "z"},
+		} {
+			capture := hrunCapture{buffer: make([]byte, 8), tail: tail}
+			for _, chunk := range chunks {
+				n, err := capture.Write([]byte(chunk))
+				if err != nil || n != len(chunk) {
+					t.Fatalf("write = %d, %v", n, err)
+				}
+			}
+			all := strings.Join(chunks, "")
+			want := all
+			if len(want) > 8 {
+				if tail {
+					want = want[len(want)-8:]
+				} else {
+					want = want[:8]
+				}
+			}
+			if got := capture.text(); got != want || capture.omitted != (len(all) > 8) {
+				t.Fatalf("tail=%t chunks=%q: got %q, omitted=%t; want %q", tail, chunks, got, capture.omitted, want)
+			}
+		}
+	}
+}
+
+func TestShellRunnerHRun(t *testing.T) {
+	registry := sharedProxyTestRegistry(t)
+	for _, interpreter := range []string{"bash", "sh"} {
+		t.Run(interpreter, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			stdout, stderr, status := runShellWorkerTest(t, registry, interpreter, nil,
+				`hrun --max-tokens 100 -- sh -c 'printf "stdout\n"; printf "stderr\n" >&2; exit 7'`, nil)
+			if stdout != "stdout\n" || stderr != "stderr\n" || status != 7 {
+				t.Fatalf("streams/status: %q, %q, %d", stdout, stderr, status)
+			}
+
+			stdout, stderr, status = runShellWorkerTest(t, registry, interpreter, nil,
+				`mkdir 'child dir'
+cd 'child dir'
+printf 'stdin' | HRUN_TEST_VALUE='exported value' hrun --max-tokens 100 -- sh -c 'printf "%s:%s:%s:" "${PWD##*/}" "$HRUN_TEST_VALUE" "$1"; cat' sh 'quoted argument'`, nil)
+			if stdout != "child dir:exported value:quoted argument:stdin" || stderr != "" || status != 0 {
+				t.Fatalf("context: %q, %q, %d", stdout, stderr, status)
+			}
+		})
+	}
+}
+
+func TestShellRunnerHRunDrainsBeyondDisplayAndHostBudgets(t *testing.T) {
+	registry := sharedProxyTestRegistry(t)
+	directory := t.TempDir()
+	t.Chdir(directory)
+	for _, mode := range []string{"", "--tail"} {
+		stdout, stderr, status := runShellWorkerTest(t, registry, "bash", nil,
+			`hrun --max-tokens 32 `+mode+` -- sh -c 'printf "first-marker\n"; head -c 17000000 /dev/zero; printf "\nlast-marker\n"; printf "error\n" >&2; printf completed > completed; exit 7'`, nil)
+		if status != 7 || !strings.Contains(stderr, "hrun: output incomplete: 32-token limit reached") {
+			t.Fatalf("mode %q: stdout=%q stderr=%q status=%d", mode, stdout, stderr, status)
+		}
+		if mode == "" && !strings.HasPrefix(stdout, "first-marker\n") {
+			t.Fatalf("head output = %q", stdout)
+		}
+		if mode != "" && !strings.HasSuffix(stdout, "\nlast-marker\n") {
+			t.Fatalf("tail output = %q", stdout)
+		}
+		codec, err := tokenizer.ForModel(tokenizer.GPT5)
+		if err != nil {
+			t.Fatal(err)
+		}
+		outTokens, err := codec.Count(stdout)
+		if err != nil {
+			t.Fatal(err)
+		}
+		errTokens, err := codec.Count(strings.Split(stderr, "hrun:")[0])
+		if err != nil || outTokens+errTokens > 32 {
+			t.Fatalf("shared budget: %d + %d, %v", outTokens, errTokens, err)
+		}
+		if data, err := os.ReadFile(filepath.Join(directory, "completed")); err != nil || string(data) != "completed" {
+			t.Fatalf("child did not finish: %q, %v", data, err)
+		}
+		if err := os.Remove(filepath.Join(directory, "completed")); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestShellRunnerHRunPrioritizesStderrAndPreservesSuccess(t *testing.T) {
+	registry := sharedProxyTestRegistry(t)
+	stdout, stderr, status := runShellWorkerTest(t, registry, "sh", nil,
+		`hrun --tail --max-tokens 1 -- sh -c 'printf stdout; printf "first error" >&2'`, nil)
+	if stdout != "" || !strings.HasPrefix(stderr, " error\nhrun: output incomplete:") || status != 0 {
+		t.Fatalf("shared budget: %q, %q, %d", stdout, stderr, status)
+	}
+}
+
+func TestShellRunnerHRunRejectsBeforeExecution(t *testing.T) {
+	registry := sharedProxyTestRegistry(t)
+	directory := t.TempDir()
+	t.Chdir(directory)
+	for _, flags := range []string{
+		"", "--tail", "--max-tokens", "--max-tokens 0", "--max-tokens 15501",
+		"--max-tokens -1", "--max-tokens 01", "--max-tokens 1e3",
+		"--max-tokens 10 --max-tokens 20", "--max-tokens 10 --tail --tail",
+		"--max-tokens 10 --preview-bytes 5",
+	} {
+		_, stderr, status := runShellWorkerTest(t, registry, "bash", nil,
+			"hrun "+flags+" -- touch executed", nil)
+		if status != 2 || !strings.Contains(stderr, "hrun:") {
+			t.Fatalf("flags %q: stderr=%q status=%d", flags, stderr, status)
+		}
+		if _, err := os.Stat(filepath.Join(directory, "executed")); !os.IsNotExist(err) {
+			t.Fatalf("invalid invocation executed a command: %v", err)
+		}
+	}
+	for _, command := range []string{"hrun --max-tokens 10 --", "hrun --max-tokens 10 echo done"} {
+		_, _, status := runShellWorkerTest(t, registry, "bash", nil, command, nil)
+		if status != 2 {
+			t.Fatalf("%q status = %d", command, status)
+		}
+	}
+	_, stderr, status := runShellWorkerTest(t, registry, "bash", nil,
+		fmt.Sprintf("hrun --max-tokens 100 -- %s", filepath.Join(directory, "missing")), nil)
+	if status != 127 || stderr == "" {
+		t.Fatalf("missing command: %q, %d", stderr, status)
+	}
+}
+
+func TestShellRunnerHRunLargeSinglePiece(t *testing.T) {
+	registry := sharedProxyTestRegistry(t)
+	stdout, stderr, status := runShellWorkerTest(t, registry, "bash", nil,
+		`hrun --max-tokens 15500 --tail -- sh -c 'head -c 2000000 /dev/zero | tr "\000" a'`, nil)
+	if status != 0 || (len(stdout)+7)/8 != 15500 || strings.Trim(stdout, "a") != "" ||
+		!strings.Contains(stderr, "hrun: output incomplete") {
+		t.Fatalf("long output: bytes=%d stderr=%q status=%d", len(stdout), stderr, status)
+	}
+}

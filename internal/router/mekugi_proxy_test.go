@@ -1821,6 +1821,8 @@ func TestDirectBashExecCommand(t *testing.T) {
 		{name: "external", arguments: []string{"bash", "rtk ok\n"}, want: "rtk ok", ok: true},
 		{name: "quoted external", arguments: []string{"bash", "'rtk' ok\n"}, want: "'rtk' ok", ok: true},
 		{name: "external redirection", arguments: []string{"bash", "rtk ok >out\n"}, want: "rtk ok >out", ok: true},
+		{name: "hrun", arguments: []string{"bash", "hrun --max-tokens 100 --tail -- echo done\n"}},
+		{name: "quoted hrun", arguments: []string{"bash", "'hrun' --max-tokens 100 -- echo done\n"}},
 		{name: "private", arguments: []string{"bash", "hcat file.txt\n"}},
 		{name: "builtin", arguments: []string{"bash", "printf ok\n"}},
 		{name: "commentary", arguments: []string{"bash", "commentary Running check\n"}},

@@ -7,11 +7,11 @@ import {shellTool} from "./shell.mjs";
 
 const verifiedRowLimitDescription = "An incomplete token-limited result retains complete rows, writes stderr, and exits nonzero.";
 const readerOptionsDescription = "Leading --max-tokens N sets a strict ceiling (1–15500). --preview-bytes N emits explicit JSON prefixes with full-row identities and omitted-byte counts (1–65536).";
-const hcatDescription = `Read one UTF-8 file or inclusive logical-line range and emit verified \`LINE:HASH TEXT\` rows. Usage: \`hcat PATH [START:END]\`. ${readerOptionsDescription} ${verifiedRowLimitDescription}`;
+const hcatDescription = `Read one UTF-8 file or inclusive logical-line range and emit verified \`LINE:HASH TEXT\` rows. Usage: \`hcat PATH [START:END]\`. ${readerOptionsDescription} Leading --tail requires --max-tokens and selects final complete rows in source order. ${verifiedRowLimitDescription}`;
 
 const hcatPath = `(?:"(?:\\\\(?:["\\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\\x00-\\x1F"\\\\]|\\t)*"|[^\\x00-\\x20"]+)`;
 const hcatReadSpec = `${hcatPath}(?: (?:0|[1-9][0-9]*):[1-9][0-9]*)?`;
-const hcatRegex = `\\A(?:(?:--max-tokens|--preview-bytes) [1-9][0-9]* )*${hcatReadSpec}\\z`;
+const hcatRegex = `\\A(?:(?:--max-tokens|--preview-bytes) [1-9][0-9]* |--tail )*${hcatReadSpec}\\z`;
 const inspectFileRegex = `\\A${hcatPath}\\z`;
 
 const hgrepDescription = `Search files with supported ripgrep arguments and emit verified complete rows as \`"PATH":LINE:HASH TEXT\`. ${readerOptionsDescription} ${verifiedRowLimitDescription}`;

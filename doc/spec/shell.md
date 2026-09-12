@@ -128,14 +128,39 @@ router worker, without a second Codex executor call. For Bash and sh basenames,
 the worker parses the body with `mvdan/sh` using
 `LangBash` or `LangPOSIX`, applies supported middle fields as shell options or parameters, and
 executes the syntax in-process. Its exec handler receives expanded argv, invokes hcat, hgrep,
-hsymbol, and inspect_file directly from the authenticated snapshot, and delegates every other
-external command to the inherited environment. Private command stdout, stderr, status,
-redirections, pipelines, cwd, exported environment, and cancellation remain part of the same
+hsymbol, and inspect_file directly from the authenticated snapshot, handles shell-owned
+`hrun`, and delegates every other external command to the inherited environment.
+Private command stdout, stderr, status, redirections, pipelines, cwd, exported environment, and cancellation remain part of the same
 shell evaluation; no private command launches another router worker. Each non-terminal fallback
 external command owns a cancellable process group so its descendants cannot retain shell streams
 past cancellation or the output limit. Every external command in a PTY-backed shell remains in
 the worker's foreground process group and uses a bounded inherited-pipe wait on cancellation,
 preserving terminal input for direct commands and piped stages that read `/dev/tty`.
+
+The shell-owned command `hrun --max-tokens N [--tail] -- COMMAND [ARG...]` executes one
+external command with bounded displayed output. The required budget is a canonical positive
+decimal integer from 1 through 15,500. Each option may appear once, in either order; `--`
+and a nonempty command are required. Invalid arguments reject with status 2 before execution.
+Hrun has no plugin contribution, installed frontend, or model-visible custom tool. Simple
+hrun calls must use the worker, not the direct external-command carrier. Its name is reserved
+against configured plugin declarations. It does not add private-reader AX events.
+
+Hrun uses the existing external-command owner for PATH resolution, argv, current directory,
+exported environment, stdin, signals, cancellation, and descendant cleanup. It does not
+evaluate shell syntax, shell functions, or private reader names. An explicit shell executable
+is required for compound commands. Display-budget exhaustion never cancels the command:
+stdout and stderr are drained to completion into bounded buffers. Prefix mode keeps the
+beginning of each stream; tail mode keeps the ending. Results are delivered after completion,
+not streamed as live progress. Existing host continuation and cancellation remain authoritative.
+
+The strict GPT-5 token budget is shared by retained command stdout and stderr, counted
+independently, with stderr allocated first and stdout receiving the remainder. Streams stay
+separate. Selection may cut lines but not UTF-8 characters; malformed byte sequences are
+rendered as replacement characters. Omission adds a fixed `hrun: output incomplete` diagnostic
+on stderr outside the command-output budget. Omission alone preserves the command's actual
+exit status, including success, nonzero exit, and signal status. Missing executables retain
+status 127; execution, capture, and output-write errors propagate normally. Outer shell and
+host output limits remain independent.
 
 Other interpreters retain the plugin executor path. It passes middle fields as interpreter
 arguments, supplies the final exact body through an anonymous script descriptor such as
@@ -440,3 +465,14 @@ Acceptance:
     non-durable scope alongside the existing reference, without changing native
     fields. Replay keeps the deadline; reads do not renew it; failed retention
     supplies no fabricated expiry.
+
+29. Hrun routes through the authenticated shell worker for Bash and POSIX scripts,
+    including a single static call. It preserves argv, stdin, cwd, exported environment,
+    streams, and command status; configured plugins cannot claim its name.
+30. Hrun head/tail selection enforces the shared token ceiling with valid UTF-8 output,
+    prioritizes stderr, marks omission, and bounds memory regardless of output volume.
+    Maximum-budget long unbroken output uses bounded, non-quadratic token selection.
+    Commands producing more than the outer shell's byte limit still finish when their
+    displayed output fits. Cancellation retains existing process-group cleanup.
+31. Hrun rejects malformed, repeated, missing, or out-of-range options before execution.
+    It never converts display omission into command failure or early termination.

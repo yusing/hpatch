@@ -154,6 +154,14 @@ after a nonzero terminal exit. Host errors stop either mode and preserve complet
 and partial output. Use separate shell calls for interactive programs.
 Native-only clients reject batches; submit separate calls there.
 
+### Bounded command output
+
+Use `hrun [-n N] [--max-tokens N] [--tail] -- COMMAND [ARG...]` for external
+commands. Supply at least one limit; token limits are 1–15500, shared stderr-first.
+`-n` selects complete lines before token limiting; alone it skips tokenization.
+`--tail` keeps the ending. Hrun preserves the command's exit status and waits for
+completion; infinite producers require cancellation. Use an explicit shell for compound commands.
+
 ### Results, continuation, and retry
 
 A runtime failure may leave earlier statements' effects in place. Inspect affected state before
@@ -363,6 +371,10 @@ ceiling and `--preview-bytes N` (1–65536) for long-line inspection. For exampl
 Preview JSON includes a full-source row identity and an explicit UTF-8 prefix with
 omitted-byte counts. Retain the identity, but obtain missing content before using the
 preview as literal target text. Budget omissions still report incomplete results.
+
+`hcat [-n N] [--tail]` selects first/last complete rows; `-n` alone skips tokenization.
+Tail requires a line or token limit. Omitted rows are incomplete; use native selection,
+not `| tail`, to retrieve an ending that a budgeted reader would otherwise omit.
 
 For Go, JavaScript, TypeScript, JSON, and Python, use
 `hsymbol refs PATH LINE SYMBOL [N]` for semantic references or

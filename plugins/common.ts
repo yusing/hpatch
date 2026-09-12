@@ -1,16 +1,12 @@
 import {formatVerifiedRow, hashLine} from "mekugi:core/v1";
 import path from "node:path";
-import {countTokens as countGPT5TokensWithModel} from "gpt-tokenizer/model/gpt-5";
+import {countGPT5Tokens} from "./tokens.ts";
+export {countGPT5Tokens, MAX_POSSIBLE_GPT5_TOKEN_BYTES} from "./tokens.ts";
 import type {ExecutionContext, ExecutionResult, ReaderFailureClass, Tool, TranslationContext} from "../internal/router/toolplugin/plugin.d.ts";
 
 const VERIFIED_ROW_SOFT_TOKENS = 15_000;
 export const VERIFIED_ROW_MAX_TOKENS = 15_500;
-// The pinned GPT-5 vocabulary's longest token is 128 UTF-8 bytes. This bounds
-// retained candidate storage without introducing a separate admission policy.
-export const MAX_POSSIBLE_GPT5_TOKEN_BYTES = 128;
 export const VERIFIED_ROW_LIMIT_DIAGNOSTIC = "output incomplete: 15,000-token limit reached\n";
-// Source rows may contain tokenizer control spellings; they remain ordinary source text.
-const sourceTokenOptions = {disallowedSpecial: new Set<string>()};
 
 export function byteLength(value: string): number {
   return Buffer.byteLength(value, "utf8");
@@ -21,17 +17,22 @@ export function isOutsideWorkspace(root: string, target: string): boolean {
   return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
 }
 
-export function countGPT5Tokens(value: string): number {
-  return countGPT5TokensWithModel(value, sourceTokenOptions);
-}
+export type ReaderOptions = {maxTokens?: number; previewBytes?: number; tail?: boolean};
 
-export type ReaderOptions = {maxTokens?: number; previewBytes?: number};
-
-export function readerOptions(argv: string[]): {options: ReaderOptions; rest: string[]; offset: number} {
+export function readerOptions(argv: string[], allowTail = false): {options: ReaderOptions; rest: string[]; offset: number} {
   const options: ReaderOptions = {};
   let offset = 0;
-  while (argv[offset] === "--max-tokens" || argv[offset] === "--preview-bytes") {
+  while (argv[offset] === "--max-tokens" || argv[offset] === "--preview-bytes"
+      || (allowTail && argv[offset] === "--tail")) {
     const name = argv[offset];
+    if (name === "--tail") {
+      if (options.tail) {
+        throw new Error("--tail cannot repeat");
+      }
+      options.tail = true;
+      offset += 1;
+      continue;
+    }
     const key = name === "--max-tokens" ? "maxTokens" : "previewBytes";
     const maximum = key === "maxTokens" ? VERIFIED_ROW_MAX_TOKENS : 65_536;
     const raw = argv[offset + 1] ?? "";
@@ -42,6 +43,9 @@ export function readerOptions(argv: string[]): {options: ReaderOptions; rest: st
     }
     options[key] = value;
     offset += 2;
+  }
+  if (options.tail && options.maxTokens === undefined) {
+    throw new Error("--tail requires --max-tokens");
   }
   return {options, rest: argv.slice(offset), offset};
 }

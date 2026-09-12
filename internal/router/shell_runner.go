@@ -88,8 +88,12 @@ func executeShellTool(
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	capture := newShellOutputCapture(cancel)
+	terminalShell := stdin != nil && term.IsTerminal(int(stdin.Fd()))
 	middleware := func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 		return func(handlerCtx context.Context, command []string) (runErr error) {
+			if command[0] == "hrun" {
+				return executeHRun(handlerCtx, manifest, runtimeRoot, shellContribution, command[1:], terminalShell)
+			}
 			contribution, private := privateTools[command[0]]
 			if !private {
 				return next(handlerCtx, command)
@@ -128,8 +132,16 @@ func executeShellTool(
 			// option values before reading the retained descriptor.
 			pathIndex := 0
 			if contribution.Name == "hcat" {
-				for pathIndex+1 < len(arguments) && (arguments[pathIndex] == "--max-tokens" || arguments[pathIndex] == "--preview-bytes") {
-					pathIndex += 2
+			options:
+				for pathIndex < len(arguments) {
+					switch arguments[pathIndex] {
+					case "--tail":
+						pathIndex++
+					case "--max-tokens", "--preview-bytes":
+						pathIndex += 2
+					default:
+						break options
+					}
 				}
 			}
 			if contribution.Name == "hcat" && pathIndex < len(arguments) && strings.HasPrefix(arguments[pathIndex], shellArtifactPrefix) {
@@ -190,7 +202,6 @@ func executeShellTool(
 	if err != nil {
 		return toolplugin.ExecutionOutput{}, fmt.Errorf("resolve shell working directory: %w", err)
 	}
-	terminalShell := stdin != nil && term.IsTerminal(int(stdin.Fd()))
 	runner, err := interp.New(
 		interp.Env(expand.ListEnviron(os.Environ()...)),
 		interp.Dir(workingDirectory),
@@ -252,7 +263,10 @@ func trimIncompleteUTF8Tail(value string) (string, bool) {
 
 // executeExternalShellCommand runs an external command from within the mvdan/sh interpreter.
 func executeExternalShellCommand(ctx context.Context, arguments []string, terminalShell bool) error {
-	handler := interp.HandlerCtx(ctx)
+	return runExternalShellCommand(ctx, arguments, terminalShell, interp.HandlerCtx(ctx))
+}
+
+func runExternalShellCommand(ctx context.Context, arguments []string, terminalShell bool, handler interp.HandlerContext) error {
 	path, err := interp.LookPathDir(handler.Dir, handler.Env, arguments[0])
 	if err != nil {
 		_, _ = fmt.Fprintln(handler.Stderr, err)
