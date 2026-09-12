@@ -241,7 +241,7 @@ func TestValidateScriptSyntaxDoesNotEvaluate(t *testing.T) {
 }
 
 func TestToolDescriptionIsNonInstructional(t *testing.T) {
-	const want = "HPATCH/2 edits with optional shell COMMAND lines or shell <<SHELL blocks closed by SHELL (Code Mode required). Edit validation is atomic; failed host application may have partial effects. Mixed scripts apply each edit segment separately, stop on failure, and retain pending work for resume HANDLE without replaying completed effects."
+	const want = "HPATCH/2 edits and mixed edit/command execution (Code Mode required for mixed scripts). Edit validation is atomic; failed host application may have partial effects."
 	if got := ToolDescription(); got != want {
 		t.Fatalf("ToolDescription() = %q, want %q", got, want)
 	}
