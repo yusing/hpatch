@@ -5,6 +5,7 @@ import {
   decodeUTF8,
   errorText,
   createExecutorTool,
+  readerFailureClass,
   stripOptionalFinalNewline,
   formatReaderRow,
   readerOptions,
@@ -394,6 +395,11 @@ function conciseDiagnostic(diagnostic: string): string {
         return details.slice(messageStart.length);
       }
     }
+    // Older ripgrep versions omit the repeated operation path.
+    const osError = /^rg: .*: ([^:\r\n]+ \(os error [0-9]+\))$/u.exec(line);
+    if (osError !== null) {
+      return osError[1];
+    }
     return line;
   }
   return diagnostic;
@@ -525,7 +531,7 @@ export function createHGrepTool(description: string, grammar: string): Tool<stri
         options = parsed.options;
         normalized = normalizeArguments(parsed.rest);
       } catch (error) {
-        return {stderr: `hgrep: ${errorText(error)}\n`, exitCode: 1};
+        return {stderr: `hgrep: ${errorText(error)}\n`, exitCode: 1, failureClass: "invalid_arguments"};
       }
       const warning = normalized.warnings.length === 0
         ? ""
@@ -540,9 +546,10 @@ export function createHGrepTool(description: string, grammar: string): Tool<stri
           stdout: result.current,
           stderr,
           exitCode: result.incomplete ? 1 : 0,
+          ...(result.incomplete ? {failureClass: "output_limit" as const} : {}),
         };
       } catch (error) {
-        return {stderr: `${warning}hgrep: ${errorText(error)}\n`, exitCode: 1};
+        return {stderr: `${warning}hgrep: ${errorText(error)}\n`, exitCode: 1, failureClass: readerFailureClass(error, "search_error")};
       }
     },
   });

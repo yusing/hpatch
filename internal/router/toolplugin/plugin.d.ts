@@ -37,7 +37,13 @@ export type ExecutionOutput = {
   exitCode: number;
 };
 
+export type ReaderFailureClass = "invalid_arguments" | "not_found" | "permission_denied" |
+  "not_regular" | "invalid_source" | "reader_error" | "search_error" | "resolver_error" |
+  "dependency_unavailable" | "no_editable_location" | "output_limit";
+
 export type ExecutionResult = ExecutionOutput & {
+  // Allowlisted diagnostic metadata, never command output or a raw error.
+  failureClass?: ReaderFailureClass;
   // Private host cleanup metadata, never part of the executor-facing output.
   terminationReason?: "output_limit" | "resolver_cleanup";
 };

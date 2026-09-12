@@ -54,7 +54,8 @@ snapshot from the same capturer. The destinations must be distinct.
 `--debug` is a boolean flag requiring no argument. It creates a private, unique
 `mekugi-debug-*` directory in the system temporary directory, with router diagnostics,
 sanitized capture, final metrics, an instruction dump, runtime read journal, and AX report.
-Debug implies AX instrumentation: the wrapper supplies the journal path to the executor.
+Debug implies AX instrumentation: the wrapper supplies the journal path to the executor
+and the authenticated worker manifest retains it across child environment changes.
 Explicit capture, metrics, and `MEKUGI_AX_OUTPUT` destinations retain precedence.
 The wrapper prints all six absolute artifact paths to
 stderr only on exit, after the child and router have stopped; it never prints debug paths
@@ -83,13 +84,35 @@ debug write failures are surfaced on exit without changing request execution.
 The AX report uses [REQ-AX-001](ax.md) calculations. At router shutdown it discovers
 local Codex rollout filenames for at most 256 observed thread identities under
 `$CODEX_HOME/sessions` and `archived_sessions`, or the default `~/.codex` location.
-Discovery is bounded to 100000 entries and five seconds. The inspector validates
-rollout identity and infers per-call workspace metadata. Missing, ambiguous, incomplete,
+Discovery is bounded to 100000 entries and five seconds. Filename suffixes select
+candidates only; a candidate is attributed by the exact ID in its bounded first
+`session_meta` record, never by a hyphen-suffixed thread name. Unreadable or invalid
+candidate metadata makes discovery incomplete rather than certifying uniqueness.
+The inspector validates the full rollout identity and infers per-call workspace metadata. Missing, ambiguous, incomplete,
 or mismatched evidence receives a fixed state code; available runtime read counts remain
 visible even when rollout-dependent measurements are unavailable. The report contains metrics and
 coverage, not scripts or command output; missing defect assessments stay unassessed.
 It describes whole-rollout evidence available at shutdown, not just calls from this
-router lifetime. These files are separate from sanitized transport metrics.
+router lifetime. Journal-only threads (at most 256, sorted, with explicit truncation)
+and unattributed reads are reported separately, never silently filtered or guessed to
+be tests/descendants. Their rollout identities can be inspected without promoting them
+to known router threads. An invalid journal has an explicit state and no partial counts.
+These files are separate from sanitized transport metrics.
+
+`request_complete` records monotonic elapsed milliseconds and, when present, the
+capturer's immutable `capture_id` and `request_sequence`. All request-scoped debug and
+instruction records use that capture ID as their `request_id`; without capture they use
+a local random ID. `tool_observation` maps this request identity to safe logical `call_id`
+and tool name at local translation, not execution. AX and existing HPATCH evidence join
+through call identity; no correlation header is added to either transport boundary.
+Cancellation evidence is independent of replay diagnostic references. Allowlisted causes
+are `router_shutdown`, `response_start_timeout`, `upstream_idle_timeout`,
+`downstream_context_canceled`, `downstream_deadline_exceeded`, `cancellation_unknown`,
+and `deadline_unknown`. The owned start-timeout cause travels with the forwarding
+failure; a later expired start timer is not evidence of that cause. An observed idle
+timeout is also reported when concurrent downstream cancellation wins. Downstream
+context cancellation is not asserted to be an explicit user abort.
+
 
 ### Feature-usage debug evidence
 
@@ -108,6 +131,13 @@ or error may enter these records. Category combinations MUST be allowlisted by t
 debug owner. Future features extend that allowlist and the advertised coverage, not
 the raw-data surface or capture metrics.
 
+Every request emits `feature_coverage` for commentary with `state` unavailable,
+incomplete, or observed, plus fixed-category observation counts. Empty counts only
+establish zero observations when the relevant response inspection completed; they
+never establish that an unobserved worker did not attempt publication. Counts describe
+branch observations, not unique messages or independent uses. Older logs without this
+marker cannot establish zero commentary output.
+
 The first instrumented feature is `commentary`:
 
 - `source: tool_field`, `stage: authored`, `outcome: observed`: a new eligible call
@@ -118,6 +148,11 @@ The first instrumented feature is `commentary`:
   a later response, it is another observation of that call, not proof of another use;
   consumers deduplicate authored observations by thread and call ID.
 
+- `source: provider_message`, `stage: authored`, `outcome: observed`: a completed
+  assistant commentary message was observed at the provider boundary. A generated-looking
+  message ID does not change its provenance. Consumers deduplicate by thread/message ID.
+- `source: router_activity`, `stage: render`, `outcome: prepared`: the router constructed
+  a root activity copy. This is not authored in-tool commentary or proof of UI delivery.
 - `source: code_mode`, `stage: lowering`: a new carrier contains a recognized reserved
   awaited commentary call. `prepared` means a publisher route was created;
   `unavailable` means lowering used the existing no-op fallback. This records one

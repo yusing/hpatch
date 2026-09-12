@@ -159,7 +159,7 @@ func shellCatLiteralParts(parts []syntax.WordPart, quoted bool) bool {
 	return true
 }
 
-func (t *mekugiResponseTransform) shellCatPlan(contribution toolContribution, arguments []string, template string, params map[string]json.RawMessage) ([]shellCatStep, []string, bool) {
+func (t *mekugiResponseTransform) shellCatPlan(contribution toolContribution, arguments []string, template string, params map[string]json.RawMessage, callIDs ...string) ([]shellCatStep, []string, bool) {
 	if contribution.PluginID != builtinToolsPluginID || contribution.Name != "shell" || template != "" || len(arguments) != 2 {
 		return nil, nil, false
 	}
@@ -196,7 +196,7 @@ func (t *mekugiResponseTransform) shellCatPlan(contribution toolContribution, ar
 	}
 	commands := make([]string, len(steps))
 	for index, step := range steps {
-		command, err := t.proxy.registry.execCarrierCommand(contribution, step.command, []string{arguments[0], step.command}, "")
+		command, err := t.proxy.registry.execCarrierCommand(contribution, step.command, []string{arguments[0], step.command}, "", callIDs...)
 		if err != nil {
 			return nil, nil, false
 		}
@@ -205,8 +205,8 @@ func (t *mekugiResponseTransform) shellCatPlan(contribution toolContribution, ar
 	return steps, commands, true
 }
 
-func (t *mekugiResponseTransform) shellCatCarrier(contribution toolContribution, kind codeModeCarrierKind, arguments []string, template string, params, metadata map[string]json.RawMessage) (string, bool) {
-	steps, commands, ok := t.shellCatPlan(contribution, arguments, template, params)
+func (t *mekugiResponseTransform) shellCatCarrier(contribution toolContribution, kind codeModeCarrierKind, arguments []string, template string, params, metadata map[string]json.RawMessage, callIDs ...string) (string, bool) {
+	steps, commands, ok := t.shellCatPlan(contribution, arguments, template, params, callIDs...)
 	if !ok {
 		return "", false
 	}

@@ -701,9 +701,19 @@ async function executeTool(request) {
     outputBudgetBytes: request.outputBudgetBytes,
   });
   const execution = await tool.execute(argumentsValue, context);
-  const current = normalizeExecutionOutput(execution, ["stdout", "stderr", "exitCode", "terminationReason"]);
+  const current = normalizeExecutionOutput(execution, ["stdout", "stderr", "exitCode", "terminationReason", "failureClass"]);
   if (current === null) {
     throw new Error("executor must return stdout/stderr strings and an exitCode from 0 through 255");
+  }
+  const failureClass = execution.failureClass;
+  if (failureClass !== undefined) {
+    if (current.exitCode === 0 || ![
+      "invalid_arguments", "not_found", "permission_denied", "not_regular", "invalid_source",
+      "reader_error", "search_error", "resolver_error", "dependency_unavailable", "no_editable_location", "output_limit",
+    ].includes(failureClass)) {
+      throw new Error("executor failureClass must be allowlisted with a nonzero exitCode");
+    }
+    current.failureClass = failureClass;
   }
   const terminationReason = execution.terminationReason;
   if (terminationReason !== undefined) {

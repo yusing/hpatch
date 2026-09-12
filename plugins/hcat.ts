@@ -11,6 +11,7 @@ import {
   byteLength,
   errorText,
   createExecutorTool,
+  readerFailureClass,
   MAX_POSSIBLE_GPT5_TOKEN_BYTES,
   stripOptionalFinalNewline,
   formatReaderRow,
@@ -287,9 +288,16 @@ export function createHCatTool(description: string, grammar: string): Tool<strin
       return argumentsValue;
     },
     async execute(argv) {
+      let options: ReaderOptions;
+      let spec: ReadSpec;
       try {
-        const {options, rest: executionArguments} = readerOptions(argv);
-        const spec = parseReadSpec(stripOptionalFinalNewline(hcatInput(executionArguments)));
+        const parsed = readerOptions(argv);
+        options = parsed.options;
+        spec = parseReadSpec(stripOptionalFinalNewline(hcatInput(parsed.rest)));
+      } catch (error) {
+        return {stderr: `hcat: ${conciseErrorText(error)}\n`, exitCode: 1, failureClass: "invalid_arguments"};
+      }
+      try {
         if (spec.path.startsWith("@shell/")) {
           throw new Error("unresolved @shell path");
         }
@@ -302,9 +310,10 @@ export function createHCatTool(description: string, grammar: string): Tool<strin
           stdout: result.current,
           ...(stderr === "" ? {} : {stderr}),
           exitCode: result.incomplete ? 1 : 0,
+          ...(result.incomplete ? {failureClass: "output_limit" as const} : {}),
         };
       } catch (error) {
-        return {stderr: `hcat: ${conciseErrorText(error)}\n`, exitCode: 1};
+        return {stderr: `hcat: ${conciseErrorText(error)}\n`, exitCode: 1, failureClass: readerFailureClass(error)};
       }
     },
   });
