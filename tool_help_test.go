@@ -215,6 +215,16 @@ func TestShellGrammarClosingLineLexing(t *testing.T) {
 	}
 }
 
+func TestShellGrammarAllowsWhitespacePrograms(t *testing.T) {
+	// Whitespace-only source remains valid; the router completes it as a no-op.
+	inline := grammarTerminalRegexp(t, "SHELL_INLINE")
+	for _, source := range []string{" ", "\t", " \t "} {
+		if !inline.MatchString(source) {
+			t.Errorf("shell grammar rejects whitespace-only source %q", source)
+		}
+	}
+}
+
 func TestShellInlineGrammar(t *testing.T) {
 	// Match the complete line, including ordinary single-< redirections.
 	inline := grammarTerminalRegexp(t, "SHELL_INLINE")

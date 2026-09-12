@@ -90,14 +90,17 @@ func (t *mekugiResponseTransform) prepareMixedSegments(parts []hpatchsyntax.Scri
 		var program strings.Builder
 		if part.Shell {
 			segment.Kind = "shell"
-			sources, translated, err := t.prepareShellBatch(contribution, []string{part.Source}, t.shellDirectory+"/")
-			if err != nil {
-				return nil, fmt.Errorf("shell segment %d (line %d): %w", index+1, part.Line, err)
+			// Empty shell programs complete without starting a host process.
+			if strings.TrimSpace(part.Source) != "" {
+				sources, translated, err := t.prepareShellBatch(contribution, []string{part.Source}, t.shellDirectory+"/")
+				if err != nil {
+					return nil, fmt.Errorf("shell segment %d (line %d): %w", index+1, part.Line, err)
+				}
+				if translated.Rejected {
+					return nil, fmt.Errorf("shell segment %d (line %d): %s", index+1, part.Line, translated.Diagnostic)
+				}
+				program.WriteString(sources[0])
 			}
-			if translated.Rejected {
-				return nil, fmt.Errorf("shell segment %d (line %d): %s", index+1, part.Line, translated.Diagnostic)
-			}
-			program.WriteString(sources[0])
 			program.WriteString("Object.assign(current, last, {output});\nif (last.exit_code !== 0) { current.status = 'failed'; stoppedReason = 'nonzero_exit'; return; }\n")
 		} else {
 			if err := validateMixedEdit(part.Source); err != nil {

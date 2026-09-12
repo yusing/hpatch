@@ -58,9 +58,13 @@ Mixed HPATCH/shell invocations and their resume calls under
 [REQ-SCRIPT-001](script.md#retained-continuation) are not edit-only recovery
 baselines. If the latest visible HPATCH invocation was mixed or a resume,
 `hpatch_recover` directs the agent to inspect checkpoints, current files, and
-known sessions, then use `hpatch` with `resume HANDLE`. It never falls back to an
-older rejected edit-only script, infers execution success from preflight or
-translation, or asks for the complete original script. This diagnostic performs
+known sessions, then use `hpatch` with `resume HANDLE` only if continuation
+retention succeeded. Mixed preflight failure without a retained handle instead
+reports that no segment ran and asks for a corrected script through `hpatch`.
+A rejected resume request directs the agent to correct its diagnostic and inspect
+the original continuation state, not resend the original mixed script.
+It never falls back to an older rejected edit-only script or infers execution
+success from preflight or translation. This diagnostic performs
 no execution and changes no workspace or retained continuation state.
 
 When every structured rejection is `row-stale`, the routed diagnostic lists only the rejected
@@ -119,4 +123,6 @@ Acceptance:
     `hpatch_recover` refuses with mixed-specific remaining-work guidance. The same
     exclusion applies to interrupted, successful, and preflight-rejected mixed
     calls. Test the diagnostic as well as refusal: it must neither claim a failed
-    or unresolved call succeeded nor select an older edit-only rejection.
+    or unresolved call succeeded nor select an older edit-only rejection. A mixed
+    preflight failure without a retained handle reports that no segment ran and
+    requests corrected input, without advertising `resume HANDLE`.

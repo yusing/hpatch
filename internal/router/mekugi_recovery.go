@@ -164,8 +164,17 @@ func recoveryHistoryOf(histories iter.Seq[mekugiHistory]) (mekugiHistory, error)
 	if !found {
 		return mekugiHistory{}, errors.New("no rejected HPATCH script to recover; send a complete script")
 	}
-	if _, mixed, _ := hpatchsyntax.SplitShell(latest.script); mixed || strings.HasPrefix(strings.TrimSpace(latest.script), "resume ") {
-		return latest, errors.New("mixed HPATCH/shell work uses retained continuation, not edit-only recovery; inspect its checkpoints, current files, and known sessions, then use hpatch with resume HANDLE; successful preflight does not confirm execution; never resend the complete original script")
+	isResume := strings.HasPrefix(strings.TrimSpace(latest.script), "resume ")
+	if _, mixed, _ := hpatchsyntax.SplitShell(latest.script); mixed || isResume {
+		// Successful mixed translation records a carrier only after retention.
+		// Native preflight rejections can also have diagnostic carriers.
+		if latest.translationError == "" && latest.carrierPayload != "" {
+			return latest, errors.New("mixed HPATCH/shell work uses retained continuation, not edit-only recovery; inspect its checkpoints, current files, and known sessions, then use hpatch with resume HANDLE; successful preflight does not confirm execution; never resend the complete original script")
+		}
+		if !isResume {
+			return latest, errors.New("mixed HPATCH/shell preflight failed before a continuation handle was retained; no segment ran; correct the preflight error and submit the corrected script through hpatch, not hpatch_recover")
+		}
+		return latest, errors.New("the resume request was rejected before execution; correct its diagnostic and inspect the original continuation handle, checkpoints, current files, and known sessions; do not resend the original mixed script or use edit-only recovery")
 	}
 	if latest.translationError == "" {
 		return latest, errors.New("the most recent mekugi call succeeded; recovery edits require a rejected script, so send a complete script")

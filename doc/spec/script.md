@@ -160,13 +160,15 @@ the first `shell ` through the end of the physical line is one raw program.
 Quotes, pipes, redirections, and shell operators require no HPATCH escaping.
 The physical LF/CRLF separator is not part of the single-line source. A trailing
 backslash does not consume the next HPATCH line. Empty or whitespace-only source
-rejects. The literal `<<` is forbidden anywhere in single-line source, including
+is a successful no-op and starts no host process.
+The literal `<<` is forbidden anywhere in single-line source, including
 inside quotes, comments, here-strings, or arithmetic. Use the block form for such
 source and for programs spanning physical lines; ordinary single-`<` redirection
 remains allowed.
 
-The multiline form is `shell <<SHELL`, followed by a nonempty UTF-8 program body
-and a closing physical line exactly equal to `SHELL`. The exact opener is
+The multiline form is `shell <<SHELL`, followed by a UTF-8 program body (which
+may be empty or whitespace-only) and a closing physical line exactly equal to
+`SHELL`. The exact opener is
 reserved exclusively for this form: missing closes reject before execution,
 never fall back to single-line shell source. Other single-line sources containing
 `<<`, including `echo <<SHELL` and `<<SHELLx`, reject before any execution.

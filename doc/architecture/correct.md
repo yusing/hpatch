@@ -35,4 +35,6 @@ rejection retains the same baseline and handles for a later different target.
 
 Mixed-script continuation is a separate router interface under
 [CTR-PLUGIN-001](plugin.md). Edit-only recovery routes mixed and resume calls to
-that interface without classifying successful translation as successful execution.
+that interface only after continuation retention succeeds, without classifying
+successful translation as successful execution. Mixed preflight rejection without
+a retained handle instead requests corrected input and states that no segment ran.

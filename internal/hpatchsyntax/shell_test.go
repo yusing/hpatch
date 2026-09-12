@@ -22,16 +22,20 @@ func TestSplitShell(t *testing.T) {
 	}
 }
 
+func TestSplitShellAllowsEmptyPrograms(t *testing.T) {
+	for _, source := range []string{"shell", "shell ", "shell \t", "shell <<SHELL\nSHELL", "shell <<SHELL\n \nSHELL"} {
+		parts, mixed, err := SplitShell(source)
+		if err != nil || !mixed || len(parts) != 1 || !parts[0].Shell || strings.TrimSpace(parts[0].Source) != "" {
+			t.Errorf("empty program %q: parts=%+v mixed=%v err=%v", source, parts, mixed, err)
+		}
+	}
+}
+
 func TestSplitShellRejectsMalformedFrames(t *testing.T) {
 	for _, source := range []string{
-		"shell",
-		"shell ",
-		"shell \t",
 		"shell \xff",
 		"shell <<SHELL",
 		"shell <<SHELL\nprintf x",
-		"shell <<SHELL\nSHELL",
-		"shell <<SHELL\n \nSHELL",
 		"shell <<SHELL\n\xff\nSHELL",
 		"shell <<SHELL\n" + strings.Repeat("x", MaxHeredocBodyBytes) + "\nSHELL",
 		"shell <<SHELL\ntrue\nSHELL\nnew a\ntype <<PATCH\nunterminated",

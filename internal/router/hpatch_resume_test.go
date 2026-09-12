@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -96,5 +97,31 @@ func TestHpatchResumeThreadAndWorkspaceIsolation(t *testing.T) {
 	history, err = transform.translate("other-workspace", "resume "+state.Handle, nil)
 	if err != nil || history.translationError == "" || history.carrierPayload != "" {
 		t.Fatalf("other workspace resumed work: %+v, %v", history, err)
+	}
+}
+
+func TestHpatchResumePreservesReplacementSource(t *testing.T) {
+	transform, _ := mixedTestTransform(t)
+	state, err := transform.retainMixedScript("", "", "shell true", []hpatchResumeSegment{
+		{Source: "true", Line: 1, Kind: "shell"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []string{"printf done > file\\ ", "printf done  \n", "printf done\t"} {
+		history, err := transform.translateMixedResume("replacement-"+source, "\nresume "+state.Handle+" retry\nshell "+source, nil)
+		if err != nil || history.translationError != "" {
+			t.Fatalf("replacement rejected: %v, %s", err, history.translationError)
+		}
+		var config struct {
+			Replacement hpatchResumeSegment `json:"replacement"`
+		}
+		encoded, _, _ := strings.Cut(strings.TrimPrefix(history.carrierPayload, "const mixedConfig = "), ";\n")
+		if err := json.Unmarshal([]byte(encoded), &config); err != nil {
+			t.Fatal(err)
+		}
+		if config.Replacement.Source != strings.TrimSuffix(source, "\n") {
+			t.Fatalf("source = %q, want %q", config.Replacement.Source, source)
+		}
 	}
 }

@@ -467,10 +467,75 @@ if (lastCheckpoint.phase !== 'segment_stopped' || lastCheckpoint.completed_segme
 	}
 }
 
+func TestHpatchRejectedResumeRecoveryKeepsOriginalContinuation(t *testing.T) {
+	for _, native := range []bool{false, true} {
+		t.Run(fmt.Sprintf("native=%v", native), func(t *testing.T) {
+			transform, _ := mixedTestTransform(t)
+			state, err := transform.retainMixedScript("", "", "shell true", []hpatchResumeSegment{
+				{Source: "true", Line: 1, Kind: "shell"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			transform.nativeTools = native
+			history, err := transform.translate("rejected-resume", "resume "+state.Handle+" retry\nshell <<SHELL\ntrue", nil)
+			if err != nil || history.translationError == "" {
+				t.Fatalf("resume was not rejected: %v, %+v", err, history)
+			}
+			_, err = recoveryHistoryOf(slices.Values([]mekugiHistory{durableHistory(history).history()}))
+			if err == nil || !strings.Contains(err.Error(), "original continuation handle") ||
+				strings.Contains(err.Error(), "no segment ran") || strings.Contains(err.Error(), "resume HANDLE") {
+				t.Fatalf("rejected resume lost original continuation: %v", err)
+			}
+		})
+	}
+}
+
+func TestHpatchNativePreflightRecoveryHasNoContinuation(t *testing.T) {
+	transform, _ := mixedTestTransform(t)
+	transform.nativeTools = true
+	history, err := transform.translate("native-preflight", "shell true", nil)
+	if err != nil || history.translationError == "" {
+		t.Fatalf("native preflight was not rejected: %v, %+v", err, history)
+	}
+	_, err = recoveryHistoryOf(slices.Values([]mekugiHistory{durableHistory(history).history()}))
+	if err == nil || !strings.Contains(err.Error(), "no segment ran") || strings.Contains(err.Error(), "resume HANDLE") {
+		t.Fatalf("native rejection advertised continuation: %v", err)
+	}
+}
+
+func TestHpatchEmptyShellProgramsCompleteWithoutExecution(t *testing.T) {
+	transform, overrides := mixedTestTransform(t)
+	source := "new before.txt\ntype \"before\"\nshell  \nshell \t\nshell \t \nshell <<SHELL\nSHELL\nshell <<SHELL\n \nSHELL\nnew after.txt\ntype \"after\""
+	history, err := transform.translate("empty-shells", source, nil)
+	if err != nil || history.translationError != "" {
+		t.Fatalf("empty shells rejected submission: %v, %s", err, history.translationError)
+	}
+	var result mixedScriptResult
+	runShellCatJavaScript(t, transform.proxy.registry.NodeExecutable, transform.directory, history.carrierInput(), &result, overrides)
+	if result.Sequence.Stopped != "" || result.Sequence.Started != 7 || len(result.Results) != 7 {
+		t.Fatalf("empty shell sequence = %+v", result)
+	}
+	for _, segment := range result.Results[1:6] {
+		if segment.Kind != "shell" || segment.Status != "completed" || segment.ExitCode != 0 || segment.Output != "" || segment.SessionID != 0 {
+			t.Fatalf("empty shell did not complete as a no-op: %+v", segment)
+		}
+	}
+	for _, name := range []string{"before", "after"} {
+		content, err := os.ReadFile(filepath.Join(transform.directory, name+".txt"))
+		if err != nil || string(content) != name+"\n" {
+			t.Fatalf("surrounding edit %s = %q, %v", name, content, err)
+		}
+	}
+}
+
 func TestHpatchMixedRecoveryDoesNotInferSuccess(t *testing.T) {
 	for _, input := range []string{
 		"shell true\nnew result\ntype \"done\"",
 		"shell <<SHELL\ntrue",
+		"shell ",
+		"shell <<SHELL\nSHELL",
+		"shell <<SHELL\n \nSHELL",
 	} {
 		transform, _ := mixedTestTransform(t)
 		history, err := transform.translate("mixed-recovery", input, nil)
@@ -482,9 +547,15 @@ func TestHpatchMixedRecoveryDoesNotInferSuccess(t *testing.T) {
 			translationError: "older rejection", sequence: 0,
 		}
 		_, err = recoveryHistoryOf(slices.Values([]mekugiHistory{older, history}))
-		if err == nil || !strings.Contains(err.Error(), "checkpoints") ||
-			strings.Contains(err.Error(), "call succeeded") || strings.Contains(err.Error(), "send a complete script") {
+		if err == nil || strings.Contains(err.Error(), "call succeeded") || strings.Contains(err.Error(), "send a complete script") {
 			t.Fatalf("unsafe mixed recovery diagnostic: %v", err)
+		}
+		if history.carrierPayload == "" {
+			if !strings.Contains(err.Error(), "no segment ran") || strings.Contains(err.Error(), "resume HANDLE") {
+				t.Fatalf("preflight rejection advertised unavailable continuation: %v", err)
+			}
+		} else if !strings.Contains(err.Error(), "checkpoints") || !strings.Contains(err.Error(), "resume HANDLE") {
+			t.Fatalf("retained work lost continuation guidance: %v", err)
 		}
 	}
 }

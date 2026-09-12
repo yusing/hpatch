@@ -87,7 +87,7 @@ func (t *mekugiResponseTransform) translateMixedResume(callID, input string, ups
 	if t.nativeTools {
 		return reject(errors.New("mixed-script continuation requires Code Mode"))
 	}
-	header, replacement, _ := strings.Cut(strings.TrimSpace(input), "\n")
+	header, replacement, _ := strings.Cut(strings.TrimLeft(input, " \t\r\n"), "\n")
 	fields := strings.Fields(header)
 	if len(fields) < 2 || len(fields) > 3 || fields[0] != "resume" {
 		return reject(errors.New("expected resume HANDLE [retry|accept|repair], with one edit segment for repair or an optional replacement for retry"))
@@ -121,7 +121,7 @@ func (t *mekugiResponseTransform) translateMixedResume(callID, input string, ups
 		return reject(errors.New("resume action must be retry, accept, or repair"))
 	}
 	var changed *hpatchResumeSegment
-	if replacement != "" {
+	if strings.TrimSpace(replacement) != "" {
 		if action != "retry" && action != "repair" {
 			return reject(errors.New("a segment requires retry or repair"))
 		}

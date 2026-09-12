@@ -60,8 +60,8 @@ func SplitShell(source string) ([]ScriptSegment, bool, error) {
 				offset += len(line.Text) + len(line.Terminator)
 				index++
 			}
-			if strings.TrimSpace(body) == "" || len(body) > MaxHeredocBodyBytes || !utf8.ValidString(body) {
-				return nil, true, fmt.Errorf("line %d: shell body must be nonempty UTF-8 within %d bytes", header+1, MaxHeredocBodyBytes)
+			if len(body) > MaxHeredocBodyBytes || !utf8.ValidString(body) {
+				return nil, true, fmt.Errorf("line %d: shell body must be UTF-8 within %d bytes", header+1, MaxHeredocBodyBytes)
 			}
 			segments = append(segments, ScriptSegment{Source: body, Line: header + 1, Shell: true})
 			start, startOffset = index, offset

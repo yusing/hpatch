@@ -317,7 +317,8 @@ Use `shell COMMAND` for a single physical line, without quoting or escaping it
 for HPATCH. Quotes, pipes, and redirects remain shell source, but `<<` is not
 allowed anywhere in a single-line command, even inside quotes. For multiline
 programs or any source containing `<<`, use `shell <<SHELL`, the program body,
-and a closing `SHELL` line.
+and a closing `SHELL` line. Empty or whitespace-only programs complete as no-ops
+without starting a process.
 That exact opener is reserved: an unclosed block rejects rather than falling
 back to single-line execution. Each shell form accepts one program with the
 usual interpreter selector and execution directives. Normal HPATCH syntax and
