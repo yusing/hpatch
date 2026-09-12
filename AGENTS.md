@@ -1,6 +1,18 @@
 # Agent navigation
 
-Mekugi serves agents. Evaluate its behavior from the agent's perspective.
+## Project goal
+
+Mekugi is an optimization and enhancement layer for stock Codex. Evaluate features and tradeoffs
+against these goals, in order:
+
+1. **Cut costs:** reduce model round trips and payload size, and improve batching.
+2. **Improve AX and UX:** make agent workflows clearer and more recoverable while giving users
+   useful visibility into progress and results.
+3. **Improve agent performance:** provide better context, more reliable operations, and effective
+   model and tool use, with correctness established by evidence.
+
+Compression, tools, routing, observability, and model scheduling are means toward these goals, not
+ends in themselves. Preserve Codex as the execution authority as required below.
 
 ## Common requirements
 
