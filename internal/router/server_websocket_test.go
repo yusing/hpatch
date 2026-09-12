@@ -60,7 +60,7 @@ func testResponsesSocket(t *testing.T, ctx context.Context, upstream http.Handle
 	t.Helper()
 	provider := httptest.NewServer(upstream)
 	t.Cleanup(provider.Close)
-	endpoint := responsesWebSocketHandler(ctx, 5*time.Second, newProviderClient(provider.URL, provider.Client()), nil, proxy, codec, nil)
+	endpoint := responsesWebSocketHandler(ctx, 5*time.Second, newProviderClient(provider.URL, provider.Client()), nil, proxy, codec, nil, nil)
 	t.Cleanup(endpoint.Close)
 	router := httptest.NewServer(endpoint)
 	t.Cleanup(router.Close)
@@ -304,7 +304,7 @@ func TestResponsesWebSocketGrokPrewarmContinuationAndDisconnect(t *testing.T) {
 			return nil, request.Context().Err()
 		}),
 	}}
-	endpoint := responsesWebSocketHandler(ctx, 5*time.Second, provider, nil, nil, nil, nil)
+	endpoint := responsesWebSocketHandler(ctx, 5*time.Second, provider, nil, nil, nil, nil, nil)
 	defer endpoint.Close()
 	server := httptest.NewServer(endpoint)
 	defer server.Close()
@@ -365,7 +365,7 @@ func TestResponsesWebSocketEndpointCloseWaitsAndRejectsNewAdmission(t *testing.T
 		_, _, _ = conn.Read(ctx)
 	}))
 	defer provider.Close()
-	endpoint := responsesWebSocketHandler(ctx, 5*time.Second, newProviderClient(provider.URL, provider.Client()), nil, nil, nil, nil)
+	endpoint := responsesWebSocketHandler(ctx, 5*time.Second, newProviderClient(provider.URL, provider.Client()), nil, nil, nil, nil, nil)
 	defer endpoint.Close()
 	server := httptest.NewServer(endpoint)
 	defer server.Close()

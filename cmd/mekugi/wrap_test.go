@@ -24,12 +24,16 @@ func TestCodexArgsPreservesArguments(t *testing.T) {
 	forwarded := []string{"exec", "-c", "model=\"example\"", "--", "a prompt with spaces"}
 	args := codexArgs("http://127.0.0.1:12345/v1", forwarded)
 	index := slices.Index(forwarded, "--")
-	if !slices.Equal(args[:index], forwarded[:index]) || !slices.Equal(args[index+6:], forwarded[index:]) {
+	if !slices.Equal(args[:index], forwarded[:index]) || !slices.Equal(args[index+10:], forwarded[index:]) {
 		t.Fatalf("forwarded arguments changed: %q", args)
 	}
+	if !slices.Equal(args[index+4:index+6], []string{"--disable", "enable_request_compression"}) {
+		t.Fatal("wrapped requests must disable the compression feature toggle")
+	}
 	var config struct {
-		IncludeCollaborationModeInstructions *bool  `toml:"include_collaboration_mode_instructions"`
-		ModelProvider                        string `toml:"model_provider"`
+		Features                             map[string]bool `toml:"features"`
+		IncludeCollaborationModeInstructions *bool           `toml:"include_collaboration_mode_instructions"`
+		ModelProvider                        string          `toml:"model_provider"`
 		Providers                            map[string]struct {
 			Name       string `toml:"name"`
 			BaseURL    string `toml:"base_url"`
@@ -39,7 +43,10 @@ func TestCodexArgsPreservesArguments(t *testing.T) {
 		} `toml:"model_providers"`
 	}
 	var settings []string
-	for i := index; i < index+6; i += 2 {
+	for i := index; i < index+10; i += 2 {
+		if i == index+4 {
+			continue
+		}
 		if args[i] != "-c" {
 			t.Fatalf("not a config override: %q", args)
 		}
@@ -51,8 +58,11 @@ func TestCodexArgsPreservesArguments(t *testing.T) {
 	if config.IncludeCollaborationModeInstructions == nil || *config.IncludeCollaborationModeInstructions {
 		t.Fatalf("collaboration mode instructions not disabled: %q", args)
 	}
+	if enabled, set := config.Features["enable_request_compression"]; !set || enabled {
+		t.Fatal("wrapped requests must remain uncompressed JSON")
+	}
 	provider := config.Providers[config.ModelProvider]
-	if provider.Name == "" || provider.BaseURL != "http://127.0.0.1:12345/v1" || provider.WireAPI != "responses" || !provider.Auth || !provider.WebSockets {
+	if provider.Name != "OpenAI" || provider.BaseURL != "http://127.0.0.1:12345/v1" || provider.WireAPI != "responses" || !provider.Auth || !provider.WebSockets {
 		t.Fatalf("provider = %+v", provider)
 	}
 	withoutDelimiter := []string{"exec", "-c", `model="example"`, "prompt"}

@@ -132,15 +132,24 @@ func wrapCodex(ctx context.Context, routerArgs, args []string) (code int, runErr
 }
 
 func codexArgs(baseURL string, args []string) []string {
-	// Keep overrides in the final command's config layer: Codex subcommands
+	// Keep router overrides in the final command's config layer: Codex subcommands
 	// can replace pre-subcommand -c settings with their own. Never cross --.
 	index := slices.Index(args, "--")
 	if index < 0 {
 		index = len(args)
 	}
+	// Codex gates remote compaction on the OpenAI provider identity. Keep that
+	// identity for our fixed ChatGPT upstream so manual and automatic compact
+	// requests use the local compact interfaces instead of model summaries.
+	// Source: Codex model-provider/src/provider.rs ConfiguredModelProvider::capabilities.
+	// Disable both the feature toggle and final config value: Codex merges them
+	// in different layers for the TUI and subcommands.
+	// The local JSON boundary does not accept Codex's ChatGPT Zstd request bodies.
 	return slices.Insert(slices.Clone(args), index,
 		"-c", `model_provider="mekugi_wrap"`,
-		"-c", fmt.Sprintf(`model_providers.mekugi_wrap={name="mekugi",base_url=%q,wire_api="responses",requires_openai_auth=true,supports_websockets=true}`, baseURL),
+		"-c", fmt.Sprintf(`model_providers.mekugi_wrap={name="OpenAI",base_url=%q,wire_api="responses",requires_openai_auth=true,supports_websockets=true}`, baseURL),
+		"--disable", "enable_request_compression",
+		"-c", `features.enable_request_compression=false`,
 		"-c", `include_collaboration_mode_instructions=false`,
 	)
 }

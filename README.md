@@ -147,6 +147,26 @@ go install github.com/yusing/mekugi/cmd/mekugi@latest \
 Add `$GOBIN`, or `$(go env GOPATH)/bin` when unset, to the `PATH` used by both
 Mekugi and Codex. The fixed `shell` helper must be available to Codex's executor.
 
+Context compaction is handled locally, without a provider-generated summary.
+Codex still decides when to compact using your settings. Mekugi preserves the
+retained native history in an encrypted item and restores it before the next
+provider request. The first compaction creates an owner-only key at
+`$XDG_CONFIG_HOME/mekugi/compaction.key` (normally
+`~/.config/mekugi/compaction.key` on Linux). Keep that key to resume compacted
+sessions, including when moving them to another installation.
+
+Compaction can discard unmarked historical details from older finished operations,
+even while the task is still open. It keeps factual execution records, requests,
+visible decisions, diagnostic excerpts, referenced evidence, and recent/live work.
+Recognized applied patch bodies and associated older opaque reasoning can also be
+retired. Older failed-command output and truncated documentation can lose
+unreferenced bulk while retaining errors, warnings, and provenance.
+Discarded details are not currently retrievable through Mekugi.
+
+Unknown or ambiguous execution states remain intact. If nothing qualifies,
+compaction reports an error rather than asking a provider for a summary.
+Compaction does not guarantee a fixed retained-history size.
+
 Then launch:
 
 ```sh
@@ -191,11 +211,13 @@ down when Codex exits. Multiple sessions can run independently. Codex handles
 terminal Ctrl-C, and its exit status is preserved.
 
 The wrapper uses the fixed Codex ChatGPT upstream and overrides provider
-selection for that invocation only. Standalone serving, fixed ports, custom
-providers, and provider-selection arguments such as `--oss` are not supported.
-It also forces `include_collaboration_mode_instructions=false` for the invocation,
-so Codex does not inject collaboration-mode instructions, even if enabled in your
-config or command-line overrides. No configuration files are changed.
+selection for that invocation only. Codex displays this provider as `OpenAI`;
+its requests still go through the private Mekugi router. Standalone serving,
+fixed ports, custom providers, and provider-selection arguments such as `--oss`
+are not supported. It also forces
+`include_collaboration_mode_instructions=false` for the invocation, so Codex
+does not inject collaboration-mode instructions, even if enabled in your config
+or command-line overrides. No configuration files are changed.
 
 The wrapper enables WebSockets between Codex and Mekugi for that invocation,
 without changing Codex configuration. Mekugi keeps the ChatGPT connection open
@@ -208,6 +230,9 @@ Networks must allow secure WebSocket connections to ChatGPT. Mekugi also accepts
 HTTP/SSE clients and can fall back to HTTP for those requests when ChatGPT
 explicitly rejects the WebSocket upgrade. It never silently replays a dropped
 request or accepted steering. Grok provider requests remain on HTTP.
+
+See the [context-compaction contract](doc/spec/compaction.md) for supported forms
+and preservation behavior. No compaction threshold or scope is overridden.
 
 ### Options
 
@@ -224,14 +249,14 @@ request or accepted steering. Grok provider requests remain on HTTP.
 | `--metrics-output PATH` | Disabled | Write the final metrics snapshot on shutdown, overwriting the destination |
 | `--debug` | Disabled | Record diagnostics, capture, metrics, patched instructions, runtime reads, and an AX report; print all artifact paths on exit |
 
-For a transport-only session:
+To disable Mekugi tool and model-string transformations:
 
 ```sh
 mekugi --mode passthrough codex
 ```
 
 Passthrough does not load the plugin registry, so it does not require Node.js or
-plugin grammar validation. Capture remains available.
+plugin grammar validation. Local context compaction and capture remain available.
 
 ### Grok subagents
 

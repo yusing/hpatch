@@ -246,10 +246,19 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 	if mekugiCalls != nil {
 		mux.HandleFunc("POST "+commentaryPublisherPath, mekugiCalls.commentary.serveHTTP)
 	}
-	webSocketEndpoint := responsesWebSocketHandler(ctx, *flags.timeout, provider, issues, mekugiCalls, compactTokens, mentor)
+	// The compact boundary also restores router-owned envelopes before any
+	// ordinary request reaches projection or upstream transport.
+	compactionDirectory, err := mekugiDataDirectory()
+	if err != nil {
+		return err
+	}
+	compaction := &contextCompactor{keyPath: filepath.Join(compactionDirectory, "compaction.key")}
+	webSocketEndpoint := responsesWebSocketHandler(ctx, *flags.timeout, provider, issues, mekugiCalls, compactTokens, mentor, compaction)
 	defer webSocketEndpoint.Close()
 	mux.Handle("GET /v1/responses", webSocketEndpoint)
-	mux.HandleFunc("POST /v1/responses", responsesHandler(ctx, *flags.timeout, provider, issues, mekugiCalls, compactTokens, mentor))
+	responses := compaction.handler(responsesHandler(ctx, *flags.timeout, provider, issues, mekugiCalls, compactTokens, mentor))
+	mux.HandleFunc("POST /v1/responses", responses)
+	mux.HandleFunc("POST /v1/responses/compact", responses)
 
 	server := &http.Server{
 		ErrorLog:          log.New(io.Discard, "", 0), // Disable net/http terminal diagnostics while Codex owns it.
