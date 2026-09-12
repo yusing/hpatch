@@ -153,7 +153,7 @@ func runAuthenticatedToolWorker(
 		return fail(err)
 	}
 	if contribution.PluginID == builtinToolsPluginID && contribution.Name == "shell" {
-		if handled, publishErr := publishCommentaryOnce(ctx, args); handled {
+		if handled, publishErr := publishCommentaryOnce(ctx, stdout, args); handled {
 			if publishErr != nil {
 				return fail(publishErr)
 			}

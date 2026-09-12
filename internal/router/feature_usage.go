@@ -41,6 +41,19 @@ func (trace featureUsageTrace) record(feature, source, stage, outcome, callID, m
 }
 
 func validFeatureUsage(feature, source, stage, outcome string) bool {
+	if feature == "journal" {
+		switch stage {
+		case "mutation":
+			return (source == "tool_field" || source == "tool" || source == "shell" || source == "code_mode") &&
+				(outcome == "accepted" || outcome == "prepared")
+		case "lowering":
+			return source == "code_mode" && (outcome == "prepared" || outcome == "unavailable")
+		case "render":
+			return (source == "report_now" || source == "terminal_flush" || source == "tokens") &&
+				(outcome == "prepared" || outcome == "suppressed")
+		}
+		return false
+	}
 	switch feature {
 	case "commentary":
 		switch stage {
@@ -87,7 +100,7 @@ func (trace featureUsageTrace) finish(observed, complete bool) {
 	trace.summary.mu.Lock()
 	defer trace.summary.mu.Unlock()
 	fields := map[string]any{"event": "feature_coverage", "schema_version": 1,
-		"feature": "commentary", "state": state, "observations": trace.summary.counts}
+		"feature": "journal", "state": state, "observations": trace.summary.counts}
 	for key, value := range map[string]string{"request_id": trace.requestID, "thread_id": trace.threadID, "session_id": trace.sessionID} {
 		if safeFeatureIdentity(value) {
 			fields[key] = value

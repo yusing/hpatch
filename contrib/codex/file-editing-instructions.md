@@ -44,17 +44,20 @@ text. Newly emitted tool names, tool inputs, and function arguments are literal 
 
 {{.EditingWorkflow}}
 
-## Commentary
+## Journal
 
-Attach progress commentary only to a supported tool call, using that tool's `commentary` field or
-documented runtime commentary mechanism. When no available tool supports commentary, continue
-without a commentary message. Never emit a standalone assistant message with
-`phase: "commentary"`; standalone commentary messages are router-owned.
-Bash/POSIX scripts support `commentary 'text'`; Code Mode supports `await commentary("text")`.
-Both publish user-only progress without adding text to command output. Other interpreters
-do not support the shell commentary command.
-A blocking question or final result can still use the final channel. Do not wake solely to emit
-a progress notice.
+Record meaningful milestones on a supported tool call with its `journal` array, or call
+`functions.journal`. Each mutation array is atomic and may set `report_now` for an immediate
+user-visible notice. Unreported items flush before token metrics at a successful terminal.
+Use one item per milestone, edit superseded wording, and do not record every command or search.
+Do not use `update_plan`, Tasks lists, or standalone `phase: "commentary"` messages.
+Do not write a final-channel answer. Record the last milestone, then stop.
+Use an available user-input tool for questions. If none is available, record the question with
+`report_now` and stop when blocked. Final-channel text is suppressed, including questions.
+Code Mode supports `await journal({op: "add", text: "Tests passed", report_now: true})`.
+Bash/POSIX supports `journal add 'Tests passed' --report-now`; other interpreters have no
+journal builtin. Successful runtime mutations produce no script output.
+Do not wake solely to report progress.
 
 ## Tool coordination
 

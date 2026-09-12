@@ -77,11 +77,14 @@ func TestActualChildActivityProjectsWithoutChangingChildResult(t *testing.T) {
 			other, _ := prepareActivityTest(t, p, "other-session", "other-root", "", "/root", nil)
 			parent, _ := prepareActivityTest(t, p, "child-session", "child-thread", "root-thread", "/root/alpha", nil)
 			child, _ := prepareActivityTest(t, p, "nested-session", "nested-thread", "child-thread", "/root/alpha/nested", nil)
-			call := map[string]any{"type": "function_call", "id": "lookup", "call_id": "lookup", "name": "lookup", "arguments": `{"commentary":"Checking cancellation."}`}
+			call := map[string]any{"type": "function_call", "id": "lookup", "call_id": "lookup", "name": "lookup", "arguments": `{"journal":[{"op":"add","text":"Checking cancellation.","report_now":true}]}`}
 			childResponse := mustTestJSON(t, map[string]any{"status": "completed", "output": []any{call}})
-			if _, err := child.TransformJSON(childResponse); err != nil {
+			childOutput, err := child.TransformJSON(childResponse)
+			if err != nil {
 				t.Fatal(err)
 			}
+			child.Delivered(childOutput)
+			child.ReleaseDelivery()
 			rootResponse := mustTestJSON(t, map[string]any{"id": "root-response", "status": "completed", "output": []any{assistantCommentaryMessage("answer", "Substantive result.")}})
 			var projected []byte
 			if stream {
@@ -176,7 +179,7 @@ func TestActivityCapacityDoesNotRejectToolsAndOpaqueReceipt(t *testing.T) {
 	if err != nil || !bytes.Contains(visible, []byte(`"call_id":"capacity-call"`)) {
 		t.Fatal(string(visible), err)
 	}
-	if len(p.activity.drain("r", root.activityStarted, maxCommentaryPublicationBytes)) != 0 {
+	if len(p.activity.drain("r", root.activityStarted, maxCommentaryPublicationBytes, 0)) != 0 {
 		t.Fatal("capacity did not suppress projection")
 	}
 }

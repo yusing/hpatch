@@ -39,12 +39,11 @@ exit "$checks_status"
 Do not overlap dependent commands, edits, or jobs that share mutable state. This is shell-level
 concurrency, not permission to call tools in parallel contrary to their contracts.
 
-For meaningful progress, use the runtime mechanism even when the tool has no `commentary`
-field. Put `commentary 'Checked the inputs; processing the remaining items.'` inside the
-Bash/POSIX script doing the work, or use
-`await commentary("Checked the inputs; processing the remaining items.");` in Code Mode.
-Do not make a commentary-only call, narrate every command, or replace these supported
-mechanisms with standalone assistant commentary.
+For meaningful progress, add one mutation to the `journal` field of a supported tool call,
+or use `functions.journal`. Set `report_now` only when the milestone should be shown immediately;
+otherwise it is flushed before token metrics at a successful terminal. Do not record every
+command, search, or restatement, and do not write a final-channel answer after the last journalled
+tool call.
 
 ## Edit planning
 

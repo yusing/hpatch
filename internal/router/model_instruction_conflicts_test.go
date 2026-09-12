@@ -94,7 +94,7 @@ func TestRefreshAndCustomAppendRemoveInheritedConflicts(t *testing.T) {
 		}
 		if !strings.HasPrefix(got, "custom prefix\n") || !strings.Contains(got, "custom suffix") || strings.Count(got, guidance) != 1 ||
 			strings.Contains(got, "in the `commentary` channel") || strings.Contains(got, "in the commentary channel") ||
-			strings.Contains(got, "at the end of both commentary and final") || !strings.Contains(got, "at the end of the final answer, after any permission question") {
+			strings.Contains(got, "at the end of both commentary and final") || !strings.Contains(got, "Record this explanation as a short journal item after any permission question") {
 			t.Fatalf("inherited/custom rewrite failed: marked=%v", marked)
 		}
 	}
@@ -164,7 +164,7 @@ Preserve unrelated validation policy.`
 						"Preserve unrelated validation policy.",
 						"functions.shell script",
 						"unless the user clearly asks you to stop",
-						"supported tool commentary when available",
+						"report_now journal item",
 					} {
 						if !strings.Contains(got, want) {
 							t.Errorf("missing %q", want)

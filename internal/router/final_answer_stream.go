@@ -3,12 +3,16 @@ package router
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 )
 
-// Codex records even commentary as last_agent_message. Hold only answer events
-// so terminal usage can be emitted first, leaving the provider's answer last.
+// Hold provider answer events until terminal eligibility is known. Journals
+// replace successful answers; failures release their buffered provider output.
 type finalAnswerStream struct {
+	journal     bool
+	bufferErr   error
+	suppressed  [][]byte
 	events      [][]byte
 	itemIDs     map[string]bool
 	indexes     map[int]bool
@@ -72,6 +76,14 @@ func (s *finalAnswerStream) observe(payload []byte) ([][]byte, bool) {
 	}
 	// Auxiliary usage must not reject large answers or retain unbounded streams.
 	if len(payload) > upstreamJSONBufferBytes-s.bytes {
+		if s.journal {
+			// Once overflowed, the response cannot complete successfully: releasing
+			// text now and later claiming a successful journal terminal would leak
+			// a provider answer. The failure drain preserves already buffered text.
+			s.events = append(s.events, bytes.Clone(payload))
+			s.bufferErr = errors.New("journal final-answer buffer capacity exceeded")
+			return nil, true
+		}
 		s.disabled = true
 		return append(s.flush(), payload), true
 	}
@@ -93,5 +105,7 @@ func (s *finalAnswerStream) flush() [][]byte {
 // failure. Usage requires a successful terminal and is never synthesized here.
 func (t *mekugiResponseTransform) FlushSSE() ([][]byte, error) {
 	t.finalAnswer.disabled = true
-	return t.finalAnswer.flush(), nil
+	events := append(t.finalAnswer.suppressed, t.finalAnswer.flush()...)
+	t.finalAnswer.suppressed = nil
+	return events, nil
 }

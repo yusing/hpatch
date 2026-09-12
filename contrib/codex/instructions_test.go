@@ -27,7 +27,7 @@ func TestInstructionsSelectModelWorkflowIndependentlyOfTransport(t *testing.T) {
 			if strings.Contains(got, "## CTP/2 transport") != compact {
 				t.Fatalf("model %q compact %v: wrong transport guidance", model, compact)
 			}
-			for _, heading := range []string{"## File editing\n", "## Commentary\n", "## Shell execution\n", "## Edit planning\n", "## Target reuse\n", "## Target acquisition\n"} {
+			for _, heading := range []string{"## File editing\n", "## Journal\n", "## Shell execution\n", "## Edit planning\n", "## Target reuse\n", "## Target acquisition\n"} {
 				if strings.Count(got, heading) != 1 {
 					t.Fatalf("model %q: workflow section %q must occur once", model, heading)
 				}
@@ -107,7 +107,7 @@ func TestNativeInstructionsOmitOnlyCTPRepresentation(t *testing.T) {
 	}
 }
 
-func TestInstructionsBindCommentaryToSupportedTools(t *testing.T) {
+func TestInstructionsExposeJournalAuthoring(t *testing.T) {
 	for _, test := range []struct {
 		name         string
 		instructions string
@@ -117,16 +117,17 @@ func TestInstructionsBindCommentaryToSupportedTools(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			for _, required := range []string{
-				"Attach progress commentary only to a supported tool call",
-				"When no available tool supports commentary, continue",
-				"Never emit a standalone assistant message with\n`phase: \"commentary\"`",
-				"`commentary 'text'`",
-				"`await commentary(\"text\")`",
-				"do not support the shell commentary command",
-				"standalone commentary messages are router-owned",
+				"Record meaningful milestones on a supported tool call",
+				"`functions.journal`",
+				"Each mutation array is atomic",
+				"Do not use `update_plan`, Tasks lists, or standalone `phase: \"commentary\"` messages",
+				"Do not write a final-channel answer",
+				"Final-channel text is suppressed, including questions",
+				"`journal add 'Tests passed' --report-now`",
+				"`await journal({op: \"add\", text: \"Tests passed\", report_now: true})`",
 			} {
 				if !strings.Contains(test.instructions, required) {
-					t.Errorf("instructions omit commentary rule %q", required)
+					t.Errorf("instructions omit journal rule %q", required)
 				}
 			}
 		})
@@ -141,7 +142,7 @@ func TestNonAstraExecutionGuidanceKeepsAstraFocused(t *testing.T) {
 			"Do not create separate executions merely because reads are independent",
 			"wait \"$first_check_pid\" || checks_status=$?",
 			"wait \"$second_check_pid\" || checks_status=$?",
-			"even when the tool has no `commentary`",
+			"Do not record every\ncommand, search, or restatement",
 			"A nearby brace's hash is not interchangeable",
 		} {
 			if !strings.Contains(sol, detailed) || strings.Contains(astra, detailed) {
@@ -267,7 +268,7 @@ func TestInstructionsConsolidateDeliveredContracts(t *testing.T) {
 		for _, compact := range []bool{false, true} {
 			got := InstructionsForModel(model, compact)
 			for _, required := range []string{
-				"## Commentary\n",
+				"## Journal\n",
 				"### Rejected-script recovery\n",
 				"Nonempty line and range `type` replacements preserve",
 				"`advisory`",

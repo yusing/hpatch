@@ -1,0 +1,371 @@
+package router
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"maps"
+	"slices"
+	"strings"
+)
+
+const journalToolName = "journal"
+const journalHistoryTool = "__mekugi_journal"
+
+type journalListItem struct {
+	ID       string `json:"id"`
+	Text     string `json:"text"`
+	Author   string `json:"author"`
+	Reported bool   `json:"reported"`
+}
+
+func journalMutationsSchema() json.RawMessage {
+	return mustMarshalJSON(map[string]any{
+		"type": "array", "maxItems": maxJournalItems,
+		"description": "Optional atomic journal mutations applied before this operation. report_now emits progress; unreported revisions flush at terminal completion.",
+		"items": map[string]any{
+			"type": "object", "additionalProperties": false,
+			"properties": map[string]any{
+				"op":         map[string]any{"type": "string", "enum": []string{"add", "edit", "delete"}},
+				"id":         map[string]any{"type": "string"},
+				"text":       map[string]any{"type": "string"},
+				"report_now": map[string]any{"type": "boolean"},
+			}, "required": []string{"op"},
+		},
+	})
+}
+
+func exposeJournalTool(fields map[string]json.RawMessage, catalog *responsesToolCatalog) error {
+	for _, tool := range catalog.top.tools {
+		if tool.Name == journalToolName {
+			return errors.New("request already defines journal")
+		}
+	}
+	catalog.appendTop([]*responsesToolDefinition{newResponsesToolDefinition(map[string]json.RawMessage{
+		"type":        mustMarshalJSON("function"),
+		"name":        mustMarshalJSON(journalToolName),
+		"description": mustMarshalJSON("Read or update the calling thread's durable milestone journal. list may name a proven ancestor or descendant agent. Mutations return router-assigned IDs. report_now shows progress immediately; unreported entries flush at terminal completion."),
+		"strict":      mustMarshalJSON(false),
+		"parameters": mustMarshalJSON(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"op":         map[string]any{"type": "string", "enum": []string{"list", "add", "edit", "delete"}},
+				"id":         map[string]any{"type": "string", "description": "Router-assigned item ID; required for edit and delete."},
+				"text":       map[string]any{"type": "string", "description": "Required nonblank milestone text for add and edit."},
+				"agent":      map[string]any{"type": "string", "description": "Canonical agent path, for list only. Defaults to the caller."},
+				"report_now": map[string]any{"type": "boolean"},
+			},
+			"required": []string{"op"},
+		}),
+	})})
+	return catalog.encodeTop(fields)
+}
+
+// Names alone cannot establish a relationship, including two different roots
+// named /root. Only the collector's accepted, unambiguous ancestry is authority.
+func (a *subagentActivity) journalThread(caller, agent string) (string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	root := a.rootLocked(caller)
+	if root == "" {
+		return "", errors.New("journal ancestry is unavailable")
+	}
+	ancestor := func(from, target string) bool {
+		for range len(a.threads) {
+			if from == target {
+				return true
+			}
+			node := a.threads[from]
+			if node == nil || node.conflicted || !node.child {
+				return false
+			}
+			from = node.parent
+		}
+		return false
+	}
+	target := ""
+	for thread, node := range a.threads {
+		if node.name != agent || a.rootLocked(thread) != root {
+			continue
+		}
+		if !ancestor(caller, thread) && !ancestor(thread, caller) {
+			continue
+		}
+		if target != "" {
+			return "", errors.New("journal agent path is ambiguous")
+		}
+		target = thread
+	}
+	if target == "" {
+		return "", errors.New("journal agent is not a proven ancestor or descendant")
+	}
+	return target, nil
+}
+
+func isJournalCall(item map[string]json.RawMessage) bool {
+	return jsonString(item, "type") == "function_call" && jsonString(item, "name") == journalToolName &&
+		(jsonString(item, "namespace") == "" || jsonString(item, "namespace") == "functions")
+}
+
+func (t *mekugiResponseTransform) executeJournalCall(item map[string]json.RawMessage) (map[string]json.RawMessage, error) {
+	if t.journalCalls == nil {
+		t.journalCalls = make(map[string]map[string]json.RawMessage)
+	}
+	callID := jsonString(item, "call_id")
+	if callID == "" {
+		return nil, errors.New("journal call requires a call ID")
+	}
+	if prior := t.journalCalls[callID]; prior != nil {
+		if jsonString(prior, "arguments") != jsonString(item, "arguments") {
+			return nil, errors.New("journal call changed arguments")
+		}
+		for _, result := range t.journalResults {
+			if jsonString(result, "call_id") == callID {
+				return result, nil
+			}
+		}
+	}
+	var args struct {
+		journalMutation
+		Journal json.RawMessage `json:"journal"`
+		Agent   string          `json:"agent"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(jsonString(item, "arguments")))
+	decoder.DisallowUnknownFields()
+	var batchedIDs []string
+	var result any
+	if err := decoder.Decode(&args); err != nil || decoder.Decode(new(any)) != io.EOF {
+		result = map[string]any{"ok": false, "error": "invalid journal arguments"}
+	} else {
+		if len(args.Journal) != 0 {
+			mutations, err := decodeJournalMutations(args.Journal)
+			if err != nil {
+				return nil, err
+			}
+			batchedIDs, err = t.proxy.journals.apply(t.ctx, t.proxy.replayStore, t.directory, t.shellThreadID, callID+":journal", mutations)
+			if err != nil {
+				return nil, err
+			}
+		}
+		var err error
+		if args.Op == "list" {
+			if args.ID != "" || args.Text != nil || args.ReportNow {
+				err = errors.New("journal list accepts only agent and batched journal mutations")
+			}
+			thread := t.shellThreadID
+			if err == nil && args.Agent != "" {
+				thread, err = t.proxy.activity.journalThread(thread, args.Agent)
+			}
+			var items []journalItem
+			if err == nil {
+				items, err = t.proxy.journals.list(t.ctx, t.proxy.replayStore, t.directory, thread)
+			}
+			listed := make([]journalListItem, 0, len(items))
+			for _, item := range items {
+				listed = append(listed, journalListItem{ID: item.ID, Text: item.Text, Author: item.Author, Reported: item.Reported})
+			}
+			result = map[string]any{"ok": true, "items": listed}
+		} else if args.Agent != "" {
+			err = errors.New("agent is only supported by journal list")
+		} else {
+			var ids []string
+			ids, err = t.proxy.journals.apply(t.ctx, t.proxy.replayStore, t.directory, t.shellThreadID, callID, []journalMutation{args.journalMutation})
+			if err == nil {
+				t.featureTrace.record("journal", "tool", "mutation", "accepted", callID, "")
+				result = map[string]any{"ok": true, "id": ids[0]}
+			}
+		}
+		if err != nil {
+			result = map[string]any{"ok": false, "error": err.Error()}
+		}
+	}
+	if len(batchedIDs) != 0 {
+		t.featureTrace.record("journal", "tool_field", "mutation", "accepted", callID, "")
+		result.(map[string]any)["journal_ids"] = batchedIDs
+	}
+	output := map[string]json.RawMessage{
+		"type":    mustMarshalJSON("function_call_output"),
+		"call_id": mustMarshalJSON(callID),
+		"output":  mustMarshalJSON(string(mustMarshalJSON(result))),
+	}
+	t.recordLocal(callID, &mekugiHistory{
+		toolName: journalHistoryTool, script: jsonString(item, "arguments"),
+		carrierKind: codeModeCarrierFunction, carrierName: journalToolName,
+		carrierPayload: jsonString(item, "arguments"), upstreamItem: item,
+	})
+	if err := t.commitLocalCall(callID); err != nil {
+		return nil, err
+	}
+	t.journalCalls[callID] = item
+	t.journalResults = append(t.journalResults, output)
+	return output, nil
+}
+
+// The client retains local results but never dispatches these router calls.
+// Replay supplies the exact call alongside its result, not an invented host tool.
+func restoreJournalCalls(request *parsedResponsesRequest, visible map[string]mekugiHistory) error {
+	var input []map[string]json.RawMessage
+	if json.Unmarshal(request.fields["input"], &input) != nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	results := make(map[string]string)
+	for callID, history := range visible {
+		if history.toolName == journalHistoryTool {
+			results[journalClientResultID(callID)] = callID
+		}
+	}
+	var restored []map[string]json.RawMessage
+	changed := false
+	for _, item := range input {
+		callID := jsonString(item, "call_id")
+		if jsonString(item, "type") == "function_call" {
+			seen[callID] = true
+		}
+		if jsonString(item, "type") == "function_call_output" {
+			if callID == "" {
+				callID = results[jsonString(item, "id")]
+			}
+			if history, ok := visible[callID]; ok && history.toolName == journalHistoryTool {
+				if !isJournalCall(history.upstreamItem) {
+					return fmt.Errorf("invalid journal replay call %q", callID)
+				}
+				if !seen[callID] {
+					restored = append(restored, history.upstreamItem)
+					seen[callID] = true
+				}
+				item = maps.Clone(item)
+				delete(item, "id")
+				delete(item, "name")
+				delete(item, "namespace")
+				item["call_id"] = mustMarshalJSON(callID)
+				changed = true
+			}
+		}
+		restored = append(restored, item)
+	}
+	if changed {
+		request.setInput(mustMarshalJSON(restored))
+		// Client and provider prefixes differ after restoring router-owned calls.
+		request.cachedInput = 0
+		request.rebaseInput = true
+	}
+	return nil
+}
+
+func journalClientResultID(callID string) string {
+	return "fco_mekugi_journal_" + base64.RawURLEncoding.EncodeToString([]byte(callID))
+}
+
+func journalResultCallID(item map[string]json.RawMessage) string {
+	if jsonString(item, "type") != "function_call_output" || jsonString(item, "call_id") != "" {
+		return ""
+	}
+	encoded, ok := strings.CutPrefix(jsonString(item, "id"), "fco_mekugi_journal_")
+	if !ok {
+		return ""
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil || journalClientResultID(string(decoded)) != jsonString(item, "id") {
+		return ""
+	}
+	return string(decoded)
+}
+
+// Codex preserves named, unpaired outputs only when call_id is absent.
+// Keep the paired form internally for provider continuation and durable replay.
+func journalClientResult(result map[string]json.RawMessage) map[string]json.RawMessage {
+	item := maps.Clone(result)
+	item["id"] = mustMarshalJSON(journalClientResultID(jsonString(result, "call_id")))
+	item["name"] = mustMarshalJSON(journalToolName)
+	item["namespace"] = mustMarshalJSON("functions")
+	delete(item, "call_id")
+	return item
+}
+
+func journalResultEvent(result map[string]json.RawMessage) []byte {
+	return mustMarshalJSON(map[string]any{"type": "response.output_item.done", "item": journalClientResult(result)})
+}
+
+func (t *mekugiResponseTransform) journalOutputItems() []map[string]json.RawMessage {
+	output := slices.Clone(t.journalProviderOutput)
+	return append(output, t.journalResults...)
+}
+
+// ReleaseDelivery is also called when a transform or downstream write fails.
+func (t *mekugiResponseTransform) ReleaseDelivery() {
+	if t.journalDeliveryRelease != nil {
+		t.journalDeliveryRelease()
+		t.journalDeliveryRelease = nil
+	}
+}
+
+func (t *mekugiResponseTransform) interceptJournalSSE(payload []byte) ([][]byte, bool, error) {
+	var event struct {
+		Type     string                     `json:"type"`
+		ItemID   string                     `json:"item_id"`
+		Item     map[string]json.RawMessage `json:"item"`
+		Response map[string]json.RawMessage `json:"response"`
+	}
+	if json.Unmarshal(payload, &event) != nil {
+		return nil, false, nil
+	}
+	switch event.Type {
+	case "response.output_item.added":
+		if isJournalCall(event.Item) {
+			id := jsonString(event.Item, "id")
+			if id == "" {
+				return nil, true, errors.New("journal call has no item ID")
+			}
+			t.journalPending[id] = true
+			return nil, true, nil
+		}
+	case "response.function_call_arguments.delta", "response.function_call_arguments.done":
+		if t.journalPending[event.ItemID] {
+			return [][]byte{[]byte(`{"type":"response.in_progress"}`)}, true, nil
+		}
+	case "response.output_item.done":
+		t.journalProviderOutput = append(t.journalProviderOutput, event.Item)
+		if isJournalCall(event.Item) {
+			delete(t.journalPending, jsonString(event.Item, "id"))
+			if jsonString(event.Item, "status") == "incomplete" {
+				return nil, true, nil
+			}
+			result, err := t.executeJournalCall(event.Item)
+			if err != nil {
+				return nil, true, err
+			}
+			return [][]byte{journalResultEvent(result)}, true, nil
+		}
+		if blocksTokenUsage(event.Item) {
+			t.journalClientCalls = true
+		}
+	case "response.completed":
+		var output []map[string]json.RawMessage
+		if len(t.journalProviderOutput) == 0 && json.Unmarshal(event.Response["output"], &output) == nil {
+			t.journalProviderOutput = output
+			for _, item := range output {
+				if !isJournalCall(item) && blocksTokenUsage(item) {
+					t.journalClientCalls = true
+				}
+			}
+		}
+		t.journalTerminal = len(t.journalResults) == 0 && journalTerminalEligible(t.journalProviderOutput)
+		if t.journalTerminal {
+			t.finalAnswer.suppressed = t.finalAnswer.events
+			t.finalAnswer.events = nil
+			t.finalAnswer.bytes = 0
+		}
+		if len(t.journalResults) != 0 && !t.journalClientCalls {
+			if len(t.journalPending) != 0 {
+				return nil, true, errors.New("incomplete journal call at completion")
+			}
+			t.journalContinue = true
+			t.finalAnswer.flush()
+			return nil, true, t.commitHistory()
+		}
+	}
+	return nil, false, nil
+}

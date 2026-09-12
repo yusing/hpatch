@@ -16,7 +16,7 @@ func TestResponsesWebSocketIncrementalTranslationAndVisibleSources(t *testing.T)
 	proxy := newToolPluginTestProxy(t)
 	proxy.customizedInstructions = true
 	proxy.compactModelProtocol = true
-	proxy.activity.copies["router-only"] = struct{}{}
+	proxy.activity.copies["router-only"] = "notice"
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	headers := codexAuthHeaders()
@@ -29,6 +29,7 @@ func TestResponsesWebSocketIncrementalTranslationAndVisibleSources(t *testing.T)
 			t.Error(err)
 			return
 		}
+		upstream.SetReadLimit(upstreamJSONBufferBytes)
 		defer upstream.CloseNow()
 		first, err := providerSocketRead(ctx, upstream)
 		if err != nil {
@@ -65,7 +66,7 @@ func TestResponsesWebSocketIncrementalTranslationAndVisibleSources(t *testing.T)
 			t.Error(err)
 			return
 		}
-		message := map[string]any{"type": "message", "id": "answer", "role": "assistant", "status": "completed", "content": []any{
+		message := map[string]any{"type": "message", "id": "answer", "role": "assistant", "phase": "commentary", "status": "completed", "content": []any{
 			map[string]any{"type": "output_text", "text": "!V=source,1,1\n", "annotations": []any{}},
 		}}
 		if err := providerSocketWrite(ctx, upstream, map[string]any{"type": "response.completed", "response": map[string]any{"id": "second", "status": "completed", "output": []any{message}}}); err != nil {

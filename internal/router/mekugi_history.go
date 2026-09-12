@@ -40,6 +40,7 @@ type mekugiHistory struct {
 	report string
 	// Deferred diagnostics are projected onto the model-visible result, never
 	// evaluated in a program that owns the host's output-helper identifier.
+	journalIDs           []string
 	outputWarning        string
 	translationError     string
 	evaluatorRejected    bool
@@ -308,6 +309,10 @@ func (p *mekugiProxy) reconcileVisibleInput(ctx context.Context, request *parsed
 			continue
 		}
 		callID := jsonString(item, "call_id")
+		journalResult := callID == "" && journalResultCallID(item) != ""
+		if journalResult {
+			callID = journalResultCallID(item)
+		}
 		history, known := visible[callID]
 		if !known {
 			if p.replayStore != nil {
@@ -325,12 +330,22 @@ func (p *mekugiProxy) reconcileVisibleInput(ctx context.Context, request *parsed
 			history.sequence = uint64(len(visible) + 1)
 			history.confirmed = false
 		}
+		if journalResult && history.toolName != journalHistoryTool {
+			continue
+		}
 		carrierKind := history.effectiveCarrierKind()
 		if itemType == carrierOutputItemType(carrierKind) {
 			if history.translationError == "" && jsonString(item, "output") == history.report {
 				history.confirmed = true
 			}
 			visible[callID] = history
+			if len(history.journalIDs) != 0 {
+				projected, _, err := appendToolOutputWarning(item["output"], "Journal item IDs: "+strings.Join(history.journalIDs, ", "))
+				if err != nil {
+					return nil, err
+				}
+				item["output"] = projected
+			}
 			if history.outputWarning != "" {
 				output, projected, err := appendToolOutputWarning(item["output"], history.outputWarning)
 				if err != nil {
