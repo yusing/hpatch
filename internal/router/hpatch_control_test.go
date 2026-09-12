@@ -143,8 +143,8 @@ func TestHpatchControlCheckpointAndStaleRevision(t *testing.T) {
 	}
 	send, receive, done := startHpatchControlTest(t)
 	controlTestRequest(t, send, receive, hpatchControlRequest{Operation: "open", Handle: state.Handle})
-	progress := json.RawMessage(`{"index":0,"results":[],"operations":[]}`)
-	reply := controlTestRequest(t, send, receive, hpatchControlRequest{Operation: "checkpoint", Progress: progress})
+	mutations := []hpatchControlMutation{{Path: []string{"index"}, Value: mustMarshalJSON(1)}}
+	reply := controlTestRequest(t, send, receive, hpatchControlRequest{Operation: "checkpoint", Mutations: mutations})
 	if string(reply["revision"]) != "1" {
 		t.Fatalf("revision=%s", reply["revision"])
 	}
@@ -153,7 +153,7 @@ func TestHpatchControlCheckpointAndStaleRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := send.Encode(hpatchControlRequest{Operation: "checkpoint", Progress: progress}); err != nil {
+	if err := send.Encode(hpatchControlRequest{Operation: "checkpoint", Mutations: mutations}); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-done; err == nil {
@@ -162,6 +162,44 @@ func TestHpatchControlCheckpointAndStaleRevision(t *testing.T) {
 	after, err := os.ReadFile(filepath.Join(transform.shellDirectory, name))
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("stale checkpoint changed state")
+	}
+}
+
+func TestHpatchControlMutationsCopyTranslationResult(t *testing.T) {
+	progress := map[string]json.RawMessage{
+		"index":      mustMarshalJSON(0),
+		"operations": mustMarshalJSON([]any{map[string]any{"method": "translate", "pending": true}}),
+		"obsolete":   mustMarshalJSON(true),
+	}
+	translation := mustMarshalJSON(map[string]string{
+		"patch": "*** Begin Patch\n*** End Patch\n", "report": "ok", "diagnostic": "",
+	})
+	updated, err := applyHpatchControlMutations(progress, []hpatchControlMutation{
+		{Path: []string{"operations", "0", "pending"}, Value: mustMarshalJSON(false)},
+		{Path: []string{"operations", "0", "result"}, Copy: "translation"},
+		{Path: []string{"obsolete"}, Remove: true},
+	}, translation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var operations []struct {
+		Pending bool `json:"pending"`
+		Result  struct {
+			Output   string `json:"output"`
+			ExitCode int    `json:"exit_code"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(updated["operations"], &operations); err != nil {
+		t.Fatal(err)
+	}
+	if len(operations) != 1 || operations[0].Pending || operations[0].Result.ExitCode != 0 ||
+		operations[0].Result.Output != string(translation) || updated["obsolete"] != nil {
+		t.Fatalf("updated progress = %s", mustMarshalJSON(updated))
+	}
+	if _, err := applyHpatchControlMutations(updated, []hpatchControlMutation{
+		{Path: []string{"missing"}, Remove: true},
+	}, nil); err == nil {
+		t.Fatal("invalid mutation accepted")
 	}
 }
 
@@ -174,15 +212,23 @@ func TestHpatchControlCarrierHasOneBareCommand(t *testing.T) {
 	}
 	carrier := history.carrierInput() + `
 if (displayedCommands.length !== 2 || !displayedCommands[0].includes('printf first') || !displayedCommands[1].includes('printf last')) throw new Error('original commands lost');
+if (controlFrames.some(frame => frame.includes('"progress":'))) throw new Error('full checkpoint leaked into terminal interaction');
+if (controlFrames.some(frame => frame.length > 2048)) throw new Error('oversized checkpoint terminal interaction');
 if (nextControlSession !== 900001 || controlSessions.size !== 0) throw new Error('control channel not opened once and closed');
 `
 	overrides += `
 const displayedCommands = [];
+const controlFrames = [];
 const displayExec = tools.exec_command;
+const displayWrite = tools.write_stdin;
 tools.exec_command = async args => {
   displayedCommands.push(args.cmd);
   if (args.cmd.includes('--hpatch-') || args.cmd.includes('mixed-M')) throw new Error('private metadata in command');
   return displayExec(args);
+};
+tools.write_stdin = async args => {
+  if (args.chars && args.session_id >= 900000) controlFrames.push(args.chars);
+  return displayWrite(args);
 };
 `
 	var result mixedScriptResult

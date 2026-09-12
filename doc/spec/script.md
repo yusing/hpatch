@@ -328,9 +328,13 @@ edit translation. The helper discovers storage through inherited `CODEX_THREAD_I
 and binds a retained handle from a bounded stdin frame; no private flag, path,
 connection detail, or inline environment assignment appears in command arguments.
 Replies use bounded, acknowledged chunks so host output truncation cannot silently
-lose translation data. Actual shell commands retain their ordinary displays. The host
-may display the control-channel call and stdin activity. Closing the channel never cancels a
-workspace shell process. Abandoned unbound channels expire after one minute;
+lose translation data. Checkpoints send only changed progress fields, and translation
+results already held by the control process are referenced rather than copied back
+through terminal input. Edit segments share one carrier implementation instead of
+retaining generated per-segment programs. Actual shell commands retain their ordinary
+displays. A host may still display the control-channel call and compact stdin frames,
+but it does not receive repeated full checkpoint snapshots. Closing the channel never
+cancels a workspace shell process. Abandoned unbound channels expire after one minute;
 bound channels expire with their retained handle.
 
 Checkpoint persistence is independent of Code Mode cleanup. A checkpoint is saved

@@ -103,17 +103,6 @@ func (t *mekugiResponseTransform) prepareMixedSegments(parts []hpatchsyntax.Scri
 			if err := validateMixedEdit(part.Source); err != nil {
 				return nil, fmt.Errorf("edit segment %d (line %d): %w", index+1, part.Line, err)
 			}
-			fmt.Fprintf(&program, "await translateSource(%s);\n", mustMarshalJSON(part.Source))
-			program.WriteString(`if (last.exit_code !== 0) { current.status = 'failed'; current.output = output; stoppedReason = 'translation_error'; return; }
-let edit;
-try { edit = JSON.parse(output); } catch { throw new Error('HPATCH translation output is incomplete or truncated; this segment was not applied. Repair this segment and resume.'); }
-if (typeof edit.patch !== 'string' || typeof edit.report !== 'string' || typeof edit.diagnostic !== 'string') throw new Error('Invalid HPATCH translation result; this segment was not applied.');
-if (edit.diagnostic) { current.status = 'rejected'; current.diagnostic = edit.diagnostic; stoppedReason = 'edit_rejected'; return; }
-output = ''; last = {output: '', exit_code: 0};
-if (edit.patch) await tools.apply_patch(edit.patch);
-current.report = edit.report;
-if (edit.attempt_id) await controlRequest({operation: 'confirm', attempt_id: edit.attempt_id});
-`)
 		}
 		segment.Program = program.String()
 		segments = append(segments, segment)

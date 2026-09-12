@@ -4,6 +4,7 @@ const nativeTools = tools;
 {
 const state = mixedConfig.state;
 const progress = state.progress;
+let checkpointedProgress = JSON.parse(JSON.stringify(progress));
 // Retain only inserted repairs, rather than copying the original plan into every
 // checkpoint. Insertion indices refer to the plan after earlier insertions.
 const segments = [...state.segments];
@@ -99,21 +100,65 @@ async function startControl() {
     throw new Error('HPATCH control channel did not become ready.');
   }
   const response = await controlRequest({operation: 'open', handle: state.handle});
-  if (response.opened !== true) throw new Error('HPATCH control channel did not bind the retained handle.');
+  if (response.opened !== true || response.progress === null || typeof response.progress !== 'object') {
+    throw new Error('HPATCH control channel did not bind the retained handle.');
+  }
+  checkpointedProgress = response.progress;
 }
-async function checkpoint(phase) {
+function checkpointMutations(before, after, path = [], mutations = []) {
+  if (Object.is(before, after)) return mutations;
+  if (Array.isArray(before) && Array.isArray(after)) {
+    if (after.length < before.length) {
+      mutations.push({path, value: after});
+      return mutations;
+    }
+    const shared = Math.min(before.length, after.length);
+    for (let index = 0; index < shared; index++) {
+      checkpointMutations(before[index], after[index], [...path, String(index)], mutations);
+    }
+    for (let index = shared; index < after.length; index++) {
+      mutations.push({path: [...path, String(index)], value: after[index]});
+    }
+    return mutations;
+  }
+  const beforeObject = before !== null && typeof before === 'object' && !Array.isArray(before);
+  const afterObject = after !== null && typeof after === 'object' && !Array.isArray(after);
+  if (beforeObject && afterObject) {
+    for (const key of Object.keys(before)) {
+      if (!Object.hasOwn(after, key)) mutations.push({path: [...path, key], remove: true});
+    }
+    for (const key of Object.keys(after)) {
+      if (!Object.hasOwn(before, key)) mutations.push({path: [...path, key], value: after[key]});
+      else checkpointMutations(before[key], after[key], [...path, key], mutations);
+    }
+    return mutations;
+  }
+  mutations.push({path, value: after});
+  return mutations;
+}
+async function checkpoint(phase, copies = []) {
   if (current) current.phase = phase;
   progress.current = current;
   progress.control_session_id = controlSession;
   announce(phase);
+  const nextProgress = JSON.parse(JSON.stringify(progress));
+  const mutations = checkpointMutations(checkpointedProgress, nextProgress);
+  for (const copy of copies) {
+    const index = mutations.findIndex(mutation =>
+      mutation.path.length === copy.path.length &&
+      mutation.path.every((component, pathIndex) => component === copy.path[pathIndex]));
+    if (index < 0) throw new Error('Checkpoint copy does not match changed state.');
+    mutations[index] = copy;
+  }
   try {
     const response = await controlRequest({
-      operation: 'checkpoint', revision: state.revision, progress
+      operation: 'checkpoint', revision: state.revision, mutations
     });
     if (response.revision !== state.revision + 1) {
       throw new Error('Checkpoint storage failed or this carrier is stale. Stop; inspect the retained handle before continuing.');
     }
     state.revision++;
+    checkpointedProgress = nextProgress;
   } catch (error) {
     storageFailed = true;
     throw error;
@@ -147,8 +192,38 @@ async function invoke(method, args) {
   if (result?.session_id != null) current.session_id = result.session_id;
   else delete current.session_id;
   await checkpoint(result?.session_id != null ? 'session_available' :
-    method === 'apply_patch' ? 'application_returned' : 'native_returned');
+    method === 'apply_patch' ? 'application_returned' : 'native_returned',
+    method === 'translate' ? [{path: ['operations', String(index), 'result'], copy: 'translation'}] : []);
   return result;
+}
+async function executeEdit(source) {
+  await translateSource(source);
+  if (last.exit_code !== 0) {
+    current.status = 'failed';
+    current.output = output;
+    stoppedReason = 'translation_error';
+    return;
+  }
+  let edit;
+  try {
+    edit = JSON.parse(output);
+  } catch {
+    throw new Error('HPATCH translation output is incomplete or truncated; this segment was not applied. Repair this segment and resume.');
+  }
+  if (typeof edit.patch !== 'string' || typeof edit.report !== 'string' || typeof edit.diagnostic !== 'string') {
+    throw new Error('Invalid HPATCH translation result; this segment was not applied.');
+  }
+  if (edit.diagnostic) {
+    current.status = 'rejected';
+    current.diagnostic = edit.diagnostic;
+    stoppedReason = 'edit_rejected';
+    return;
+  }
+  output = '';
+  last = {output: '', exit_code: 0};
+  if (edit.patch) await tools.apply_patch(edit.patch);
+  current.report = edit.report;
+  if (edit.attempt_id) await controlRequest({operation: 'confirm', attempt_id: edit.attempt_id});
 }
 const tools = {
   exec_command: args => invoke('exec_command', args),
@@ -253,7 +328,8 @@ try {
       output = '';
       last = {output: '', exit_code: 0};
       try {
-        await eval('(async () => {\n' + segment.program + '\n})()');
+        if (segment.kind === 'edit') await executeEdit(segment.source);
+        else await eval('(async () => {\n' + segment.program + '\n})()');
         break;
       } catch (error) {
         if (error !== revalidate) throw error;

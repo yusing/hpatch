@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 	"unicode/utf8"
 
@@ -18,13 +19,143 @@ import (
 
 const hpatchTranslationReady = "HPATCH-READY\n"
 
+type hpatchControlMutation struct {
+	Path   []string        `json:"path"`
+	Value  json.RawMessage `json:"value,omitempty"`
+	Remove bool            `json:"remove,omitempty"`
+	Copy   string          `json:"copy,omitempty"`
+}
+
 type hpatchControlRequest struct {
-	AttemptID string          `json:"attempt_id"`
-	Operation string          `json:"operation"`
-	Handle    string          `json:"handle"`
-	Revision  uint64          `json:"revision"`
-	Progress  json.RawMessage `json:"progress"`
-	Source    string          `json:"source"`
+	AttemptID string                  `json:"attempt_id"`
+	Operation string                  `json:"operation"`
+	Handle    string                  `json:"handle"`
+	Revision  uint64                  `json:"revision"`
+	Mutations []hpatchControlMutation `json:"mutations"`
+	Source    string                  `json:"source"`
+}
+
+const maxHpatchControlMutations = 4096
+
+func applyHpatchControlMutations(progress map[string]json.RawMessage, mutations []hpatchControlMutation, translation json.RawMessage) (map[string]json.RawMessage, error) {
+	if len(mutations) > maxHpatchControlMutations {
+		return nil, errors.New("too many checkpoint mutations")
+	}
+	encoded, err := json.Marshal(progress)
+	if err != nil {
+		return nil, errors.New("invalid retained checkpoint")
+	}
+	var document any
+	if err := json.Unmarshal(encoded, &document); err != nil {
+		return nil, errors.New("invalid retained checkpoint")
+	}
+	copiedTranslation := false
+	for _, mutation := range mutations {
+		if len(mutation.Path) == 0 || len(mutation.Path) > 64 {
+			return nil, errors.New("invalid checkpoint mutation path")
+		}
+		value, err := hpatchControlMutationValue(mutation, translation)
+		if err != nil {
+			return nil, err
+		}
+		if mutation.Copy != "" {
+			if copiedTranslation {
+				return nil, errors.New("translation result copied more than once")
+			}
+			copiedTranslation = true
+		}
+		document, err = applyHpatchControlMutation(document, mutation.Path, value, mutation.Remove)
+		if err != nil {
+			return nil, err
+		}
+	}
+	encoded, err = json.Marshal(document)
+	if err != nil {
+		return nil, errors.New("invalid checkpoint mutation")
+	}
+	var updated map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &updated); err != nil || updated == nil {
+		return nil, errors.New("checkpoint mutations produced invalid state")
+	}
+	return updated, nil
+}
+
+func hpatchControlMutationValue(mutation hpatchControlMutation, translation json.RawMessage) (any, error) {
+	if mutation.Remove {
+		if len(mutation.Value) != 0 || mutation.Copy != "" {
+			return nil, errors.New("checkpoint removal has a value")
+		}
+		return nil, nil
+	}
+	if mutation.Copy != "" {
+		if mutation.Copy != "translation" || len(translation) == 0 || len(mutation.Value) != 0 {
+			return nil, errors.New("invalid checkpoint copy")
+		}
+		return map[string]any{"output": string(translation), "exit_code": 0}, nil
+	}
+	if len(mutation.Value) == 0 {
+		return nil, errors.New("checkpoint mutation has no value")
+	}
+	var value any
+	if err := json.Unmarshal(mutation.Value, &value); err != nil {
+		return nil, errors.New("invalid checkpoint mutation value")
+	}
+	return value, nil
+}
+
+func applyHpatchControlMutation(node any, path []string, value any, remove bool) (any, error) {
+	component := path[0]
+	last := len(path) == 1
+	switch current := node.(type) {
+	case map[string]any:
+		if last {
+			if remove {
+				if _, ok := current[component]; !ok {
+					return nil, errors.New("checkpoint mutation removes a missing field")
+				}
+				delete(current, component)
+			} else {
+				current[component] = value
+			}
+			return current, nil
+		}
+		child, ok := current[component]
+		if !ok {
+			return nil, errors.New("checkpoint mutation parent is missing")
+		}
+		updated, err := applyHpatchControlMutation(child, path[1:], value, remove)
+		if err != nil {
+			return nil, err
+		}
+		current[component] = updated
+		return current, nil
+	case []any:
+		index, err := strconv.Atoi(component)
+		if err != nil || index < 0 || index > len(current) || !last && index == len(current) {
+			return nil, errors.New("invalid checkpoint mutation index")
+		}
+		if last {
+			if remove {
+				if index == len(current) {
+					return nil, errors.New("checkpoint mutation removes a missing item")
+				}
+				return append(current[:index], current[index+1:]...), nil
+			}
+			if index == len(current) {
+				return append(current, value), nil
+			}
+			current[index] = value
+			return current, nil
+		}
+		updated, err := applyHpatchControlMutation(current[index], path[1:], value, remove)
+		if err != nil {
+			return nil, err
+		}
+		current[index] = updated
+		return current, nil
+	default:
+		return nil, errors.New("checkpoint mutation traverses a scalar")
+	}
 }
 
 // A bare shell starts a private, stdin-framed control channel. Neither runtime
@@ -91,6 +222,7 @@ func runHpatchControl(ctx context.Context, stdin *os.File, stdout io.Writer) err
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 4096), maxHpatchCheckpointBytes+1)
 	var bound hpatchResumeState
+	var translation json.RawMessage
 	for scanner.Scan() {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -123,21 +255,38 @@ func runHpatchControl(ctx context.Context, stdin *os.File, stdout io.Writer) err
 			if err := input.SetReadDeadline(bound.ExpiresAt); err != nil {
 				return err
 			}
-			response = map[string]any{"opened": true}
+			response = map[string]any{"opened": true, "progress": bound.Progress}
 		} else {
 			if !time.Now().Before(bound.ExpiresAt) {
 				return errors.New("control handle expired")
 			}
 			switch request.Operation {
 			case "checkpoint":
-				if err := runHpatchCheckpoint(ctx, root, bound.Handle, request.Revision, string(request.Progress), io.Discard); err != nil {
+				updated, err := applyHpatchControlMutations(bound.Progress, request.Mutations, translation)
+				if err != nil {
 					return err
 				}
-				response = map[string]any{"revision": request.Revision + 1}
+				progress, err := json.Marshal(updated)
+				if err != nil {
+					return errors.New("invalid checkpoint state")
+				}
+				if err := runHpatchCheckpoint(ctx, root, bound.Handle, request.Revision, string(progress), io.Discard); err != nil {
+					return err
+				}
+				if err := json.Unmarshal(progress, &bound.Progress); err != nil {
+					return errors.New("invalid checkpoint state")
+				}
+				bound.Revision = request.Revision + 1
+				translation = nil
+				response = map[string]any{"revision": bound.Revision}
 			case "translate":
 				translated, err := bound.translateTracked(ctx, request.Source)
 				if err != nil {
 					return err
+				}
+				translation, err = json.Marshal(translated)
+				if err != nil {
+					return errors.New("invalid translation result")
 				}
 				response = translated
 			case "confirm":

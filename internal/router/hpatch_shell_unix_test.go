@@ -50,9 +50,11 @@ func TestHpatchTranslationRawStdin(t *testing.T) {
 	if err := encoder.Encode(hpatchControlRequest{Operation: "open", Handle: state.Handle}); err != nil {
 		t.Fatal(err)
 	}
-	var opened map[string]bool
+	var opened struct {
+		Opened bool `json:"opened"`
+	}
 	readHpatchControlReply(t, encoder, decoder, &opened)
-	if !opened["opened"] {
+	if !opened.Opened {
 		t.Fatal("channel did not bind")
 	}
 	if err := encoder.Encode(hpatchControlRequest{Operation: "translate", Source: source}); err != nil {
