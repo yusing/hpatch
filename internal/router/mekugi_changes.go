@@ -1,0 +1,370 @@
+package router
+
+import (
+	"cmp"
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+
+	"github.com/yusing/mekugi"
+)
+
+// The index contains identities and application receipts, not another copy of
+// scripts or diffs. Replay records remain immutable translation facts.
+type changeIndex struct {
+	Version   int
+	Workspace string
+	Streams   []changeStream
+	Changes   map[string]trackedChange
+}
+
+type changeStream struct {
+	Thread string
+	Next   int
+}
+
+type trackedChange struct {
+	Correlation string
+	Calls       []trackedCall
+}
+
+type trackedCall struct {
+	ID        string
+	Confirmed bool
+}
+
+func changeNotice(id string) string {
+	if id == "" {
+		return ""
+	}
+	return "change " + id + "\n"
+}
+
+func changeIndexName(workspace string) string {
+	return fmt.Sprintf("changes-%x.json", sha256.Sum256([]byte(workspace)))
+}
+
+func (s *mekugiReplayStore) readChangeIndex(workspace string) (changeIndex, error) {
+	index := changeIndex{Version: 1, Workspace: workspace, Changes: make(map[string]trackedChange)}
+	path := filepath.Join(s.directory, changeIndexName(workspace))
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return index, nil
+	}
+	if err != nil {
+		return index, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > maxReplayRecordBytes {
+		return index, errors.New("invalid change index file")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return index, err
+	}
+	if len(data) > maxReplayRecordBytes {
+		return index, errors.New("change index exceeds capacity")
+	}
+	if err := json.Unmarshal(data, &index); err != nil {
+		return index, fmt.Errorf("decode change index: %w", err)
+	}
+	if index.Version != 1 || index.Workspace != workspace || index.Changes == nil {
+		return index, errors.New("change index identity/version mismatch")
+	}
+	if err := validateChangeIndex(index); err != nil {
+		return index, err
+	}
+	return index, nil
+}
+
+func validateChangeIndex(index changeIndex) error {
+	streams := make(map[string]int, len(index.Streams))
+	threads := make(map[string]bool, len(index.Streams))
+	for position, stream := range index.Streams {
+		if stream.Next < 1 || threads[stream.Thread] {
+			return errors.New("invalid change stream counter or duplicate thread")
+		}
+		threads[stream.Thread] = true
+		streams[changeStreamName(position)] = stream.Next
+	}
+	counts := make(map[string]int, len(streams))
+	correlations := make(map[string]bool, len(index.Changes))
+	calls := make(map[string]bool)
+	for id, change := range index.Changes {
+		stream, number, err := parseChangeID(id)
+		if err != nil || number > streams[stream] || change.Correlation == "" || correlations[change.Correlation] {
+			return errors.New("invalid change identity or stream membership")
+		}
+		counts[stream]++
+		correlations[change.Correlation] = true
+		for _, call := range change.Calls {
+			if call.ID == "" || calls[call.ID] {
+				return errors.New("invalid or duplicated change attempt")
+			}
+			calls[call.ID] = true
+		}
+	}
+	for stream, next := range streams {
+		if counts[stream] != next {
+			return errors.New("change stream counter does not match its IDs")
+		}
+	}
+	return nil
+}
+
+func (s *mekugiReplayStore) writeChangeIndex(index changeIndex) (err error) {
+	data, err := marshalProtocolJSON(index)
+	if err != nil {
+		return err
+	}
+	if len(data) > maxReplayRecordBytes {
+		return errors.New("change index capacity reached; explicit cleanup required")
+	}
+	entries, err := os.ReadDir(s.directory)
+	if err != nil {
+		return err
+	}
+	total := int64(len(data))
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "changes-") || entry.Name() == changeIndexName(index.Workspace) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return errors.New("invalid change index store entry")
+		}
+		total += info.Size()
+	}
+	if total > s.maxBytes {
+		return errors.New("change index store quota reached; explicit cleanup required")
+	}
+	file, err := os.CreateTemp(s.directory, "changes-pending-")
+	if err != nil {
+		return err
+	}
+	defer func() { file.Close(); os.Remove(file.Name()) }()
+	if _, err := file.Write(data); err != nil {
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(file.Name(), filepath.Join(s.directory, changeIndexName(index.Workspace))); err != nil {
+		return err
+	}
+	return syncReplayDirectory(s.directory)
+}
+
+// reserveChange runs before evaluation, including private direct application.
+// A replay or recovery with the same correlation never allocates another ID.
+func (s *mekugiReplayStore) reserveChange(ctx context.Context, workspace, thread, correlation string) (id string, err error) {
+	if s == nil || correlation == "" {
+		return "", nil
+	}
+	err = s.locked(ctx, func() error {
+		index, err := s.readChangeIndex(workspace)
+		if err != nil {
+			return err
+		}
+		for existing, change := range index.Changes {
+			if change.Correlation == correlation {
+				id = existing
+				return syncReplayDirectory(s.directory)
+			}
+		}
+		stream := slices.IndexFunc(index.Streams, func(stream changeStream) bool { return stream.Thread == thread })
+		if stream == -1 {
+			stream = len(index.Streams)
+			index.Streams = append(index.Streams, changeStream{Thread: thread})
+		}
+		index.Streams[stream].Next++
+		id = "hp_" + changeStreamName(stream) + strconv.Itoa(index.Streams[stream].Next)
+		if _, exists := index.Changes[id]; exists {
+			return errors.New("change stream would overwrite an existing ID")
+		}
+		index.Changes[id] = trackedChange{Correlation: correlation}
+		return s.writeChangeIndex(index)
+	})
+	return
+}
+
+func (t *mekugiResponseTransform) changeIDForAttempt(attempt mekugi.AttemptMetadata) (string, error) {
+	store := t.proxy.replayStore
+	if !attempt.Correction {
+		return store.reserveChange(t.ctx, t.directory, t.shellThreadID, attempt.CorrelationID)
+	}
+	if store == nil || attempt.CorrelationID == "" {
+		return "", nil
+	}
+	var id string
+	err := store.locked(t.ctx, func() error {
+		index, err := store.readChangeIndex(t.directory)
+		if err != nil {
+			return err
+		}
+		for candidate, change := range index.Changes {
+			if change.Correlation == attempt.CorrelationID {
+				id = candidate
+				break
+			}
+		}
+		return nil
+	})
+	return id, err
+}
+
+func changeStreamName(index int) string {
+	name := ""
+	for index++; index > 0; index = (index - 1) / 26 {
+		name = string(rune('a'+(index-1)%26)) + name
+	}
+	return name
+}
+
+// publishChanges is called under the replay lock, only after the corresponding
+// immutable records are durable and before exposing their executor carriers.
+func (s *mekugiReplayStore) publishChanges(workspace string, histories map[string]mekugiHistory) error {
+	tracked := make([]string, 0, len(histories))
+	for id, history := range histories {
+		if history.changeID != "" {
+			tracked = append(tracked, id)
+		}
+	}
+	if len(tracked) == 0 {
+		return nil
+	}
+	slices.SortFunc(tracked, func(a, b string) int {
+		return cmp.Or(cmp.Compare(histories[a].sequence, histories[b].sequence), strings.Compare(a, b))
+	})
+	index, err := s.readChangeIndex(workspace)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for _, callID := range tracked {
+		history := histories[callID]
+		change, exists := index.Changes[history.changeID]
+		if !exists || change.Correlation != history.correlationID {
+			return errors.New("change identity does not match replay record")
+		}
+		if !slices.ContainsFunc(change.Calls, func(call trackedCall) bool { return call.ID == callID }) {
+			change.Calls = append(change.Calls, trackedCall{ID: callID, Confirmed: history.applied})
+			index.Changes[history.changeID] = change
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return s.writeChangeIndex(index)
+}
+
+// Confirmation is published only after the entire incoming history validates.
+// It is evidence for review, not an alternate source of recovery/alias ancestry.
+func (s *mekugiReplayStore) confirmChanges(ctx context.Context, workspace string, histories map[string]mekugiHistory) error {
+	if s == nil {
+		return nil
+	}
+	confirmable := false
+	for _, history := range histories {
+		confirmable = confirmable || history.changeID != "" && history.confirmed
+	}
+	if !confirmable {
+		return nil
+	}
+	return s.locked(ctx, func() error {
+		index, err := s.readChangeIndex(workspace)
+		if err != nil {
+			return err
+		}
+		changed := false
+		for callID, history := range histories {
+			if history.changeID == "" || !history.confirmed {
+				continue
+			}
+			change, exists := index.Changes[history.changeID]
+			if !exists {
+				return errors.New("confirmed change index is missing")
+			}
+			for i := range change.Calls {
+				if change.Calls[i].ID == callID && !change.Calls[i].Confirmed {
+					change.Calls[i].Confirmed = true
+					changed = true
+				}
+			}
+		}
+		if !changed {
+			return nil
+		}
+		return s.writeChangeIndex(index)
+	})
+}
+
+func parseChangeID(id string) (stream string, number int, err error) {
+	tail, ok := strings.CutPrefix(id, "hp_")
+	if !ok {
+		return "", 0, fmt.Errorf("invalid change ID %q", id)
+	}
+	n := 0
+	for n < len(tail) && tail[n] >= 'a' && tail[n] <= 'z' {
+		n++
+	}
+	if n == 0 || n == len(tail) {
+		return "", 0, fmt.Errorf("invalid change ID %q", id)
+	}
+	number, err = strconv.Atoi(tail[n:])
+	if err != nil || number < 1 || strconv.Itoa(number) != tail[n:] {
+		return "", 0, fmt.Errorf("invalid change ID %q", id)
+	}
+	return tail[:n], number, nil
+}
+
+func expandChangeRefs(refs []string) ([]string, error) {
+	const maxReadChanges = 256
+	var ids []string
+	seen := make(map[string]bool)
+	for _, ref := range refs {
+		start, end, ranged := strings.Cut(ref, "..")
+		stream, first, err := parseChangeID(start)
+		if err != nil {
+			return nil, err
+		}
+		last := first
+		if ranged {
+			endStream, endNumber, err := parseChangeID(end)
+			if err != nil {
+				return nil, err
+			}
+			if endStream != stream || endNumber < first {
+				return nil, errors.New("change ranges must be ordered and within one agent stream")
+			}
+			last = endNumber
+		}
+		if last-first >= maxReadChanges {
+			return nil, fmt.Errorf("read at most %d changes at once", maxReadChanges)
+		}
+		for offset := 0; offset <= last-first; offset++ {
+			id := "hp_" + stream + strconv.Itoa(first+offset)
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+		if len(ids) > maxReadChanges {
+			return nil, fmt.Errorf("read at most %d changes at once", maxReadChanges)
+		}
+	}
+	return ids, nil
+}

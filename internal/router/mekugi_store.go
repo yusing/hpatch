@@ -42,6 +42,8 @@ type replayHistory struct {
 	Script               string
 	Root                 string
 	Evaluated            string
+	ChangeID             string
+	ReviewFiles          []mekugi.ReviewFile
 	Patch                string
 	Applied              bool
 	CarrierName          string
@@ -69,6 +71,8 @@ func durableHistory(h mekugiHistory) replayHistory {
 		Script:               h.script,
 		Root:                 h.root,
 		Evaluated:            h.evaluated,
+		ChangeID:             h.changeID,
+		ReviewFiles:          h.reviewFiles,
 		Patch:                h.patch,
 		Applied:              h.applied,
 		CarrierName:          h.carrierName,
@@ -96,6 +100,8 @@ func (h replayHistory) history() mekugiHistory {
 		script:               h.Script,
 		root:                 h.Root,
 		evaluated:            h.Evaluated,
+		changeID:             h.ChangeID,
+		reviewFiles:          h.ReviewFiles,
 		patch:                h.Patch,
 		applied:              h.Applied,
 		carrierName:          h.CarrierName,
@@ -289,7 +295,7 @@ func (s *mekugiReplayStore) put(ctx context.Context, workspace string, histories
 				return err
 			}
 		}
-		return nil
+		return s.publishChanges(workspace, histories)
 	})
 }
 

@@ -57,6 +57,10 @@ command sessions, and patch diff UI. No fork, no config edits, no daemon.
   - Successful reports return current row references for follow-up edits.
     Unchanged saved rows remain reusable after line shifts when their hash
     identifies exactly one row.
+- **Hand off exact edits for review.**
+  - Hpatch results include a compact change ID. Recovery keeps that ID.
+  - Agents in the same workspace can read an ID or an agent-specific range, without
+    rereading the entire Git diff. Review output omits full recovery history by default.
 - **Read only what the edit needs.**
   - Inside `functions.shell`, `hgrep` searches with verified rows, `hsymbol`
     finds semantic definitions and references, and `hcat` reads exact source ranges.
@@ -352,10 +356,33 @@ programs**, not as standalone utilities in your terminal:
 | Command | Purpose | Extra prerequisite on the executor's `PATH` |
 | --- | --- | --- |
 | `hrun` | Bound an external command's output, optionally keeping its ending | The wrapped command |
+| `hchanges` | Read hpatch diffs and recovery history by ID or range | Access to the router's replay directory |
 | `hcat` | Read verified source rows | None |
 | `hgrep` | Search text with verified row references | `rg` |
 | `hsymbol` | Look up definitions and references | `gopls` for Go; TypeScript 7 as `tsc` for JS, TS, and JSON; `pyright-langserver` for Python |
 | `inspect_file` | Inspect a structural outline | None |
+
+Hpatch keeps durable review records in the router's replay store. An agent can hand off
+`hp_a1..hp_a3`, then another agent can retrieve just those edits:
+
+```sh
+hchanges read hp_a1..hp_a3
+hchanges read --summary hp_a1..hp_a3
+hchanges read --history hp_a2
+```
+
+Ranges are inclusive and stay within one agent's stream. Recovery keeps the original ID.
+Default reads show outcomes and captured diffs, not repeated recovery scripts; `--history`
+includes the full chain. These are hpatch's evaluated changes, including formatting, not
+a record of shell edits or other workspace changes. Prepared diffs are marked unconfirmed
+until execution is confirmed; the host's newline handling can still affect applied bytes.
+
+Reads default to 4,000 output tokens. Use `--max-tokens N` to change that limit,
+`--path PATH` to select an exact recorded path, or `--workspace DIR` when reading from
+a subdirectory. Incomplete reads return a continuation cursor on stderr and a nonzero
+status. Repeat the same command with `--cursor VALUE` to continue. Missing records or
+a changed snapshot fail explicitly. Isolated executors need the router's replay directory
+mounted at its original absolute path. See the [change record contract](doc/spec/changes.md).
 
 Semantic lookup can start with a known line number:
 `hsymbol def source.go 42 MyFunction`. Use `LINE:HASH` instead when the query

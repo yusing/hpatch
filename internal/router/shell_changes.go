@@ -1,0 +1,251 @@
+package router
+
+import (
+	"context"
+	"crypto/sha256"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/yusing/mekugi/internal/router/toolplugin"
+	"mvdan.cc/sh/v3/interp"
+)
+
+const changesReadUsage = "hchanges read [--summary|--history] [--path PATH] [--workspace DIR] [--max-tokens N] [--cursor HASH:BYTE] ID[..ID] ..."
+const maxChangeReadBytes = 64 << 20
+
+type changeReadOptions struct {
+	view      string
+	path      string
+	workspace string
+	cursor    string
+	maxTokens int
+	ids       []string
+}
+
+func parseChangeRead(arguments []string, cwd string) (changeReadOptions, error) {
+	options := changeReadOptions{workspace: cwd, maxTokens: 4000}
+	if len(arguments) == 0 || arguments[0] != "read" {
+		return options, errors.New(changesReadUsage)
+	}
+	arguments = arguments[1:]
+	seen := make(map[string]bool)
+	for len(arguments) > 0 && strings.HasPrefix(arguments[0], "--") {
+		flag := arguments[0]
+		arguments = arguments[1:]
+		if seen[flag] {
+			return options, fmt.Errorf("duplicate option %s", flag)
+		}
+		seen[flag] = true
+		switch flag {
+		case "--summary", "--history":
+			if options.view != "" {
+				return options, errors.New("choose either --summary or --history")
+			}
+			options.view = strings.TrimPrefix(flag, "--")
+		case "--path", "--workspace", "--max-tokens", "--cursor":
+			if len(arguments) == 0 {
+				return options, fmt.Errorf("%s requires a value", flag)
+			}
+			value := arguments[0]
+			arguments = arguments[1:]
+			switch flag {
+			case "--path":
+				if value == "" {
+					return options, errors.New("--path requires a nonempty recorded path")
+				}
+				options.path = value
+			case "--workspace":
+				options.workspace = value
+			case "--cursor":
+				options.cursor = value
+			case "--max-tokens":
+				number, err := strconv.Atoi(value)
+				if err != nil || number < 1 || number > hrunMaxTokens || strconv.Itoa(number) != value {
+					return options, fmt.Errorf("--max-tokens requires an integer from 1 to %d", hrunMaxTokens)
+				}
+				options.maxTokens = number
+			}
+		default:
+			return options, fmt.Errorf("unknown option %s; %s", flag, changesReadUsage)
+		}
+	}
+	if len(arguments) == 0 {
+		return options, errors.New(changesReadUsage)
+	}
+	var err error
+	options.ids, err = expandChangeRefs(arguments)
+	if err != nil {
+		return options, err
+	}
+	if options.workspace != "" {
+		if !filepath.IsAbs(options.workspace) {
+			options.workspace = filepath.Join(cwd, options.workspace)
+		}
+		options.workspace, err = filepath.EvalSymlinks(options.workspace)
+		if err != nil {
+			return options, fmt.Errorf("resolve workspace: %w", err)
+		}
+	}
+	return options, nil
+}
+
+func trackedStatus(history mekugiHistory, confirmed bool) string {
+	switch {
+	case history.translationError != "":
+		return "rejected"
+	case history.alreadySatisfied:
+		return "no-op"
+	case history.applied || confirmed:
+		return "applied"
+	default:
+		return "prepared (application unconfirmed)"
+	}
+}
+
+func (s *mekugiReplayStore) readChanges(ctx context.Context, options changeReadOptions) (string, error) {
+	var output strings.Builder
+	err := s.locked(ctx, func() error {
+		index, err := s.readChangeIndex(options.workspace)
+		if err != nil {
+			return err
+		}
+		for _, id := range options.ids {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			change, exists := index.Changes[id]
+			if !exists {
+				return fmt.Errorf("change %s is missing in workspace %q; check --workspace or explicit store cleanup", id, options.workspace)
+			}
+			fmt.Fprintf(&output, "%s attempts=%d\n", id, len(change.Calls))
+			if len(change.Calls) == 0 {
+				output.WriteString("pending (no completed result)\n")
+			}
+			for position, call := range change.Calls {
+				record, found, err := s.read(options.workspace, call.ID, false)
+				if err != nil {
+					return err
+				}
+				if !found || record.History.ChangeID != id || record.History.CorrelationID != change.Correlation {
+					return fmt.Errorf("change %s has a missing or inconsistent attempt", id)
+				}
+				history := record.History.history()
+				fmt.Fprintf(&output, "attempt %d %s\n", position+1, trackedStatus(history, call.Confirmed))
+				if strings.HasPrefix(strings.TrimLeft(history.recoveryBaseline(), "\r\n"), "in "+shellArtifactPrefix) {
+					output.WriteString("scope: retained shell script, not workspace files\n")
+				}
+				if options.view == "history" {
+					fmt.Fprintf(&output, "%s input:\n%s\n", history.toolName, history.script)
+					if history.evaluated != "" {
+						fmt.Fprintf(&output, "evaluated script:\n%s\n", history.evaluated)
+					}
+					if history.report != "" {
+						output.WriteString(strings.TrimPrefix(history.report, changeNotice(id)))
+						output.WriteByte('\n')
+					}
+					if history.translationError != "" {
+						output.WriteString(strings.TrimPrefix(history.translationError, changeNotice(id)))
+						output.WriteByte('\n')
+					}
+				}
+				for _, file := range history.reviewFiles {
+					if options.path != "" && options.path != file.BeforePath && options.path != file.AfterPath {
+						continue
+					}
+					if options.view == "summary" {
+						fmt.Fprintf(&output, "file %q -> %q\n", file.BeforePath, file.AfterPath)
+					} else {
+						output.WriteString(file.Diff)
+					}
+				}
+				if output.Len() > maxChangeReadBytes {
+					return errors.New("change read exceeds 64 MiB; narrow the range, view, or --path")
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return output.String(), nil
+}
+
+// The cursor binds a byte offset to the complete selected projection. A recovery
+// or new application receipt invalidates it rather than mixing two snapshots.
+func changeReadOffset(text, cursor string) (string, int, error) {
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(text)))
+	if cursor == "" {
+		return digest, 0, nil
+	}
+	hash, number, ok := strings.Cut(cursor, ":")
+	offset, err := strconv.Atoi(number)
+	if !ok || hash != digest || err != nil || offset < 0 || offset >= len(text) ||
+		strconv.Itoa(offset) != number || !utf8.RuneStart(text[offset]) {
+		return "", 0, errors.New("invalid or stale change cursor; restart this read")
+	}
+	return digest, offset, nil
+}
+
+func executeHChanges(ctx context.Context, manifest toolWorkerManifest, runtimeRoot string, shellContribution *toolContribution, arguments []string) error {
+	handler := interp.HandlerCtx(ctx)
+	fail := func(err error) error {
+		_, _ = fmt.Fprintf(handler.Stderr, "hchanges: %v\n", err)
+		return interp.ExitStatus(1)
+	}
+	options, err := parseChangeRead(arguments, handler.Dir)
+	if err != nil {
+		return fail(err)
+	}
+	// The authenticated manifest pins the router's store. Do not derive it from
+	// mutable child environment or create a store as a side effect of reading.
+	if manifest.ReplayDirectory == "" {
+		return fail(errors.New("change storage is unavailable"))
+	}
+	if info, err := os.Lstat(filepath.Join(manifest.ReplayDirectory, "store.lock")); err != nil || !info.Mode().IsRegular() {
+		return fail(errors.New("change storage is missing or invalid"))
+	}
+	store := &mekugiReplayStore{directory: manifest.ReplayDirectory}
+	text, err := store.readChanges(ctx, options)
+	if err != nil {
+		return fail(err)
+	}
+	digest, offset, err := changeReadOffset(text, options.cursor)
+	if err != nil {
+		return fail(err)
+	}
+	// Bound tokenizer input using its maximum 128-byte token size, exactly as
+	// hrun does. Selection reuses the bundled GPT-5 tokenizer, not a second codec.
+	end := min(len(text), offset+options.maxTokens*128+utf8.UTFMax)
+	for end < len(text) && !utf8.RuneStart(text[end]) {
+		end--
+	}
+	formatted, err := toolplugin.Execute(ctx, manifest.NodeExecutable, runtimeRoot,
+		shellContribution.Module, shellContribution.ModuleIndex,
+		[]string{"--hrun-output", strconv.Itoa(options.maxTokens), "head", text[offset:end], ""},
+		nil, handler.Dir, shellEnvironment(handler.Env))
+	if err != nil {
+		return fail(err)
+	}
+	if formatted.ExitCode != 0 || !strings.HasPrefix(text[offset:end], formatted.Stdout) {
+		return fail(errors.New("change output selection failed"))
+	}
+	if formatted.Stdout == "" && offset < len(text) {
+		return fail(errors.New("token budget cannot admit the next character; increase --max-tokens"))
+	}
+	if _, err := io.WriteString(handler.Stdout, formatted.Stdout); err != nil {
+		return err
+	}
+	next := offset + len(formatted.Stdout)
+	if next < len(text) {
+		_, _ = fmt.Fprintf(handler.Stderr, "hchanges: incomplete; repeat this read with --cursor %s:%d\n", digest, next)
+		return interp.ExitStatus(1)
+	}
+	return nil
+}

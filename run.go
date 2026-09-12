@@ -414,6 +414,7 @@ type HostPatchSummary struct {
 // HostTranslation contains the complete result needed by an in-process host.
 // Diagnostic contains a rejection diagnostic or non-fatal hook warnings.
 type HostTranslation struct {
+	ReviewFiles   []ReviewFile
 	Patch         []byte
 	Report        string
 	TargetAliases []TargetAlias
@@ -489,7 +490,8 @@ func finishHostChange(ctx context.Context, dataDirectory, script string, result 
 	// no failing return may publish it. Keep lifecycle/effect metadata separate:
 	// late cancellation can still truthfully report that application succeeded.
 	report, aliases := result.Report, result.TargetAliases
-	patch, summary := result.Patch, result.PatchSummary
+	patch, summary, review := result.Patch, result.PatchSummary, result.ReviewFiles
+	result.ReviewFiles = nil
 	result.Report, result.TargetAliases = "", nil
 	result.Patch, result.PatchSummary = nil, HostPatchSummary{}
 	result.Attempt, _ = attemptMetadataFromContext(ctx)
@@ -536,6 +538,7 @@ func finishHostChange(ctx context.Context, dataDirectory, script string, result 
 		result.Diagnostic = ""
 		return result, err
 	}
+	result.ReviewFiles = review
 	result.Report, result.TargetAliases = report, aliases
 	result.Patch, result.PatchSummary = patch, summary
 	return result, nil
@@ -545,6 +548,7 @@ func finishHostChange(ctx context.Context, dataDirectory, script string, result 
 func hostTranslationResult(changes []change, report string, aliases []TargetAlias, evaluated bool) HostTranslation {
 	files := len(changes)
 	return HostTranslation{
+		ReviewFiles:   reviewFiles(changes),
 		Report:        report,
 		TargetAliases: slices.Clone(aliases),
 		Change:        HostChange{Files: files, AlreadySatisfied: evaluated && files == 0},

@@ -4,7 +4,7 @@ pjdoc:
   kind: spec
   scope: root
   status: draft
-  revision: "50"
+  revision: "51"
   files:
     - router.md
     - subagents.md
@@ -20,6 +20,7 @@ pjdoc:
     - session.md
     - metrics.md
     - script.md
+    - changes.md
     - correct.md
     - file.md
     - select.md
@@ -51,6 +52,7 @@ Each listed file owns one requirement. Related facts are cited by stable ID or l
 - [`REQ-SESSION-001`](session.md): offline logical session inspection
 - [`REQ-METRICS-001`](metrics.md): in-process captured Responses metrics
 - [`REQ-SCRIPT-001`](script.md): HPATCH/2 grammar and target forms
+- [`REQ-CHANGES-001`](changes.md): shared hpatch change IDs, recovery chains, and bounded review reads
 - [`REQ-CORRECT-001`](correct.md): rejected-script recovery with ordinary verified-row edits
 - [`REQ-FILE-001`](file.md): file scope and lifecycle
 - [`REQ-SELECT-001`](select.md): immutable-baseline target resolution

@@ -55,6 +55,19 @@ Background Responses requests reject before upstream forwarding because
 the router has no retrieval boundary for their eventual result. Malformed SSE state is
 sticky and cannot be overwritten by a later terminal event.
 
+`review.go` renders per-file review diffs from completed engine changes, separately from
+the bounded final-state projector and executor patch. Host finalization withholds those
+diffs on failure. The router carries that projection in immutable replay records.
+`internal/router/mekugi_changes.go` owns the workspace change index, thread-local ID
+streams, correlation-linked attempt membership, and persisted execution receipts.
+It shares the replay store's lock and durable-write discipline. Reservation precedes
+evaluation; attempt membership is published only after its replay record is durable.
+Receipts are written only after full request reconciliation and never influence recovery
+or target aliases. `internal/router/shell_changes.go` owns the read-only `hchanges read`
+interface, range expansion, views, and snapshot-bound pagination. Its Go shell dispatch
+reuses the bundled shell tokenizer; the authenticated manifest pins the store location.
+No model-visible schema, public plugin implementation, or executable frontend is added.
+
 `internal/router/session_inspect.go` owns offline logical-session projection for
 `REQ-SESSION-001`; `cmd/mekugi` dispatches its read-only command before router startup.
 It reads rollout call identities and validates records through the replay store's reader,

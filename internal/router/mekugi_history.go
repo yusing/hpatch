@@ -29,6 +29,8 @@ type mekugiHistory struct {
 	// must restore what the model emitted, while a following recovery must target
 	// the script that produced the latest diagnostic.
 	evaluated      string
+	changeID       string
+	reviewFiles    []mekugi.ReviewFile
 	patch          string
 	applied        bool
 	carrierName    string
@@ -107,6 +109,10 @@ func (p *mekugiProxy) rememberBatch(sessionID string, histories map[string]mekug
 			return fmt.Errorf("encode mekugi history item: %w", err)
 		}
 		history.bytes = len(sessionID) + len(callID) + len(history.toolName) + len(history.pluginID) + len(history.script) + len(history.root) + len(history.evaluated) + len(history.patch) + len(history.carrierKind) + len(history.carrierName) + len(history.carrierPayload) + len(history.report) + len(history.outputWarning) + len(history.translationError) + len(history.correlationID) + len(encodedItem)
+		history.bytes += len(history.changeID)
+		for _, file := range history.reviewFiles {
+			history.bytes += len(file.BeforePath) + len(file.AfterPath) + len(file.Diff)
+		}
 		for _, rejection := range history.rejections {
 			history.bytes += mekugiRejectionTextBytes(rejection)
 		}
@@ -376,6 +382,9 @@ func (p *mekugiProxy) reconcileVisibleInput(ctx context.Context, request *parsed
 			return nil, fmt.Errorf("encode replayed Responses input: %w", err)
 		}
 		request.setInput(encoded)
+	}
+	if err := p.replayStore.confirmChanges(ctx, workspace, visible); err != nil {
+		return nil, err
 	}
 	return visible, nil
 }
