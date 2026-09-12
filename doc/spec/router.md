@@ -84,8 +84,11 @@ debug write failures are surfaced on exit without changing request execution.
 The AX report uses [REQ-AX-001](ax.md) calculations. At router shutdown it discovers
 local Codex rollout filenames for at most 256 observed thread identities under
 `$CODEX_HOME/sessions` and `archived_sessions`, or the default `~/.codex` location.
-Discovery is bounded to 100000 entries and five seconds. The inspector validates
-rollout identity and infers per-call workspace metadata. Missing, ambiguous, incomplete,
+Discovery is bounded to 100000 entries and five seconds. Filename suffixes select
+candidates only; a candidate is attributed by the exact ID in its bounded first
+`session_meta` record, never by a hyphen-suffixed thread name. Unreadable or invalid
+candidate metadata makes discovery incomplete rather than certifying uniqueness.
+The inspector validates the full rollout identity and infers per-call workspace metadata. Missing, ambiguous, incomplete,
 or mismatched evidence receives a fixed state code; available runtime read counts remain
 visible even when rollout-dependent measurements are unavailable. The report contains metrics and
 coverage, not scripts or command output; missing defect assessments stay unassessed.

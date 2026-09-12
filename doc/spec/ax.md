@@ -23,8 +23,14 @@ classifies retained-file, execution, output-write, cancellation, and deadline fa
 Unclassified failures use `unknown`; v1 failures are never reclassified from prose.
 
 With AX enabled, generated shell carriers may carry the opaque logical call identity
-in `MEKUGI_AX_CALL_ID`, not a capability, path, script, or publication route. Normal
-uninstrumented carriers remain unchanged. Journal events include safe `call_id` when
+in `MEKUGI_AX_CALL_ID`, not a capability, path, script, or publication route.
+Instrumented carriers start with `# mekugi:ax:call_id=ID` on its own line. Offline
+command correlation requires this explicit router marker; a bare environment
+assignment, even before `shell`, is not sufficient evidence. Direct external commands
+and templated workers share the marker. It is local correlation, not authentication.
+In a command template, `env MEKUGI_AX_CALL_ID=ID` prefixes the substituted worker,
+not the whole template, so wrappers and pipelines preserve the worker's identity.
+Normal uninstrumented carriers remain unchanged. Journal events include safe `call_id` when
 available and a worker-local random `shell_id`. Start and finish must agree on schema,
 thread, reader, and all correlation fields. A call ID is not inferred from an arbitrary
 shell command or shared thread. Child workers use their own runtime thread identity;

@@ -304,9 +304,6 @@ func (registry *toolRegistry) execCarrierCommand(
 		}
 	}
 	command := workerCommand(contribution.Name, arguments)
-	if builtinShell && len(callIDs) != 0 && capturer.ValidAXIdentity(callIDs[0]) {
-		command = capturer.AXCallIDEnvironment + "=" + shellQuoteArgument(callIDs[0]) + " " + command
-	}
 	if builtinShell && template == "" {
 		// Parse only directives, not an authored interpreter selector. Exec
 		// parameters affect the outer carrier, not eligibility for a direct call.
@@ -315,10 +312,18 @@ func (registry *toolRegistry) execCarrierCommand(
 			parsed.Body == arguments[len(arguments)-1] {
 			if direct, ok := registry.directBashExecCommand(arguments); ok {
 				command = direct
-				if len(callIDs) != 0 && capturer.ValidAXIdentity(callIDs[0]) {
-					command = capturer.AXCallIDEnvironment + "=" + shellQuoteArgument(callIDs[0]) + " " + command
-				}
 			}
+		}
+	}
+	callID := ""
+	if builtinShell && len(callIDs) != 0 && capturer.ValidAXIdentity(callIDs[0]) {
+		callID = callIDs[0]
+		command = capturer.AXCallIDEnvironment + "=" + shellQuoteArgument(callID) + " " + command
+		if template != "" {
+			// A template may put the worker after "command", "env", or a
+			// pipeline. Keep the assignment on the worker, but make the
+			// substituted fragment an executable rather than an assignment.
+			command = "env " + command
 		}
 	}
 	if template != "" {
@@ -326,6 +331,9 @@ func (registry *toolRegistry) execCarrierCommand(
 			return "", errors.New("exec command template must contain exactly one {.} placeholder")
 		}
 		command = strings.Replace(template, "{.}", command, 1)
+	}
+	if callID != "" {
+		command = axCarrierCallIDPrefix + callID + "\n" + command
 	}
 	return command, nil
 }

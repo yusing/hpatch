@@ -681,6 +681,31 @@ describe("hsymbol built-in plugin", () => {
     expect(changed.stderr).toContain("input changed during query");
   });
 
+  test("classifies selected source failures without starting a resolver", async () => {
+    const directory = await temporaryDirectory("hsymbol-source-failures-");
+    const outside = await temporaryDirectory("hsymbol-outside-");
+    process.chdir(directory);
+    await mkdir("directory.go");
+    await writeFile("invalid.go", Uint8Array.from([0xff]));
+    await writeFile("unsupported.bin", "content");
+    await writeFile(path.join(outside, "source.go"), "package p\n");
+    await symlink(path.join(outside, "source.go"), "outside.go");
+    const fake = await installFakeGopls();
+    const tool = createHSymbolTool("test", "");
+    for (const [source, diagnostic] of [
+      ["missing.go", "path does not exist"],
+      ["directory.go", "path is not a regular file"],
+      ["invalid.go", "path is not UTF-8"],
+      ["unsupported.bin", "path has an unsupported hsymbol source format"],
+      [path.join(outside, "source.go"), "path is outside the workspace"],
+      ["outside.go", "path resolves outside the workspace"],
+    ]) {
+      const result = await tool.execute(["refs", source, "1", "target"], executionContext);
+      expect(result).toEqual({stderr: `hsymbol: ${diagnostic}\n`, exitCode: 1, failureClass: "invalid_source"});
+    }
+    expect(await readFile(fake.callsPath, "utf8")).toBe("");
+  });
+
   test("plain-line selection retains exact tokens and ambiguity checks before resolver startup", async () => {
     const directory = await temporaryDirectory("hsymbol-plain-validation-");
     process.chdir(directory);
@@ -1556,6 +1581,20 @@ describe("inspect_file command contract", () => {
 });
 
 describe("inspect_file bounds and paths", () => {
+
+  test.each(["none.bin", "outline.go"])("classifies minimum-result overflow for %s", async (name) => {
+    const directory = await temporaryDirectory("inspect-file-output-limit-");
+    const target = path.join(directory, name);
+    await writeFile(target, "package p\nfunc Visible() {}\n");
+    // Resolution stops at the filesystem root, but the reported relative path
+    // retains its parent components and can exceed the result byte budget.
+    const operand = "../".repeat(22_000) + target.slice(path.parse(target).root.length);
+    expect(path.resolve(operand)).toBe(target);
+    const result = await inspect(operand);
+    expect(result.exitCode).toBe(1);
+    expect(result.result.error.code).toBe("output_limit");
+    expect(result.failureClass).toBe("output_limit");
+  });
 
   test("emits LINE:HASH span identities without source bodies", async () => {
     const directory = await temporaryDirectory("inspect-file-hash-");

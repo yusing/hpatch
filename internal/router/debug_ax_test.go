@@ -161,7 +161,7 @@ func TestDebugAXDiscoveryRejectsUnreadableSubtree(t *testing.T) {
 	if err := os.MkdirAll(unreadable, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "sessions", "rollout-thread.jsonl"), nil, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "sessions", "rollout-thread.jsonl"), []byte(`{"type":"session_meta","payload":{"id":"thread"}}`+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(unreadable, 0); err != nil {

@@ -1,16 +1,19 @@
 package router
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/yusing/mekugi/capturer"
@@ -148,11 +151,17 @@ func discoverDebugRollouts(ctx context.Context, threads []string) (map[string][]
 			if visited > 100000 {
 				return errors.New("rollout discovery exceeds entry bound")
 			}
-			if entry.Type().IsRegular() {
-				for _, id := range threads {
-					if strings.HasSuffix(entry.Name(), "-"+id+".jsonl") {
-						found[id] = append(found[id], path)
-					}
+			if entry.Type().IsRegular() && slices.ContainsFunc(threads, func(id string) bool {
+				return strings.HasSuffix(entry.Name(), "-"+id+".jsonl")
+			}) {
+				// Filenames only select candidates: "other-thread" also ends
+				// in "thread". Attribute by the rollout's exact metadata ID.
+				id, err := debugRolloutIdentity(path)
+				if err != nil {
+					return err
+				}
+				if slices.Contains(threads, id) {
+					found[id] = append(found[id], path)
 				}
 			}
 			return nil
@@ -162,4 +171,34 @@ func discoverDebugRollouts(ctx context.Context, threads []string) (map[string][]
 		}
 	}
 	return found, nil
+}
+
+// Read only the bounded metadata header during discovery. Full rollout validation
+// remains with the inspector; unreadable candidates cannot certify uniqueness.
+func debugRolloutIdentity(path string) (string, error) {
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() || info.Size() > maxSessionInspectionBytes {
+		return "", errors.New("rollout must be a bounded regular file")
+	}
+	scanner := bufio.NewScanner(io.LimitReader(file, maxReplayRecordBytes+1))
+	scanner.Buffer(make([]byte, 4096), maxReplayRecordBytes)
+	var metadata struct {
+		Type    string `json:"type"`
+		Payload struct {
+			ID string `json:"id"`
+		} `json:"payload"`
+	}
+	if !scanner.Scan() || json.Unmarshal(scanner.Bytes(), &metadata) != nil ||
+		metadata.Type != "session_meta" || metadata.Payload.ID == "" {
+		return "", errors.New("rollout metadata is unavailable or invalid")
+	}
+	return metadata.Payload.ID, nil
 }

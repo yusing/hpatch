@@ -198,7 +198,7 @@ func TestDebugRequestUsesCaptureCorrelation(t *testing.T) {
 
 func TestAXCommandInspectionJoinsLiteralCarrierOnly(t *testing.T) {
 	for _, tc := range []struct{ command, want string }{
-		{`MEKUGI_AX_CALL_ID='call-batch' shell bash 'hcat secret'`, "call-batch"},
+		{axCarrierCallIDPrefix + "call-batch\n" + `MEKUGI_AX_CALL_ID='call-batch' shell bash 'hcat secret'`, "call-batch"},
 		{`MEKUGI_AX_CALL_ID=$(echo secret) shell bash 'hcat secret'`, ""},
 		{`echo MEKUGI_AX_CALL_ID=secret`, ""},
 		{`MEKUGI_AX_CALL_ID='/private/path' shell bash ':'`, ""},
@@ -215,7 +215,7 @@ func TestAXCommandInspectionJoinsLiteralCarrierOnly(t *testing.T) {
 		kind, id string
 		ms       int
 	}{{"item_started", "one", 0}, {"item_completed", "one", 100}, {"item_started", "two", 400}, {"item_completed", "two", 500}} {
-		_ = encoder.Encode(map[string]any{"timestamp": time.Date(2026, 1, 1, 0, 0, 0, tc.ms*1000000, time.UTC).Format(time.RFC3339Nano), "type": "event_msg", "payload": map[string]any{"type": tc.kind, "item": map[string]any{"type": "CommandExecution", "id": tc.id, "command": []string{"/bin/bash", "-lc", "MEKUGI_AX_CALL_ID='call-batch' shell bash 'hcat private'"}, "exit_code": 0}}})
+		_ = encoder.Encode(map[string]any{"timestamp": time.Date(2026, 1, 1, 0, 0, 0, tc.ms*1000000, time.UTC).Format(time.RFC3339Nano), "type": "event_msg", "payload": map[string]any{"type": tc.kind, "item": map[string]any{"type": "CommandExecution", "id": tc.id, "command": []string{"/bin/bash", "-lc", axCarrierCallIDPrefix + "call-batch\nMEKUGI_AX_CALL_ID='call-batch' shell bash 'hcat private'"}, "exit_code": 0}}})
 	}
 	if err := os.WriteFile(path, records.Bytes(), 0600); err != nil {
 		t.Fatal(err)

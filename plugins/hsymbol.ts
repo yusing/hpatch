@@ -528,7 +528,7 @@ async function executeQuery(query: Query, onResolverStart: () => void): Promise<
   try {
     inputFile = await loadSource(workspace, query.path, cache);
   } catch (error) {
-    throw new HSymbolFailure(sourceFailure(error).message);
+    throw sourceFailure(error);
   }
   const selectedOffset = selectSymbol(inputFile, query);
   const backend = await queryBackend(workspace, inputFile, query, selectedOffset, onResolverStart);

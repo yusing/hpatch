@@ -8,9 +8,12 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
-// Read only a literal leading assignment in an observed native command. This
-// recovers our carrier's correlation ID without retaining the command, evaluating
-// shell code, or inventing a parent for unrecognized/external commands.
+const axCarrierCallIDPrefix = "# mekugi:ax:call_id="
+
+// Read explicit router-owned carrier metadata, not arbitrary environment
+// assignments. Direct external commands and wrapped workers share this marker;
+// their executable names cannot establish a logical parent. This is local
+// correlation evidence, not an authentication claim about the supplied rollout.
 func inspectionAXCallID(encoded json.RawMessage) string {
 	var command string
 	if json.Unmarshal(encoded, &command) != nil {
@@ -22,30 +25,14 @@ func inspectionAXCallID(encoded json.RawMessage) string {
 		}
 		command = argv[2]
 	}
-	if !strings.HasPrefix(command, capturer.AXCallIDEnvironment+"=") {
+	metadata, body, newline := strings.Cut(command, "\n")
+	identity, marked := strings.CutPrefix(metadata, axCarrierCallIDPrefix)
+	if !newline || !marked || !capturer.ValidAXIdentity(identity) {
 		return ""
 	}
-	program, err := syntax.NewParser().Parse(strings.NewReader(command), "")
+	program, err := syntax.NewParser().Parse(strings.NewReader(body), "")
 	if err != nil || len(program.Stmts) == 0 {
 		return ""
-	}
-	call, ok := program.Stmts[0].Cmd.(*syntax.CallExpr)
-	if !ok || len(call.Args) == 0 {
-		return ""
-	}
-	identity := ""
-	for _, assignment := range call.Assigns {
-		if assignment.Name == nil || assignment.Name.Value != capturer.AXCallIDEnvironment {
-			continue
-		}
-		if identity != "" || assignment.Append || assignment.Index != nil || assignment.Value == nil {
-			return ""
-		}
-		value, literal := shellCatLiteral(assignment.Value)
-		if !literal || !capturer.ValidAXIdentity(value) {
-			return ""
-		}
-		identity = value
 	}
 	return identity
 }
