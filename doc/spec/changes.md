@@ -11,7 +11,7 @@ with no visible hpatch ancestry or no tracked chain in the current workspace all
 
 IDs and stream allocation persist across router restarts. The original hpatch, all
 recovery inputs and diagnostics, and any successful evaluated review diff are available
-through the one ID. Publication is append-only; replay does not duplicate attempts.
+through the one ID. Published attempts are never removed or overwritten; replay does not duplicate attempts.
 A fork continuing an inherited recovery retains its original ID. Separate new calls
 in the fork use its own thread stream. Concurrent branches under one ID retain every
 outcome rather than overwriting an earlier successful diff.
@@ -63,6 +63,18 @@ confirms application only after the entire incoming history validates; direct pr
 application can confirm immediately. Persisted receipts support cross-agent review but
 never supply recovery or alias ancestry. Unknown or failed executor outcomes remain
 unconfirmed. Final cancellation and crash limitations remain those of `REQ-OUTPUT-001`.
+
+If replay survived an interrupted attempt publication, confirmation repairs its missing
+index membership from the matching durable record before recording the receipt. The
+repaired call is inserted by recovery-attempt order without reordering existing calls.
+Missing or mismatched durable evidence fails reconciliation without publishing a partial
+repair. Idempotent publication and confirmation retries synchronize the store directory
+before reporting success.
+
+Each read snapshots index membership and receipts under a shared, read-only lock. It
+releases that lock before reading immutable replay facts and rendering the projection,
+so large reads do not hold up writers during rendering. Later pages still verify their
+cursor against a newly selected snapshot; no hidden page cache changes the read contract.
 
 Reads default to 4,000 GPT-5 stdout tokens; `--max-tokens` accepts 1 through 15,500.
 The existing bundled tokenizer selects a UTF-8-safe prefix. An incomplete result returns

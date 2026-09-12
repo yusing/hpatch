@@ -109,70 +109,75 @@ func trackedStatus(history mekugiHistory, confirmed bool) string {
 }
 
 func (s *mekugiReplayStore) readChanges(ctx context.Context, options changeReadOptions) (string, error) {
-	var output strings.Builder
-	err := s.locked(ctx, func() error {
-		index, err := s.readChangeIndex(options.workspace)
-		if err != nil {
-			return err
-		}
-		for _, id := range options.ids {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			change, exists := index.Changes[id]
-			if !exists {
-				return fmt.Errorf("change %s is missing in workspace %q; check --workspace or explicit store cleanup", id, options.workspace)
-			}
-			fmt.Fprintf(&output, "%s attempts=%d\n", id, len(change.Calls))
-			if len(change.Calls) == 0 {
-				output.WriteString("pending (no completed result)\n")
-			}
-			for position, call := range change.Calls {
-				record, found, err := s.read(options.workspace, call.ID, false)
-				if err != nil {
-					return err
-				}
-				if !found || record.History.ChangeID != id || record.History.CorrelationID != change.Correlation {
-					return fmt.Errorf("change %s has a missing or inconsistent attempt", id)
-				}
-				history := record.History.history()
-				fmt.Fprintf(&output, "attempt %d %s\n", position+1, trackedStatus(history, call.Confirmed))
-				if strings.HasPrefix(strings.TrimLeft(history.recoveryBaseline(), "\r\n"), "in "+shellArtifactPrefix) {
-					output.WriteString("scope: retained shell script, not workspace files\n")
-				}
-				if options.view == "history" {
-					fmt.Fprintf(&output, "%s input:\n%s\n", history.toolName, history.script)
-					if history.evaluated != "" {
-						fmt.Fprintf(&output, "evaluated script:\n%s\n", history.evaluated)
-					}
-					if history.report != "" {
-						output.WriteString(strings.TrimPrefix(history.report, changeNotice(id)))
-						output.WriteByte('\n')
-					}
-					if history.translationError != "" {
-						output.WriteString(strings.TrimPrefix(history.translationError, changeNotice(id)))
-						output.WriteByte('\n')
-					}
-				}
-				for _, file := range history.reviewFiles {
-					if options.path != "" && options.path != file.BeforePath && options.path != file.AfterPath {
-						continue
-					}
-					if options.view == "summary" {
-						fmt.Fprintf(&output, "file %q -> %q\n", file.BeforePath, file.AfterPath)
-					} else {
-						output.WriteString(file.Diff)
-					}
-				}
-				if output.Len() > maxChangeReadBytes {
-					return errors.New("change read exceeds 64 MiB; narrow the range, view, or --path")
-				}
-			}
-		}
-		return nil
+	var index changeIndex
+	err := s.readLocked(ctx, func() error {
+		var err error
+		index, err = s.readChangeIndex(options.workspace)
+		return err
 	})
 	if err != nil {
 		return "", err
+	}
+	// Membership and receipts are fixed in this snapshot. Replay translation
+	// facts are immutable, so record reads and rendering need no store lock.
+	return s.renderChanges(ctx, options, index)
+}
+
+func (s *mekugiReplayStore) renderChanges(ctx context.Context, options changeReadOptions, index changeIndex) (string, error) {
+	var output strings.Builder
+	for _, id := range options.ids {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		change, exists := index.Changes[id]
+		if !exists {
+			return "", fmt.Errorf("change %s is missing in workspace %q; check --workspace or explicit store cleanup", id, options.workspace)
+		}
+		fmt.Fprintf(&output, "%s attempts=%d\n", id, len(change.Calls))
+		if len(change.Calls) == 0 {
+			output.WriteString("pending (no completed result)\n")
+		}
+		for position, call := range change.Calls {
+			record, found, err := s.read(options.workspace, call.ID, false)
+			if err != nil {
+				return "", err
+			}
+			if !found || record.History.ChangeID != id || record.History.CorrelationID != change.Correlation {
+				return "", fmt.Errorf("change %s has a missing or inconsistent attempt", id)
+			}
+			history := record.History.history()
+			fmt.Fprintf(&output, "attempt %d %s\n", position+1, trackedStatus(history, call.Confirmed))
+			if strings.HasPrefix(strings.TrimLeft(history.recoveryBaseline(), "\r\n"), "in "+shellArtifactPrefix) {
+				output.WriteString("scope: retained shell script, not workspace files\n")
+			}
+			if options.view == "history" {
+				fmt.Fprintf(&output, "%s input:\n%s\n", history.toolName, history.script)
+				if history.evaluated != "" {
+					fmt.Fprintf(&output, "evaluated script:\n%s\n", history.evaluated)
+				}
+				if history.report != "" {
+					output.WriteString(strings.TrimPrefix(history.report, changeNotice(id)))
+					output.WriteByte('\n')
+				}
+				if history.translationError != "" {
+					output.WriteString(strings.TrimPrefix(history.translationError, changeNotice(id)))
+					output.WriteByte('\n')
+				}
+			}
+			for _, file := range history.reviewFiles {
+				if options.path != "" && options.path != file.BeforePath && options.path != file.AfterPath {
+					continue
+				}
+				if options.view == "summary" {
+					fmt.Fprintf(&output, "file %q -> %q\n", file.BeforePath, file.AfterPath)
+				} else {
+					output.WriteString(file.Diff)
+				}
+			}
+			if output.Len() > maxChangeReadBytes {
+				return "", errors.New("change read exceeds 64 MiB; narrow the range, view, or --path")
+			}
+		}
 	}
 	return output.String(), nil
 }

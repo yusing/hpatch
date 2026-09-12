@@ -266,7 +266,7 @@ func (s *mekugiReplayStore) publishChanges(workspace string, histories map[strin
 		}
 	}
 	if !changed {
-		return nil
+		return syncReplayDirectory(s.directory)
 	}
 	return s.writeChangeIndex(index)
 }
@@ -277,26 +277,36 @@ func (s *mekugiReplayStore) confirmChanges(ctx context.Context, workspace string
 	if s == nil {
 		return nil
 	}
-	confirmable := false
-	for _, history := range histories {
-		confirmable = confirmable || history.changeID != "" && history.confirmed
+	var confirmed []string
+	for callID, history := range histories {
+		if history.changeID != "" && history.confirmed {
+			confirmed = append(confirmed, callID)
+		}
 	}
-	if !confirmable {
+	if len(confirmed) == 0 {
 		return nil
 	}
+	slices.SortFunc(confirmed, func(a, b string) int {
+		return cmp.Or(cmp.Compare(histories[a].sequence, histories[b].sequence), strings.Compare(a, b))
+	})
 	return s.locked(ctx, func() error {
 		index, err := s.readChangeIndex(workspace)
 		if err != nil {
 			return err
 		}
 		changed := false
-		for callID, history := range histories {
-			if history.changeID == "" || !history.confirmed {
-				continue
-			}
+		for _, callID := range confirmed {
+			history := histories[callID]
 			change, exists := index.Changes[history.changeID]
-			if !exists {
-				return errors.New("confirmed change index is missing")
+			if !exists || change.Correlation != history.correlationID {
+				return errors.New("confirmed change identity is missing or inconsistent")
+			}
+			if !slices.ContainsFunc(change.Calls, func(call trackedCall) bool { return call.ID == callID }) {
+				change, err = s.repairChangeCall(workspace, history.changeID, callID, change)
+				if err != nil {
+					return err
+				}
+				changed = true
 			}
 			for i := range change.Calls {
 				if change.Calls[i].ID == callID && !change.Calls[i].Confirmed {
@@ -304,12 +314,44 @@ func (s *mekugiReplayStore) confirmChanges(ctx context.Context, workspace string
 					changed = true
 				}
 			}
+			index.Changes[history.changeID] = change
 		}
 		if !changed {
-			return nil
+			return syncReplayDirectory(s.directory)
 		}
 		return s.writeChangeIndex(index)
 	})
+}
+
+// A replay record can survive an interrupted index publication. Restore only
+// verified membership, positioning it by durable recovery-attempt order without
+// reordering existing members (including independent recovery branches).
+func (s *mekugiReplayStore) repairChangeCall(workspace, changeID, callID string, change trackedChange) (trackedChange, error) {
+	record, found, err := s.read(workspace, callID, false)
+	if err != nil {
+		return change, err
+	}
+	if !found || record.History.ChangeID != changeID || record.History.CorrelationID != change.Correlation ||
+		record.History.Attempt < 1 || record.History.TranslationError != "" {
+		return change, errors.New("cannot repair confirmed change from its durable replay record")
+	}
+	position := len(change.Calls)
+	for i, call := range change.Calls {
+		existing, found, err := s.read(workspace, call.ID, false)
+		if err != nil {
+			return change, err
+		}
+		if !found || existing.History.ChangeID != changeID || existing.History.CorrelationID != change.Correlation ||
+			existing.History.Attempt < 1 {
+			return change, errors.New("cannot determine repaired change attempt order")
+		}
+		if existing.History.Attempt > record.History.Attempt {
+			position = i
+			break
+		}
+	}
+	change.Calls = slices.Insert(change.Calls, position, trackedCall{ID: callID})
+	return change, nil
 }
 
 func parseChangeID(id string) (stream string, number int, err error) {

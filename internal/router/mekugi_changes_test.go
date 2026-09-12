@@ -394,9 +394,13 @@ func TestTrackedRetainedScriptScope(t *testing.T) {
 }
 
 func TestTrackedNativeFailureIncludesChangeID(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skipf("bash is unavailable: %v", err)
+	}
 	history := mekugiHistory{changeID: "hp_a1", patch: "a proposed patch\n", report: "change hp_a1\nsuccess report\n"}
 	script := "apply_patch() { cat >/dev/null; printf 'executor failed\\n'; return 7; }\n" + mekugiNativeCommand(history)
-	output, err := exec.CommandContext(t.Context(), "bash", "-c", script).CombinedOutput()
+	output, err := exec.CommandContext(t.Context(), bash, "-c", script).CombinedOutput()
 	if err == nil || string(output) != "change hp_a1\nexecutor failed\n" {
 		t.Fatalf("failure output = %q, %v", output, err)
 	}
