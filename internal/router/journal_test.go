@@ -141,11 +141,11 @@ func TestJournalAcknowledgesOnlyRenderedRevision(t *testing.T) {
 	if _, err := store.apply(ctx, nil, "", "root", "", []journalMutation{{Op: "edit", ID: "j1", Text: new("After")}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.acknowledge(ctx, nil, "", "root", map[string]uint64{"j1": before[0].Updated}); err != nil {
+	if err := store.acknowledge(ctx, nil, "", "root", map[string]uint64{"j1": before[0].Updated}, true); err != nil {
 		t.Fatal(err)
 	}
 	after, _ := store.list(ctx, nil, "", "root")
-	if after[0].Reported || !after[0].EverReported {
+	if after[0].Reported || after[0].Flushed || !after[0].EverReported {
 		t.Fatalf("revision acknowledgement: %+v", after[0])
 	}
 	if _, err := store.apply(ctx, nil, "", "root", "", []journalMutation{{Op: "delete", ID: "j1", ReportNow: true}}); err != nil {
@@ -155,7 +155,7 @@ func TestJournalAcknowledgesOnlyRenderedRevision(t *testing.T) {
 	if len(j.Retractions) != 1 || len(j.Items) != 0 {
 		t.Fatalf("retraction: %+v", j)
 	}
-	if err := store.acknowledge(ctx, nil, "", "root", map[string]uint64{"j1": j.Retractions[0].Sequence}); err != nil {
+	if err := store.acknowledge(ctx, nil, "", "root", map[string]uint64{"j1": j.Retractions[0].Sequence}, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(store.memory[journalKey("", "root")].Retractions) != 0 {
@@ -201,7 +201,7 @@ func TestJournalDeletionWaitsForDelivery(t *testing.T) {
 	if _, err := store.apply(cancelled, nil, "", "root", "", []journalMutation{{Op: "delete", ID: "j1", ReportNow: true}}); err == nil {
 		t.Fatal("delete overtook delivery")
 	}
-	if err := store.acknowledge(ctx, nil, "", "root", map[string]uint64{"j1": 1}); err != nil {
+	if err := store.acknowledge(ctx, nil, "", "root", map[string]uint64{"j1": 1}, false); err != nil {
 		t.Fatal(err)
 	}
 	release()
@@ -236,7 +236,7 @@ func TestJournalDeliverySerializesIndependentStores(t *testing.T) {
 		release()
 		t.Fatalf("independent store did not wait for delivery: %v", err)
 	}
-	if err := first.acknowledge(ctx, replay, "", "root", map[string]uint64{"j1": 1}); err != nil {
+	if err := first.acknowledge(ctx, replay, "", "root", map[string]uint64{"j1": 1}, false); err != nil {
 		release()
 		t.Fatal(err)
 	}

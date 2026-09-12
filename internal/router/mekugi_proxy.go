@@ -265,7 +265,7 @@ type mekugiResponseTransform struct {
 	journalQuietFile          os.FileInfo
 	journalLiveBytes          int
 	journalNewCount           int
-	journalShownCount         int
+	journalFlushedCount       int
 	journalDeliveryRelease    func()
 	journalActive             bool
 	journalPending            map[string]bool
@@ -1981,6 +1981,24 @@ func (t *mekugiResponseTransform) transformResponse(payload []byte, terminalStat
 	// JSON responses have no event envelope and retain body-status semantics.
 	status := cmp.Or(terminalStatus, jsonString(object, "status"))
 	interrupted := status == "failed" || status == "incomplete"
+	var journalPrefix journalContinuation
+	if t.journalActive {
+		journalPrefix, _ = t.ctx.Value(journalContinuationKey{}).(journalContinuation)
+	}
+	if t.journalActive && terminalStatus != "" && (!interrupted || len(t.journalResults) != 0 || len(journalPrefix.clientResults) != 0) {
+		var output []map[string]json.RawMessage
+		if err := decodeJournalOutput(object["output"], &output); err != nil {
+			return nil, nil, errors.New("decode mekugi-enabled response output")
+		}
+		if len(output) == 0 {
+			// A provider may leave the terminal snapshot empty after streaming
+			// completed items. Rebuild it before adding journal results/notices:
+			// a journal-only snapshot would replace WebSocket history and orphan
+			// the next client tool result. Nonempty provider snapshots still own
+			// their exact output, and the ordinary projection below restores carriers.
+			object["output"] = mustMarshalJSON(t.journalProviderOutput)
+		}
+	}
 	if rawOutput, ok := object["output"]; ok {
 		var output []map[string]json.RawMessage
 		if err := json.Unmarshal(rawOutput, &output); err != nil {
@@ -2009,7 +2027,9 @@ func (t *mekugiResponseTransform) transformResponse(payload []byte, terminalStat
 		t.subagentDeferred = nil
 		for _, fields := range output {
 			if t.journalActive && isJournalCall(fields) {
-				if !interrupted || jsonString(fields, "status") == "completed" {
+				// A completed stream event can omit status. Its already-executed
+				// result must survive a later interruption without running a new call.
+				if !interrupted || jsonString(fields, "status") == "completed" || t.journalCalls[jsonString(fields, "call_id")] != nil {
 					result, err := t.executeJournalCall(fields)
 					if err != nil {
 						return nil, nil, err
@@ -2050,12 +2070,12 @@ func (t *mekugiResponseTransform) transformResponse(payload []byte, terminalStat
 	}
 	if t.journalActive {
 		t.journalContinue = status == "completed" && len(t.journalResults) != 0 && !t.journalClientCalls
-		if prefix, ok := t.ctx.Value(journalContinuationKey{}).(journalContinuation); ok && len(prefix.clientResults) != 0 {
+		if len(journalPrefix.clientResults) != 0 {
 			var output []map[string]json.RawMessage
 			if err := json.Unmarshal(object["output"], &output); err != nil {
 				return nil, nil, err
 			}
-			object["output"] = mustMarshalJSON(append(slices.Clone(prefix.clientResults), output...))
+			object["output"] = mustMarshalJSON(append(slices.Clone(journalPrefix.clientResults), output...))
 		}
 	}
 	t.restoreResponseContract(object)

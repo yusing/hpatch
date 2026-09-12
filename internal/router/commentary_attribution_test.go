@@ -36,7 +36,12 @@ func TestChildCommentaryAttributionJSONAndSSE(t *testing.T) {
 			root := prepare("root", "root", "/root/alpha", "")
 			legacy := prepare("legacy", "legacy", "", "thread_spawn")
 			for i, transform := range []*mekugiResponseTransform{first, second, root, legacy} {
-				want := []string{"[`/root/alpha`] Checking.", "[`/root/beta`] Checking.", "Checking.", "Checking."}[i]
+				want := []string{
+					"Journal update `/root/alpha` (`j1`)\nChecking.",
+					"Journal update `/root/beta` (`j1`)\n[`/root/beta`] Checking.",
+					"Journal update `/root` (`j1`)\nChecking.",
+					"Journal update (`j1`)\nChecking.",
+				}[i]
 				arguments := `{"journal":[{"op":"add","text":"Checking.","report_now":true}]}`
 				if i == 1 {
 					arguments = string(mustTestJSON(t, map[string]any{"journal": []any{map[string]any{"op": "add", "text": "[`/root/beta`] Checking.", "report_now": true}}}))
@@ -63,7 +68,7 @@ func TestChildCommentaryAttributionJSONAndSSE(t *testing.T) {
 					transform.Delivered(output)
 				}
 				transform.ReleaseDelivery()
-				if !bytes.Contains(output, []byte(want)) || bytes.Contains(output, []byte("] [")) {
+				if !bytes.Contains(output, mustTestJSON(t, want)) || bytes.Contains(output, []byte("] [")) {
 					t.Fatalf("attribution: %s", output)
 				}
 				if i >= 2 && bytes.Contains(output, []byte("[`/root/")) {

@@ -4,7 +4,7 @@
 
 Mekugi mode owns one durable milestone journal per stable thread. Passthrough is unchanged.
 Items have router-assigned IDs (`j1`, `j2`, ...), nonblank UTF-8 text, canonical author,
-router sequence creation/update values, `report_now`, and `reported` state. A thread has at most
+router sequence creation/update values, `report_now`, `reported`, and `flushed` state. A thread has at most
 256 items and 256 threads are retained. Item text and the per-response live progress budget
 are 16 KiB. Terminal flushes have a separate bound sized for all 256 items, including labels
 and the author heading; child root copies have an independent terminal budget of the same size
@@ -18,8 +18,12 @@ Eligible non-strict ordinary function tools receive an optional `journal` array.
 `add`, `edit`, or `delete`; additions and edits require nonblank text, edits and deletes require
 an existing ID, and a malformed array rejects the host call before execution. The array is applied
 in order atomically, then removed from executed arguments while the original call remains available
-through replay. `report_now` emits a router-owned user-only message and successful delivery marks
-that revision reported. Deletes are silent unless retracting an already-reported ID.
+through replay. `report_now` emits a router-owned user-only **Journal update** labelled with
+the item ID and author when known. Successful delivery marks that revision reported, not flushed.
+It MUST remain eligible for a terminal **Journal flush**, whose heading identifies its known author
+and whose entries identify their IDs. These labels distinguish journals from stock commentary
+and reasoning summaries without rewriting stock output. Deletes are silent unless retracting
+an already-reported ID.
 
 Mekugi mode also exposes `functions.journal` with one operation: `list`, `add`, `edit`, or
 `delete`. List is read-only and may address only a proven ancestor or descendant journal. Unknown
@@ -27,11 +31,17 @@ or conflicted ancestry fails closed. Mutations return router-assigned IDs. The d
 router state operations and do not invoke an executor.
 
 At a successful terminal response with no client-dispatched calls, the router emits a deterministic
-flush containing only unreported items, skips it when empty, then emits token metrics. Provider
+flush containing only unflushed revisions, including previously live-reported entries, skips it
+when empty, then emits token metrics. Only successful terminal delivery marks a revision flushed;
+edits clear both current-revision delivery flags. `list` exposes both flags. Provider
 final-answer text is omitted. A child additionally emits
-`Journal flushed: N new, M already shown` so collaboration result selection is nonempty. Failed,
+`Journal flushed: N new, M already flushed` so collaboration result selection is nonempty. Failed,
 incomplete, and interrupted responses neither flush nor discard already-streamed provider output.
 Router-owned messages use generated IDs and are removed from later provider input by exact ID.
+Before adding journal results or notices to a streaming terminal with an absent or empty
+output snapshot, the router MUST preserve completed streamed items in the projected snapshot.
+Internal journal continuations MUST preserve client-dispatched calls and their paired
+results in subsequent WebSocket history, under both native and CTP/2 protocols.
 
 Mekugi mode forces `tools.update_plan.enabled=false` and removes `update_plan` declarations from
 the request catalog, including nested additional-tool namespaces. Stock Planning/Tasks conflicts
@@ -76,9 +86,10 @@ and drains already-buffered provider output rather than leaking a successful pro
    revisions survive router restart in the selected workspace.
 4. Cross-thread listing allows only proven ancestors and descendants, never siblings.
    It is read-only and does not copy entries or subscribe to their delivery.
-5. Immediate notices are acknowledged after successful emission. Silent edits become
+5. Immediate notices are acknowledged after successful emission without consuming the terminal
+   flush. A failed live or terminal delivery remains eligible for retry. Silent edits become
    flush-eligible again; deleting a previously shown ID with report_now emits a retraction.
-6. Successful eligible terminals show only unreported journal revisions, then eligible
+6. Successful eligible terminals show only unflushed journal revisions, including live updates, then eligible
    token metrics, followed by the child summary when applicable. They suppress provider
    final text; failures and interruptions do not terminal-flush.
 7. The native Codex spawn fixture proves that journal results survive client normalization

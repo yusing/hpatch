@@ -214,7 +214,8 @@ canonical path and retain that child's totals, without adding them to root usage
 the same bounded, deferred delivery and exact replay filtering as other child activity.
 
 For root and child streams, final-answer events are buffered until the terminal eligibility
-decision. A successful journal terminal emits unreported journal items, then usage, then the
+decision. A successful journal terminal emits unflushed journal revisions (including live-reported
+updates), then usage, then the
 child summary when applicable, and the terminal event. Provider final text is omitted.
 Unsupported answer content retains the existing passthrough behavior. Failed or incomplete
 responses release buffered output without terminal journal flush or usage notices.

@@ -47,6 +47,7 @@ type journalItem struct {
 	Updated   uint64 `json:"updated"`
 	ReportNow bool   `json:"report_now"`
 	Reported  bool   `json:"reported"`
+	Flushed   bool   `json:"flushed"`
 	// A later silent edit does not erase the fact that the user saw this ID.
 	EverReported bool `json:"ever_reported,omitzero"`
 }
@@ -359,6 +360,7 @@ func (s *journalStore) apply(ctx context.Context, store *mekugiReplayStore, work
 				j.Items[index].Updated = j.Sequence
 				j.Items[index].ReportNow = mutation.ReportNow
 				j.Items[index].Reported = false
+				j.Items[index].Flushed = false
 				ids = append(ids, mutation.ID)
 			case "delete":
 				if mutation.ReportNow && j.Items[index].EverReported {
@@ -408,7 +410,7 @@ func (s *journalStore) list(ctx context.Context, store *mekugiReplayStore, works
 
 // Delivery acknowledgements refer to the exact revision rendered. An edit
 // arriving while a message is being written must remain eligible for delivery.
-func (s *journalStore) acknowledge(ctx context.Context, store *mekugiReplayStore, workspace, thread string, revisions map[string]uint64) error {
+func (s *journalStore) acknowledge(ctx context.Context, store *mekugiReplayStore, workspace, thread string, revisions map[string]uint64, terminal bool) error {
 	return s.transaction(ctx, store, workspace, thread, func(j *threadJournal, exists bool) error {
 		if !exists {
 			return errors.New("journal is not initialized")
@@ -418,6 +420,9 @@ func (s *journalStore) acknowledge(ctx context.Context, store *mekugiReplayStore
 				j.Items[index].EverReported = true
 				if revision == j.Items[index].Updated {
 					j.Items[index].Reported = true
+					if terminal {
+						j.Items[index].Flushed = true
+					}
 				}
 			}
 		}

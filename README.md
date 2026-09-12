@@ -27,8 +27,10 @@ command sessions, and patch diff UI. No fork, no config edits, no daemon.
 - **Follow work as it runs.**
   - Agents keep an addressable milestone journal instead of a Tasks list. They can add,
     revise, delete, or inspect entries, including a known parent's or child's journal.
-  - `report_now` shows an entry immediately; other entries appear at successful completion.
-    Already-shown entries are not repeated. Journals replace the separate final-answer essay.
+  - `report_now` shows a labelled **Journal update** immediately, distinct from stock
+    commentary and reasoning summaries. At successful completion, **Journal flush** shows
+    every new or revised entry, including live updates. Only revisions already flushed are
+    skipped. Journals replace the separate final-answer essay.
   - Scripts can record milestones without mixing them into command output. Child updates
     carry the agent's path when Codex supplies its identity.
   - When Codex supplies parent-thread metadata, child activity also appears inline
@@ -321,7 +323,8 @@ wait for every job and preserve failures. Short reads generally do not need back
 Bash and POSIX scripts can record milestones with
 `journal add 'Checked the inputs; processing the remaining items.' --report-now`.
 Code Mode supports `await journal({op: "add", text: "Checked the inputs", report_now: true});`.
-Omit `--report-now` or `report_now` to record silently for the terminal flush. Other
+Omit `--report-now` or `report_now` to record silently for the terminal flush. Immediate
+updates also remain eligible for that flush. Other
 interpreters do not support the shell journal command. Use `functions.journal` to list,
 add, edit, or delete entries directly.
 

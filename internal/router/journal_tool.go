@@ -19,12 +19,13 @@ type journalListItem struct {
 	Text     string `json:"text"`
 	Author   string `json:"author"`
 	Reported bool   `json:"reported"`
+	Flushed  bool   `json:"flushed"`
 }
 
 func journalMutationsSchema() json.RawMessage {
 	return mustMarshalJSON(map[string]any{
 		"type": "array", "maxItems": maxJournalItems,
-		"description": "Optional atomic journal mutations applied before this operation. report_now emits progress; unreported revisions flush at terminal completion.",
+		"description": "Optional atomic journal mutations applied before this operation. report_now shows progress immediately.",
 		"items": map[string]any{
 			"type": "object", "additionalProperties": false,
 			"properties": map[string]any{
@@ -46,7 +47,7 @@ func exposeJournalTool(fields map[string]json.RawMessage, catalog *responsesTool
 	catalog.appendTop([]*responsesToolDefinition{newResponsesToolDefinition(map[string]json.RawMessage{
 		"type":        mustMarshalJSON("function"),
 		"name":        mustMarshalJSON(journalToolName),
-		"description": mustMarshalJSON("Read or update the calling thread's durable milestone journal. list may name a proven ancestor or descendant agent. Mutations return router-assigned IDs. report_now shows progress immediately; unreported entries flush at terminal completion."),
+		"description": mustMarshalJSON("Read or update the calling thread's durable milestone journal. list may name a proven ancestor or descendant agent. Mutations return router-assigned IDs. report_now shows progress immediately."),
 		"strict":      mustMarshalJSON(false),
 		"parameters": mustMarshalJSON(map[string]any{
 			"type": "object",
@@ -164,7 +165,7 @@ func (t *mekugiResponseTransform) executeJournalCall(item map[string]json.RawMes
 			}
 			listed := make([]journalListItem, 0, len(items))
 			for _, item := range items {
-				listed = append(listed, journalListItem{ID: item.ID, Text: item.Text, Author: item.Author, Reported: item.Reported})
+				listed = append(listed, journalListItem{ID: item.ID, Text: item.Text, Author: item.Author, Reported: item.Reported, Flushed: item.Flushed})
 			}
 			result = map[string]any{"ok": true, "items": listed}
 		} else if args.Agent != "" {

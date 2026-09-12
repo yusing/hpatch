@@ -16,7 +16,10 @@ original provider call and paired result, and rebases any incremental WebSocket 
 client prefix differs from the restored provider prefix.
 
 `journal_delivery.go` snapshots and leases delivery, emits immediate notices and terminal flushes,
-and acknowledges only the rendered revision after a successful downstream write. A separate
+and acknowledges only the rendered revision after a successful downstream write. Live delivery
+sets `reported`; terminal delivery also sets the independent `flushed` flag. Edits reset both
+for the new revision. Delivery metadata, not message text, identifies terminal acknowledgements
+and child flush copies. A separate
 filesystem delivery lock excludes concurrent mutations and deliveries across router processes;
 replay transactions remain independently lockable while the delivery lease is held. The existing
 commentary broker and child activity collector carry user-only delivery and canonical child

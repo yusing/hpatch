@@ -12,6 +12,15 @@ import (
 type journalDelivery struct {
 	thread    string
 	revisions map[string]uint64
+	terminal  bool
+}
+
+func journalUpdateText(author, id, text string) string {
+	heading := "Journal update"
+	if author != "" {
+		heading += " " + commentaryCode(author)
+	}
+	return heading + " (" + commentaryCode(id) + ")\n" + text
 }
 
 func (t *mekugiResponseTransform) prepareJournalDelivery(terminal bool) ([]map[string]json.RawMessage, error) {
@@ -69,13 +78,13 @@ func (t *mekugiResponseTransform) prepareJournalDelivery(terminal bool) ([]map[s
 		return nil, err
 	}
 	for _, item := range journal.Items {
-		if item.ReportNow && !item.Reported && len(attributedCommentary(t.commentaryAuthor, item.Text)) <= maxCommentaryPublicationBytes-t.journalLiveBytes {
+		if item.ReportNow && !item.Reported && len(journalUpdateText(journal.Author, item.ID, item.Text)) <= maxCommentaryPublicationBytes-t.journalLiveBytes {
 			t.journalQuietFile = nil
 			break
 		}
 	}
 	for _, retraction := range journal.Retractions {
-		if len(attributedCommentary(t.commentaryAuthor, "Retracted `"+retraction.ID+"`.")) <= maxCommentaryPublicationBytes-t.journalLiveBytes {
+		if len(journalUpdateText(journal.Author, retraction.ID, "Retracted.")) <= maxCommentaryPublicationBytes-t.journalLiveBytes {
 			t.journalQuietFile = nil
 			break
 		}
@@ -94,7 +103,7 @@ func (t *mekugiResponseTransform) prepareJournalDelivery(terminal bool) ([]map[s
 		if t.journalDeliveries == nil {
 			t.journalDeliveries = make(map[string]journalDelivery)
 		}
-		t.journalDeliveries[id] = journalDelivery{thread: t.shellThreadID, revisions: revisions}
+		t.journalDeliveries[id] = journalDelivery{thread: t.shellThreadID, revisions: revisions, terminal: terminal}
 		traceSource := "report_now"
 		if terminal {
 			traceSource = "terminal_flush"
@@ -104,7 +113,7 @@ func (t *mekugiResponseTransform) prepareJournalDelivery(terminal bool) ([]map[s
 		messages = append(messages, message)
 	}
 	for _, retraction := range journal.Retractions {
-		text := attributedCommentary(t.commentaryAuthor, "Retracted `"+retraction.ID+"`.")
+		text := journalUpdateText(journal.Author, retraction.ID, "Retracted.")
 		if !terminal && len(text) > maxCommentaryPublicationBytes-t.journalLiveBytes {
 			continue
 		}
@@ -115,18 +124,21 @@ func (t *mekugiResponseTransform) prepareJournalDelivery(terminal bool) ([]map[s
 	}
 	if terminal {
 		var text strings.Builder
-		text.WriteString("Journal " + commentaryCode(journal.Author))
+		text.WriteString("Journal flush")
+		if journal.Author != "" {
+			text.WriteString(" " + commentaryCode(journal.Author))
+		}
 		revisions := make(map[string]uint64)
-		shown := 0
+		flushed := 0
 		for _, item := range journal.Items {
-			if item.Reported {
-				shown++
+			if item.Flushed {
+				flushed++
 				continue
 			}
 			text.WriteString("\n- " + commentaryCode(item.ID) + " " + item.Text)
 			revisions[item.ID] = item.Updated
 		}
-		t.journalNewCount, t.journalShownCount = len(revisions), shown
+		t.journalNewCount, t.journalFlushedCount = len(revisions), flushed
 		if len(revisions) != 0 {
 			if text.Len() > maxJournalFlushBytes {
 				t.ReleaseDelivery()
@@ -139,7 +151,7 @@ func (t *mekugiResponseTransform) prepareJournalDelivery(terminal bool) ([]map[s
 			if item.Reported || !item.ReportNow {
 				continue
 			}
-			text := attributedCommentary(t.commentaryAuthor, item.Text)
+			text := journalUpdateText(journal.Author, item.ID, item.Text)
 			if len(text) > maxCommentaryPublicationBytes-t.journalLiveBytes {
 				continue
 			}
@@ -192,12 +204,12 @@ func (t *mekugiResponseTransform) Delivered(payload []byte) {
 		if !ok {
 			continue
 		}
-		if err := t.proxy.journals.acknowledge(t.ctx, t.proxy.replayStore, t.directory, delivery.thread, delivery.revisions); err != nil {
+		if err := t.proxy.journals.acknowledge(t.ctx, t.proxy.replayStore, t.directory, delivery.thread, delivery.revisions, delivery.terminal); err != nil {
 			continue
 		}
 		delete(t.journalDeliveries, id)
 		kind := "journal"
-		if strings.HasPrefix(commentaryMessageText(item), "Journal ") {
+		if delivery.terminal {
 			kind = "journal_flush"
 		}
 		t.proxy.activity.collect(t.threadID, id, kind, commentaryMessageText(item))
@@ -268,7 +280,7 @@ func journalTerminalEligible(output []map[string]json.RawMessage) bool {
 func (t *mekugiResponseTransform) journalTerminalMessages(response []byte) ([]map[string]json.RawMessage, error) {
 	var messages []map[string]json.RawMessage
 	counts, observed := t.threadUsageCounts()
-	substantive := t.finalAnswer.substantive || t.journalNewCount+t.journalShownCount != 0
+	substantive := t.finalAnswer.substantive || t.journalNewCount+t.journalFlushedCount != 0
 	for _, item := range t.journalProviderOutput {
 		substantive = substantive || isSubstantiveAnswer(item)
 	}
@@ -281,7 +293,7 @@ func (t *mekugiResponseTransform) journalTerminalMessages(response []byte) ([]ma
 	}
 	if t.subagentTurn {
 		id := commentaryMessageID("journal-summary\x00" + jsonResponseID(response))
-		message := assistantCommentaryMessage(id, fmt.Sprintf("Journal flushed: %d new, %d already shown", t.journalNewCount, t.journalShownCount))
+		message := assistantCommentaryMessage(id, fmt.Sprintf("Journal flushed: %d new, %d already flushed", t.journalNewCount, t.journalFlushedCount))
 		message["phase"] = mustMarshalJSON("final_answer")
 		retained := t.retainCommentary(message)
 		if len(retained) == 0 {

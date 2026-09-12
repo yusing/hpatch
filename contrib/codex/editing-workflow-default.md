@@ -40,8 +40,8 @@ Do not overlap dependent commands, edits, or jobs that share mutable state. This
 concurrency, not permission to call tools in parallel contrary to their contracts.
 
 For meaningful progress, add one mutation to the `journal` field of a supported tool call,
-or use `functions.journal`. Set `report_now` only when the milestone should be shown immediately;
-otherwise it is flushed before token metrics at a successful terminal. Do not record every
+or use `functions.journal`. Set `report_now` only when the milestone should be shown immediately.
+Do not record every
 command, search, or restatement, and do not write a final-channel answer after the last journalled
 tool call.
 

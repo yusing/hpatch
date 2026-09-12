@@ -51,17 +51,17 @@ func (p *journalCodexProvider) forwardExecution(_, _ context.Context, body []byt
 	}
 	if child {
 		if turn == 1 {
-			item = call("journal", map[string]any{"op": "add", "text": "Native child milestone"})
+			item = call("journal", map[string]any{"op": "add", "text": "Native child milestone", "report_now": true})
 		} else {
 			item = answer()
 		}
 	} else {
 		switch {
 		case turn == 1:
-			item = call("journal", map[string]any{"op": "add", "text": "Native root milestone"})
+			item = call("journal", map[string]any{"op": "add", "text": "Native root milestone", "report_now": true})
 		case turn == 2:
 			item = call("spawn_agent", map[string]any{"message": "Record your milestone and finish.", "task_name": "journal_child", "fork_turns": "none"})
-		case strings.Contains(input, "Journal flushed: 1 new, 0 already shown"):
+		case strings.Contains(input, "Journal flushed: 1 new, 0 already flushed"):
 			p.childResultSeen = true
 			p.journalResultSeen = strings.Contains(input, "function_call_output") && strings.Contains(input, `\"id\":\"j1\"`)
 			item = answer()
@@ -123,6 +123,9 @@ func TestJournalNativeCodexSpawnE2E(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "PROVIDER_FINAL_MUST_NOT_APPEAR") {
 		t.Fatal("provider final text escaped journal terminal suppression")
+	}
+	if !strings.Contains(stdout.String(), "Journal update") || !strings.Contains(stdout.String(), "Journal flush ") {
+		t.Fatal("native consumer did not display distinct live updates and terminal flushes")
 	}
 	if len(issues.entries) != 0 {
 		t.Fatalf("fixture produced %d critical notices", len(issues.entries))

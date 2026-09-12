@@ -129,7 +129,7 @@ func TestFinalAnswerStreamCodexCompletion(t *testing.T) {
 				wantLast := formatTokenUsageReport(counts)
 				if child {
 					wantMessages++
-					wantLast = "Journal flushed: 0 new, 0 already shown"
+					wantLast = "Journal flushed: 0 new, 0 already flushed"
 				}
 				if !completed || len(rendered) != wantMessages || lastAgentMessage != wantLast {
 					t.Fatalf("Codex result = %q, rendered=%q, completed=%v", lastAgentMessage, rendered, completed)
@@ -359,7 +359,7 @@ func TestFinalAnswerStreamExecuteRequest(t *testing.T) {
 			if bytes.Contains(output.Bytes(), []byte("No files were changed.")) {
 				t.Fatal("provider final escaped journal suppression")
 			}
-			if child && !bytes.Contains(events[len(events)-2], []byte(`"text":"Journal flushed: 0 new, 0 already shown"`)) {
+			if child && !bytes.Contains(events[len(events)-2], []byte(`"text":"Journal flushed: 0 new, 0 already flushed"`)) {
 				t.Fatal("child terminal summary missing")
 			}
 			counts, available := proxy.usage.snapshot("thread-1")

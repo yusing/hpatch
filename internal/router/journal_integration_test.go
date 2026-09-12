@@ -72,6 +72,103 @@ func TestJournalRouterToolContinuesWithoutClientDispatch(t *testing.T) {
 	}
 }
 
+func TestJournalInterruptedSnapshotRetainsExecutedResult(t *testing.T) {
+	for _, status := range []string{"failed", "incomplete"} {
+		t.Run(status, func(t *testing.T) {
+			transform, _, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
+			call := map[string]any{"type": "function_call", "id": "journal-item", "call_id": "journal-call", "name": "journal", "arguments": `{"op":"list"}`}
+			ordinary := map[string]any{"type": "function_call", "id": "ordinary", "call_id": "ordinary-call", "name": "lookup", "arguments": `{}`, "status": "completed"}
+			for _, item := range []any{call, ordinary} {
+				if _, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": item})); err != nil {
+					t.Fatal(err)
+				}
+			}
+			events, err := transform.TransformSSE(mustTestJSON(t, map[string]any{
+				"type":     "response." + status,
+				"response": map[string]any{"id": "interrupted", "status": status, "output": []any{}},
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var terminal struct {
+				Response struct {
+					Output []map[string]json.RawMessage `json:"output"`
+				} `json:"response"`
+			}
+			if len(events) == 0 {
+				t.Fatal("missing interrupted terminal")
+			}
+			if err := json.Unmarshal(events[len(events)-1], &terminal); err != nil {
+				t.Fatal(err)
+			}
+			output := terminal.Response.Output
+			if len(output) != 2 || journalResultCallID(output[0]) != "journal-call" || jsonString(output[1], "call_id") != "ordinary-call" {
+				t.Fatalf("interrupted snapshot lost completed output: %s", mustTestJSON(t, output))
+			}
+		})
+	}
+}
+
+func TestJournalLiveReportRemainsEligibleForTerminalFlush(t *testing.T) {
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+	var err error
+	proxy.replayStore, err = openMekugiReplayStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	transform, _, _, workspace := newMekugiTestTransformWithProxy(t, proxy)
+	if _, err := proxy.journals.apply(t.Context(), proxy.replayStore, workspace, "thread-1", "add", []journalMutation{{Op: "add", Text: new("Tests passed"), ReportNow: true}}); err != nil {
+		t.Fatal(err)
+	}
+	checkState := func(reported, flushed bool) {
+		t.Helper()
+		// Read through a fresh store, rather than relying on the delivery cache.
+		items, err := newJournalStore().list(t.Context(), proxy.replayStore, workspace, "thread-1")
+		if err != nil || len(items) != 1 || items[0].Reported != reported || items[0].Flushed != flushed {
+			t.Fatalf("journal state: %+v, err=%v; want reported=%v flushed=%v", items, err, reported, flushed)
+		}
+	}
+	deliver := func(terminal, acknowledge bool, want string) {
+		t.Helper()
+		messages, err := transform.prepareJournalDelivery(terminal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer transform.ReleaseDelivery()
+		if want == "" {
+			if len(messages) != 0 {
+				t.Fatalf("unexpected repeated delivery: %s", mustTestJSON(t, messages))
+			}
+			return
+		}
+		if len(messages) != 1 || commentaryMessageText(messages[0]) != want {
+			t.Fatalf("journal display: %s; want %q", mustTestJSON(t, messages), want)
+		}
+		if acknowledge {
+			transform.Delivered(assistantCommentaryDoneEvent(messages[0]))
+		}
+	}
+	live := "Journal update `/root` (`j1`)\nTests passed"
+	flush := "Journal flush `/root`\n- `j1` Tests passed"
+	deliver(false, false, live)
+	checkState(false, false)
+	deliver(false, true, live)
+	checkState(true, false)
+	deliver(false, true, "")
+	deliver(true, false, flush)
+	checkState(true, false)
+	deliver(true, true, flush)
+	checkState(true, true)
+	deliver(true, true, "")
+	if _, err := proxy.journals.apply(t.Context(), proxy.replayStore, workspace, "thread-1", "edit", []journalMutation{{Op: "edit", ID: "j1", Text: new("Tests passed again")}}); err != nil {
+		t.Fatal(err)
+	}
+	checkState(false, false)
+	deliver(false, true, "")
+	deliver(true, true, "Journal flush `/root`\n- `j1` Tests passed again")
+	checkState(true, true)
+}
+
 func TestJournalKnownAncestryOnly(t *testing.T) {
 	activity := newSubagentActivity()
 	for _, node := range []struct {

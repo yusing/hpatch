@@ -48,7 +48,7 @@ text. Newly emitted tool names, tool inputs, and function arguments are literal 
 
 Record meaningful milestones on a supported tool call with its `journal` array, or call
 `functions.journal`. Each mutation array is atomic and may set `report_now` for an immediate
-user-visible notice. Unreported items flush before token metrics at a successful terminal.
+user-visible notice.
 Use one item per milestone, edit superseded wording, and do not record every command or search.
 Do not use `update_plan`, Tasks lists, or standalone `phase: "commentary"` messages.
 Do not write a final-channel answer. Record the last milestone, then stop.

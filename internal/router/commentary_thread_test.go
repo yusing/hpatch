@@ -226,7 +226,7 @@ func TestChildThreadCommentaryPreservesSubstantiveStreamResult(t *testing.T) {
 	if err != nil || len(events) != 2 {
 		t.Fatalf("terminal emitted standalone commentary: %s, %v", events, err)
 	}
-	if !bytes.Contains(events[0], []byte(`"text":"Journal flushed: 0 new, 0 already shown"`)) {
+	if !bytes.Contains(events[0], []byte(`"text":"Journal flushed: 0 new, 0 already flushed"`)) {
 		t.Fatalf("child journal summary missing: %s", events[0])
 	}
 
