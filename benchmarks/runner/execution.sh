@@ -111,6 +111,7 @@ run_agent() {
 		export BENCH_AGENT_SERVICE=$agent_service
 		export BENCH_ARTIFACT_DIR=$artifact_dir
 		export MEKUGI_BENCH_MODE=$router_mode MEKUGI_BENCH_PROTOCOL=$model_protocol
+		export MEKUGI_BENCH_MAIN_MENTOR=$main_mentor
 		export MEKUGI_BENCH_MENTOR=${arm_mentor[$arm]}
 		if [[ -n $codex_home ]]; then
 			export BENCH_CODEX_HOME=$codex_home

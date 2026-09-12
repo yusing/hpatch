@@ -22,6 +22,11 @@ delivery accounting, capture health, durable capture records, and the structured
 The router's terminal-payload seam parses provider usage once and passes the resulting counts to
 the capturer, Mentor Handoff, and user-only usage commentary.
 
+The router also supplies its validated request kind as request-scoped observation data.
+Capture retains only the allowlisted `turn`, `prewarm`, or `compaction` value, shared
+across both boundaries and the exchange snapshot; it does not reparse raw metadata.
+This identifies non-turn traffic for schedule validation without changing usage accounting.
+
 The capturer is in-process. `mekugi` wraps its `POST /v1/responses` handler and
 provider `http.RoundTripper` for HTTP Responses and Chat Completions. For
 `GET /v1/responses`, that wrapper supplies a context-private factory for

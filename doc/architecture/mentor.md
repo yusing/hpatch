@@ -1,10 +1,12 @@
-# Router-owned subagent model schedule
+# Router-owned main and subagent model schedule
 
-## CTR-MENTOR-001 — Router-owned subagent model schedule
+## CTR-MENTOR-001 — Router-owned main and subagent model schedule
 
-The Mentor Handoff owner in `internal/router` is a default-on Mekugi product schedule. It sits before Mekugi request projection and CTP
-serialization. It authenticates the schedule boundary from Codex's exact thread-spawn header and
-turn metadata, keeps process-lifetime child-thread counters, and changes only the provider-bound
+The Mentor Handoff owner in `internal/router` is a Mekugi product schedule with independent toggles:
+subagent handoff defaults on, and main handoff defaults off. It sits before Mekugi request projection and CTP
+serialization. It identifies main turns from valid `request_kind: turn` metadata and the absence of subagent markers,
+and spawned subagents from Codex's exact thread-spawn header and turn metadata. It keeps
+process-lifetime per-thread counters, and changes only the provider-bound
 model and reasoning effort. The ordinary request owner continues to supply input history, tools, and session
 settings; Codex remains the owner of the configured model used after handoff.
 

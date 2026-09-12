@@ -10,6 +10,7 @@ func TestSplitCommand(t *testing.T) {
 		nil,
 		{"--debug"},
 		{"--debug", "--capture-output", "capture.jsonl"},
+		{"--main-mentor-handoff", "--mentor-handoff=false"},
 		{"--grok"},
 		{"--grok=false", "--timeout", "30s"},
 		{"--capture-output", "wrap", "--grok"},

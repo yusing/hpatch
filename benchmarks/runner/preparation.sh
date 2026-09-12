@@ -102,6 +102,7 @@ JSON
 		--argjson enforce_no_edit_loops "$enforce_no_edit_loops" \
 		--argjson require_ctp_input_compression "$require_ctp_input_compression" \
 		--argjson require_ctp_output_compression "$require_ctp_output_compression" \
+		--argjson main_mentor "$main_mentor" \
 		--arg benchmark_mode "$benchmark_mode" \
 		--arg task_contract_sha256 "$task_contract_sha256" \
 		--arg treatment_model_protocol "$MEKUGI_BENCH_MEKUGI_MODEL_PROTOCOL" \
@@ -125,6 +126,12 @@ JSON
 			benchmark_commit: $benchmark_commit,
 			codex_release: $codex_release,
 			build_identity: $build_identity[0],
+			main_mentor: {
+				enabled: $main_mentor,
+				model: "gpt-6-astra",
+				requested_model: $child_model,
+				requested_reasoning_effort: $child_reasoning_effort
+			},
 			mentor_handoff: {
 				enabled: ($benchmark_mode == "mentor-handoff"),
 				trigger: "thread_spawn",

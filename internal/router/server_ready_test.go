@@ -55,7 +55,7 @@ func TestRunSessionUsesBoundPortAndClosesListener(t *testing.T) {
 }
 
 func TestRunSessionDoesNotNotifyOnStartupFailure(t *testing.T) {
-	for _, args := range [][]string{{"--mode", "unknown"}, {"--model-protocol", "ctp1"}, {"--mode", "passthrough", "--model-protocol", "ctp2"}, {"--mode", "passthrough", "--mentor-handoff=true"}, {"--stream-idle-timeout", "0"}, {"--listen", "127.0.0.1:0"}, {"--provider-base-url", "https://example.com"}} {
+	for _, args := range [][]string{{"--mode", "unknown"}, {"--model-protocol", "ctp1"}, {"--mode", "passthrough", "--model-protocol", "ctp2"}, {"--mode", "passthrough", "--main-mentor-handoff=true"}, {"--mode", "passthrough", "--mentor-handoff=true"}, {"--stream-idle-timeout", "0"}, {"--listen", "127.0.0.1:0"}, {"--provider-base-url", "https://example.com"}} {
 		if err := RunSession(t.Context(), args, nil, func(Session) { t.Error("ready called despite startup failure") }, nil); err == nil {
 			t.Fatalf("accepted %q", args)
 		}

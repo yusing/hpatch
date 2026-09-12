@@ -38,6 +38,8 @@ A durable record MUST contain only:
   by Codex;
 - complete transport byte counts and framing-independent GPT-5 content estimates plus the terminal Responses `output` array measured once;
 - HTTP and Responses status, completeness, duration, a bounded capture-error category, and an optional `transport: "websocket"` marker;
+- optional `request_kind`, restricted to `turn`, `prewarm`, or `compaction`, supplied
+  from validated router metadata and preserved in the corresponding exchange snapshot;
 - provider usage counters;
 - the measured `native_request` after history replay/tool projection and before CTP, on provider records;
 - decoded assistant `final_text` sizes, separate from complete output arrays;

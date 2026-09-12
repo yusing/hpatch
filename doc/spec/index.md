@@ -56,7 +56,7 @@ Each listed file owns one requirement. Related facts are cited by stable ID or l
 - [`REQ-SELECT-001`](select.md): immutable-baseline target resolution
 - [`REQ-EDIT-001`](edit.md): target-bearing mutation behavior
 - [`REQ-OUTPUT-001`](output.md): output, validation, and failure behavior
-- [`REQ-MENTOR-001`](mentor.md): spawned-subagent Mentor Handoff schedule
+- [`REQ-MENTOR-001`](mentor.md): main and subagent Mentor Handoff schedule
 - [`REQ-GUIDE-001`](guide.md): concise agent guidance
 - [`REQ-COMPARE-001`](comparison.md): token comparison scenarios
 - [`REQ-BENCH-001`](benchmark.md): historical-commit correctness and paired model evaluation

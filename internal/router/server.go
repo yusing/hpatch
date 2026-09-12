@@ -79,6 +79,9 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 		if mentorSet && *flags.mentorHandoffEnabled {
 			return errors.New("--mentor-handoff requires --mode mekugi")
 		}
+		if *flags.mainMentorHandoffEnabled {
+			return errors.New("--main-mentor-handoff requires --mode mekugi")
+		}
 		*flags.modelProtocol = "native"
 		*flags.mentorHandoffEnabled = false
 	}
@@ -186,8 +189,8 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 			}
 		}
 	}
-	if *flags.mentorHandoffEnabled {
-		mentor = newMentorHandoff()
+	if *flags.mentorHandoffEnabled || *flags.mainMentorHandoffEnabled {
+		mentor = newMentorHandoff(*flags.mainMentorHandoffEnabled, *flags.mentorHandoffEnabled)
 	}
 	titles := newSessionTitleCache()
 	if *flags.mode == "mekugi" {
@@ -546,6 +549,9 @@ func executeRequest(
 		return fmt.Errorf("prepare request: %w", withRequestStartCause(ctx, err))
 	}
 	metadata, metadataValid := decodeCodexTurnMetadata(headers)
+	if metadataValid {
+		capturer.ObserveRequestKind(ctx, metadata.RequestKind)
+	}
 	threadID := codexThreadID(headers)
 	if mekugiCalls != nil && metadataValid && !metadata.activityIdentityInvalid && (metadata.ThreadID == "" || metadata.ThreadID == threadID) {
 		finalization.observeCriticalNotice = func(source, text string) { mekugiCalls.activity.collect(threadID, source, "error", text) }
