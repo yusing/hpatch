@@ -59,7 +59,7 @@ command sessions, and patch diff UI. No fork, no config edits, no daemon.
   - `functions.hpatch` accepts verified `LINE:HASH` rows, inclusive ranges,
     and exact literal text, including text the agent already knows.
   - Related edits across files share one validation pass before Codex applies
-    the generated patch. Invalid targets or conflicting edits reject the whole script.
+    the generated patch. Invalid targets or conflicting edits reject the edit transaction.
   - Successful reports return current row references for follow-up edits.
     Unchanged saved rows remain reusable after line shifts when their hash
     identifies exactly one row.
@@ -295,6 +295,50 @@ complete read/edit/apply cycle and inspect current content after a handoff.
 
 See the [editing guarantees](doc/spec/output.md) and
 [target selection rules](doc/spec/select.md).
+
+### Edits and shell in one call
+
+With Code Mode, `functions.hpatch` can interleave atomic edit segments and shell
+programs. Completed work stays applied if a later segment fails:
+
+```text
+shell test -f notes.txt
+in notes.txt
+type "draft" "ready"
+shell rg -n ready notes.txt
+```
+
+Use `shell COMMAND` for a single physical line, without quoting or escaping it
+for HPATCH. Quotes, pipes, and redirects remain shell source, but `<<` is not
+allowed anywhere in a single-line command, even inside quotes. For multiline
+programs or any source containing `<<`, use `shell <<SHELL`, the program body,
+and a closing `SHELL` line.
+That exact opener is reserved: an unclosed block rejects rather than falling
+back to single-line execution. Each shell form accepts one program with the
+usual interpreter selector and execution directives. Normal HPATCH syntax and
+target checks still apply outside shell commands.
+Each edit segment starts with its own file selection and reads a fresh baseline
+after preceding commands finish. Codex still authorizes every generated patch
+and shell execution.
+
+The result shows completed, failed, and unstarted segments. Execution stops on
+failure without rolling back earlier effects. Checkpoints preserve progress and
+known native session handles even when a Code Mode cell is terminated.
+
+Mixed execution opens one argument-free `shell` control channel. Actual shell commands
+keep their normal display; private checkpoint and translation data travel through stdin,
+so the host may show control-channel input activity. No private flags or runtime paths
+are added to the displayed command.
+
+Continue with `hpatch` using `resume HANDLE`, without resending the original script.
+First resolve the previous cell and any potentially running work. After inspecting
+a failed or uncertain segment, use `resume HANDLE retry` to retry it, optionally
+followed by one replacement segment, or `resume HANDLE accept` after establishing
+its intended state externally. Completed work is not replayed, and remaining edit
+targets are checked against current files. Handles last one hour in the current
+thread and expire sooner if the router stops. Ordinary edit-only calls keep their
+existing atomicity and recovery behavior.
+See the [mixed-script contract](doc/spec/script.md#shell-in-script).
 
 ### Direct scripts
 

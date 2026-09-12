@@ -1,39 +1,29 @@
 ## File editing
 
-Make local file edits with `functions.hpatch`. Use shell formatting commands for
-formatting and bulk mechanical rewrites; use hpatch rather than shell writes or Python when it
-can express the edit.
+Use `functions.hpatch` for routine edits and formatters for formatting or bulk mechanical rewrites.
+Tool coordination below covers native-interface tasks.
 
 ## Shell execution
 
-Use `functions.shell` for command execution. Before submitting a program, follow the shared
-Shell reference below for interpreter selection, input format, execution options, and continuation.
-
-Group ready reads and searches in one multiline script. For slower independent work, use
-shell `&` and wait for every job, preserving failures; do not overlap edits or shared mutable
-state. Reserve explicit sequential batches for separate interpreters or execution contexts.
-Attach meaningful progress to the work using the shared Commentary syntax.
+Group ready reads and searches in one multiline script. Use shell `&` for slower independent work
+and wait for every job, preserving failures. Keep dependent work and mutations sequential.
+Reserve explicit batches for different interpreters, options, or isolated shell state.
+The shared Shell and Commentary references define execution and progress delivery.
 
 ## Edit planning
 
-Group all ready, related edits into one atomic
-hpatch call against their acquired baselines, including changes across files. Split dependent
-work when validation or missing information must determine the next edit; keep unrelated large
-values in separate calls. Let the formatter own surrounding formatting instead of rewriting
-declarations to reproduce its output. Use `add` for an insertion or a targeted `type` replacement
-when the rest of a declaration is unchanged.
+Group ready, related edits into one atomic hpatch script. Split dependent work at missing
+information or validation; keep unrelated large values separate. Use targeted replacements
+or insertions and let formatters own surrounding formatting.
 
 ## Target reuse
 
-Use exact known current text directly as a literal target; add a verified row anchor when its
-position distinguishes repeated text. For follow-up edits, reuse unchanged saved rows, returned
-final-state rows, confirmed mappings, or exact authored current text as the shared validity rules
-allow. Newly authored text is available as a literal target in the next call. Obtain a focused
-read only when the target is still unknown or ambiguous; copy emitted row identities exactly.
-Use the shared HPATCH/2 reference for value framing, newline ownership, and rejected-script recovery.
+Use known current literals, verified rows, or confirmed mappings; anchor repeated text when
+position matters. Newly authored text is available as a literal on the next call.
+Read again only when those forms no longer identify the intended span.
 
 ## Target acquisition
 
-Use hgrep with `-F` and repeated `-e` literals for
-known targets, inspect_file for structure, hsymbol for exact symbol relationships, and bounded
-hcat for unseen edit context. Copy emitted `LINE:HASH` identities directly; never invent them.
+Use hgrep with `-F` and repeated `-e` literals for known targets, inspect_file for structure,
+hsymbol for symbol relationships, and bounded hcat for missing source. Copy emitted
+`LINE:HASH` identities directly. The shared references define validity, framing, and recovery.

@@ -274,3 +274,50 @@ func TestCodeModeUnparseableInputPassesThrough(t *testing.T) {
 		}
 	}
 }
+
+func TestCodeModeNativeExecStreamingRetainsOriginalInput(t *testing.T) {
+	transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
+	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
+	store, err := openMekugiReplayStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy.replayStore = store
+	source := `text(await tools.exec_command({cmd: "true"}));`
+	item := map[string]any{
+		"type": "custom_tool_call", "id": "item-native", "call_id": "call-native",
+		"name": transform.codeModeToolName, "input": "",
+	}
+	events := []map[string]any{
+		{"type": "response.output_item.added", "item": item},
+		{"type": "response.custom_tool_call_input.done", "item_id": "item-native",
+			"call_id": "call-native", "input": source},
+	}
+	for _, event := range events {
+		if _, err := transform.TransformSSE(mustTestJSON(t, event)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	history, found, err := store.lookup(t.Context(), transform.directory, "call-native")
+	if err != nil || !found {
+		t.Fatalf("lookup: found %v, error %v", found, err)
+	}
+	if jsonString(history.upstreamItem, "input") != source {
+		t.Fatalf("durable upstream input was rewritten: %s", history.upstreamItem["input"])
+	}
+	if history.carrierPayload == source {
+		t.Fatal("native-exec warning was not added to the carrier")
+	}
+	item["input"] = source
+	item["status"] = "completed"
+	for _, event := range []map[string]any{
+		{"type": "response.output_item.done", "item": item},
+		{"type": "response.completed", "response": map[string]any{
+			"status": "completed", "output": []any{item},
+		}},
+	} {
+		if _, err := transform.TransformSSE(mustTestJSON(t, event)); err != nil {
+			t.Fatalf("completion rejected unchanged source: %v", err)
+		}
+	}
+}

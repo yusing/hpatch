@@ -1,0 +1,138 @@
+package router
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"maps"
+	"strings"
+
+	"github.com/yusing/mekugi"
+	"github.com/yusing/mekugi/internal/hpatchsyntax"
+)
+
+// This private worker only translates. Codex still authorizes and applies the
+// returned patch, after every preceding host execution has finished.
+func runHpatchTranslation(ctx context.Context, directory, source string, stdout io.Writer) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(source) > maxMekugiScriptBytes {
+		return fmt.Errorf("HPATCH segment exceeds %d bytes", maxMekugiScriptBytes)
+	}
+	translated, err := mekugi.TranslateForHostAt(ctx, directory, source, "")
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	result := struct {
+		Patch      string `json:"patch"`
+		Report     string `json:"report"`
+		Diagnostic string `json:"diagnostic"`
+	}{}
+	if err != nil {
+		result.Diagnostic = translated.Diagnostic
+		if result.Diagnostic == "" {
+			result.Diagnostic = err.Error()
+		}
+	} else {
+		if len(translated.Patch) > maxMekugiPatchBytes {
+			return fmt.Errorf("HPATCH translation exceeds %d bytes", maxMekugiPatchBytes)
+		}
+		result.Patch = string(translated.Patch)
+		result.Report = mekugiReport(translated.Report, translated.Diagnostic)
+	}
+	return json.NewEncoder(stdout).Encode(result)
+}
+
+func (t *mekugiResponseTransform) translateMixedScript(callID, input string, parts []hpatchsyntax.ScriptSegment, splitErr error, upstreamItem map[string]json.RawMessage) (mekugiHistory, error) {
+	history := mekugiHistory{
+		toolName: mekugiToolName, script: input, root: t.directory,
+		carrierName: t.codeModeToolName, upstreamItem: maps.Clone(upstreamItem),
+	}
+	var segments []hpatchResumeSegment
+	err := splitErr
+	if err == nil {
+		segments, err = t.prepareMixedSegments(parts)
+	}
+	if err == nil {
+		var state hpatchResumeState
+		state, err = t.retainMixedScript(input, segments)
+		if err == nil {
+			history.carrierKind = codeModeCarrierCustom
+			history.carrierPayload = t.mixedCarrier(state, "", nil)
+		}
+	}
+	if err != nil {
+		history.translationError = "hpatch: " + err.Error()
+	}
+	t.recordLocal(callID, &history)
+	return history, nil
+}
+
+func (t *mekugiResponseTransform) prepareMixedSegments(parts []hpatchsyntax.ScriptSegment) ([]hpatchResumeSegment, error) {
+	if t.nativeTools {
+		return nil, fmt.Errorf("shell-in-HPATCH requires Code Mode; submit separate hpatch and shell calls with this client")
+	}
+	contribution, ok := t.proxy.registry.contribution("shell")
+	if !ok {
+		return nil, fmt.Errorf("built-in shell tool is unavailable")
+	}
+	segments := make([]hpatchResumeSegment, 0, len(parts))
+	for index, part := range parts {
+		segment := hpatchResumeSegment{Source: part.Source, Line: part.Line, Kind: "edit"}
+		var program strings.Builder
+		if part.Shell {
+			segment.Kind = "shell"
+			sources, translated, err := t.prepareShellBatch(contribution, []string{part.Source}, t.shellDirectory+"/")
+			if err != nil {
+				return nil, fmt.Errorf("shell segment %d (line %d): %w", index+1, part.Line, err)
+			}
+			if translated.Rejected {
+				return nil, fmt.Errorf("shell segment %d (line %d): %s", index+1, part.Line, translated.Diagnostic)
+			}
+			program.WriteString(sources[0])
+			program.WriteString("Object.assign(current, last, {output});\nif (last.exit_code !== 0) { current.status = 'failed'; stoppedReason = 'nonzero_exit'; return; }\n")
+		} else {
+			if err := validateMixedEdit(part.Source); err != nil {
+				return nil, fmt.Errorf("edit segment %d (line %d): %w", index+1, part.Line, err)
+			}
+			fmt.Fprintf(&program, "await translateSource(%s);\n", mustMarshalJSON(part.Source))
+			program.WriteString(`if (last.exit_code !== 0) { current.status = 'failed'; current.output = output; stoppedReason = 'translation_error'; return; }
+let edit;
+try { edit = JSON.parse(output); } catch { throw new Error('HPATCH translation output is incomplete or truncated; this segment was not applied. Repair this segment and resume.'); }
+if (typeof edit.patch !== 'string' || typeof edit.report !== 'string' || typeof edit.diagnostic !== 'string') throw new Error('Invalid HPATCH translation result; this segment was not applied.');
+if (edit.diagnostic) { current.status = 'rejected'; current.diagnostic = edit.diagnostic; stoppedReason = 'edit_rejected'; return; }
+output = ''; last = {output: '', exit_code: 0};
+if (edit.patch) await tools.apply_patch(edit.patch);
+current.report = edit.report;
+`)
+		}
+		segment.Program = program.String()
+		segments = append(segments, segment)
+	}
+	return segments, nil
+}
+
+// Validate syntax for every segment before emitting any executable carrier;
+// filesystem-dependent validation belongs to the worker at that segment's turn.
+func validateMixedEdit(source string) error {
+	if err := mekugi.ValidateScriptSyntax(source); err != nil {
+		return err
+	}
+	lines := hpatchsyntax.SplitPhysicalLines(source)
+	for index := 0; index < len(lines); {
+		line := lines[index].Text
+		for _, operation := range []string{"in ", "new ", "mv "} {
+			if path, ok := strings.CutPrefix(line, operation); ok && (path == "@shell" || strings.HasPrefix(path, shellArtifactPrefix)) {
+				return fmt.Errorf("mixed scripts edit workspace files, not retained @shell sources")
+			}
+		}
+		frame, err := hpatchsyntax.FrameCommand(lines, index, line)
+		if err != nil {
+			return err
+		}
+		index = frame.Next
+	}
+	return nil
+}

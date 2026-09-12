@@ -6,7 +6,7 @@ import (
 	"text/template"
 )
 
-const MekugiToolDescription = "Atomic HPATCH/2 edit-script application. Rejection or cancellation leaves the workspace unchanged."
+const MekugiToolDescription = "HPATCH/2 edits with optional shell COMMAND lines or shell <<SHELL blocks closed by SHELL (Code Mode required). Edit validation is atomic; failed host application may have partial effects. Mixed scripts apply each edit segment separately, stop on failure, and retain pending work for resume HANDLE without replaying completed effects."
 
 //go:embed file-editing-instructions.md
 var instructionSource string

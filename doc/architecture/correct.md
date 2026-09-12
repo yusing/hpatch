@@ -11,7 +11,7 @@ the same latest visible evaluated rejection. The router uses the generic root
 projection as ordinary scripts. This shared boundary owns workspace translation versus private
 retained-shell application, attempt metadata, limits, and applied confirmation; recovery owns
 only rebuilding, ancestry, and correction guidance. The core evaluator, root public APIs, root
-grammar, and ordinary `functions.hpatch` have no recovery mode. Generic text editing
+grammar, and ordinary `functions.hpatch` have no edit-only recovery mode. Generic text editing
 and pre-render byte accounting belong to the root; selecting the rejected baseline
 and enforcing its configured bound belong to the router. No mutable shell artifact
 is another source of rejected-script state. Malformed, stale, conflicting, or incomplete recovery
@@ -32,3 +32,7 @@ rebuilding, it obtains the replacement identity from that same parser and reject
 identity without root reevaluation. Equivalent quoted escapes and implicit versus explicit default
 occurrence counts share one identity; a single-row range shares its row's identity. That proxy
 rejection retains the same baseline and handles for a later different target.
+
+Mixed-script continuation is a separate router interface under
+[CTR-PLUGIN-001](plugin.md). Edit-only recovery routes mixed and resume calls to
+that interface without classifying successful translation as successful execution.

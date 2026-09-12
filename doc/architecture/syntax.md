@@ -10,3 +10,10 @@ its decoded value, then uses the same root parser for replacement targets. The r
 primitive owns immutable text-target mutation. The
 lexical owner performs no filesystem access, target resolution, command evaluation,
 rejected-script ancestry, or output rendering.
+
+The same lexical owner splits routed `shell COMMAND` lines and `shell <<SHELL`
+frames into ordered shell programs and contiguous edit segments. The exact block
+opener is reserved and cannot fall back to a single-line command. Other inline
+`<<` occurrences reject, keeping the single-line lexical rule small and unambiguous. It uses existing command framing to skip
+edit values, preserving body bytes and original physical-line positions. It
+performs no shell parsing or execution. Root engine parsing remains edit-only.

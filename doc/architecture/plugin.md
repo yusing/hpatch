@@ -243,3 +243,24 @@ the translated patch as later model input or derive another report representatio
 model inference can therefore reuse an exact current row present in the retained successful
 report. Router history does not retain hcat rows on behalf of the engine, predict later
 targets, or move final-reference projection across the root boundary.
+
+For mixed HPATCH/shell input under `REQ-SCRIPT-001`, the router owns preflight and
+one sequential Code Mode carrier. Each edit segment is translated at execution
+time through the authenticated fixed shell worker's private translation-only
+mode. Larger source transfers use bounded command arguments and a raw, non-echoing
+native stdin session instead of exceeding the outer shell's argv limit. The worker
+bounds source bytes and times out an abandoned transfer. The worker reuses `TranslateForHostAt` against the current filesystem and
+returns structured patch/report or rejection data; it never applies a workspace
+patch. The carrier validates that complete result, then calls Codex's patch tool.
+Shell segments reuse existing shell translation, quoting, execution, and native
+continuation handling. The original mixed call and exact carrier remain ordinary
+replay history, but runtime segment failures never enter edit-only recovery.
+
+`hpatch_resume.go` and its embedded `hpatch_resume.js` own the mixed continuation
+interface and native-operation journal. Original source and prepared segments
+use the existing temporary thread storage, separate from durable replay and
+edit-only rejection ancestry. The fixed shell worker's argument-free control channel persists private checkpoints
+through atomic file replacement under a stable file lock. Revision comparison
+rejects stale carriers. Its storage mode never applies workspace edits or starts
+the authored shell program. Code Mode still owns every workspace operation and
+native session; notifications expose compact progress independently of final output.

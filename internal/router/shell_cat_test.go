@@ -168,8 +168,51 @@ const tools = {
   }
 };
 const text = value => process.stdout.write(value);
-` + overrides + "\n(async () => {\n" + carrier + "\n})().catch(error => { console.error(error); process.exitCode = 1; });"
-	command := exec.CommandContext(t.Context(), node, "-e", program)
+const fixtureExec = tools.exec_command;
+` + overrides + `
+const scenarioExec = tools.exec_command;
+const scenarioWrite = tools.write_stdin;
+const controlSessions = new Map();
+let nextControlSession = 900000;
+tools.exec_command = async args => {
+  if (args.cmd !== 'shell') return scenarioExec(args);
+  if (!args.tty || args.login !== false) throw new Error('invalid control carrier');
+  const {spawn} = require('node:child_process');
+  const child = spawn('bash', ['-c', args.cmd], {cwd: args.workdir || process.cwd()});
+  const session_id = nextControlSession++;
+  let output = '';
+  let exitCode;
+  let wake;
+  child.stdout.on('data', chunk => { output += chunk; wake?.(); });
+  child.stderr.on('data', chunk => { output += chunk; wake?.(); });
+  child.on('error', error => { output += String(error); exitCode = 1; wake?.(); });
+  child.on('close', code => { exitCode = code; wake?.(); });
+  async function read() {
+    while (exitCode === undefined && !output.endsWith('\n')) {
+      await new Promise(resolve => { wake = resolve; });
+    }
+    const result = {output};
+    output = '';
+    if (exitCode === undefined) result.session_id = session_id;
+    else { result.exit_code = exitCode; controlSessions.delete(session_id); }
+    return result;
+  }
+  controlSessions.set(session_id, {child, read});
+  return read();
+};
+tools.write_stdin = async args => {
+  const receiver = controlSessions.get(args.session_id);
+  if (!receiver && args.chars === '{"operation":"close"}\n') return {exit_code: 0, output: ''};
+  if (!receiver) return scenarioWrite(args);
+  if (args.chars) receiver.child.stdin.write(args.chars);
+  return receiver.read();
+};
+` + "\n(async () => {\n" + carrier + "\n})().catch(error => { console.error(error); process.exitCode = 1; });"
+	carrierPath := filepath.Join(t.TempDir(), "carrier.cjs")
+	if err := os.WriteFile(carrierPath, []byte(program), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.CommandContext(t.Context(), node, carrierPath)
 	command.Dir = directory
 	output, err := command.CombinedOutput()
 	if err != nil {

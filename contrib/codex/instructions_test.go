@@ -6,7 +6,7 @@ import (
 )
 
 func TestMekugiToolDescriptionStaysNonInstructional(t *testing.T) {
-	const want = "Atomic HPATCH/2 edit-script application. Rejection or cancellation leaves the workspace unchanged."
+	const want = "HPATCH/2 edits with optional shell COMMAND lines or shell <<SHELL blocks closed by SHELL (Code Mode required). Edit validation is atomic; failed host application may have partial effects. Mixed scripts apply each edit segment separately, stop on failure, and retain pending work for resume HANDLE without replaying completed effects."
 	if MekugiToolDescription != want {
 		t.Fatalf("MekugiToolDescription = %q, want %q", MekugiToolDescription, want)
 	}
@@ -41,6 +41,34 @@ func TestInstructionsSelectModelWorkflowIndependentlyOfTransport(t *testing.T) {
 			baseline := InstructionsForModel("", compact)
 			if strings.Replace(got, strings.TrimSuffix(workflow, "\n"), "", 1) != strings.Replace(baseline, strings.TrimSuffix(defaultWorkflow, "\n"), "", 1) {
 				t.Fatalf("model %q compact %v: shared guidance changed", model, compact)
+			}
+		}
+	}
+}
+
+func TestInstructionsTeachMixedScriptBoundaries(t *testing.T) {
+	for _, model := range []string{"gpt-6-astra", "gpt-5.6-sol"} {
+		for _, compact := range []bool{false, true} {
+			got := InstructionsForModel(model, compact)
+			for _, required := range []string{
+				"`shell go test ./...`",
+				"`<<` is not allowed",
+				"never falls back to single-line execution",
+				"exact `shell <<SHELL` header",
+				"Completed\nedits and shell effects are not rolled back",
+				"`resume HANDLE`",
+				"`resume HANDLE retry`",
+				"Successful recovery automatically runs the retained suffix in the same carrier",
+				"`resume HANDLE accept`",
+				"one hour from creation",
+				"partial or unknown effects",
+				"Do not replay a mixed script",
+				"each edit segment with `in` or `new`",
+				"Native-only clients use separate hpatch and shell calls",
+			} {
+				if !strings.Contains(got, required) {
+					t.Errorf("model %q compact %v omits %q", model, compact, required)
+				}
 			}
 		}
 	}
@@ -117,13 +145,12 @@ func TestInstructionsBindCommentaryToSupportedTools(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			for _, required := range []string{
-				"Attach progress commentary only to a supported tool call",
-				"When no available tool supports commentary, continue",
-				"Never emit a standalone assistant message with\n`phase: \"commentary\"`",
+				"Attach progress to the tool call doing the work",
+				"When no supported mechanism is available, continue without commentary",
 				"`commentary 'text'`",
 				"`await commentary(\"text\")`",
 				"do not support the shell commentary command",
-				"standalone commentary messages are router-owned",
+				"messages are router-owned",
 			} {
 				if !strings.Contains(test.instructions, required) {
 					t.Errorf("instructions omit commentary rule %q", required)
@@ -138,11 +165,10 @@ func TestNonAstraExecutionGuidanceKeepsAstraFocused(t *testing.T) {
 		sol := InstructionsForModel("gpt-5.6-sol", compact)
 		astra := InstructionsForModel("gpt-6-astra", compact)
 		for _, detailed := range []string{
-			"Do not create separate executions merely because reads are independent",
+			"when they share an interpreter and options:",
 			"wait \"$first_check_pid\" || checks_status=$?",
 			"wait \"$second_check_pid\" || checks_status=$?",
-			"even when the tool has no `commentary`",
-			"A nearby brace's hash is not interchangeable",
+			"A stale-target correction must preserve the full intended span",
 		} {
 			if !strings.Contains(sol, detailed) || strings.Contains(astra, detailed) {
 				t.Errorf("compact %v: detailed non-Astra guidance is missing or leaked into Astra: %q", compact, detailed)
@@ -170,6 +196,8 @@ func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 		"Use separate shell calls for interactive programs",
 		"Explicit batches require Code Mode and run sequentially",
 		"#!batch=NEXT_PROGRAM\n#!params={\"yield_time_ms\":1000}\necho hello\nNEXT_PROGRAM\n#!python3\nprint(\"hello\")",
+		"Tool defaults do not override the interface under test.",
+		"Tool coordination below covers native-interface tasks.",
 		"Submit free-form programs to `functions.shell`",
 		"Bash: write commands directly, without a shebang.",
 		"a shell heredoc such as `python3 - <<'PY'`",
@@ -204,18 +232,17 @@ func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 func TestInstructionsAcquireAndReuseVerifiedTargets(t *testing.T) {
 	for _, required := range []string{
 		"Acquire target-bearing context for existing-file edits.",
-		"use hgrep first; use `-F` with repeated `-e` literals",
+		"use `-F` with repeated `-e` literals",
 		"Copy inspect_file `LINE:HASH` spans",
 		"`hsymbol refs PATH LINE SYMBOL [N]`",
 		"`hsymbol def PATH LINE SYMBOL [N]`",
 		"`LINE:HASH` instead of `LINE` to enforce a prior read",
 		"A leading `--workspace ROOT` chooses resolver scope",
-		"instead of rereading solely to obtain an already available target",
-		"When those forms no longer identify the intended current span",
+		"Read again only when those forms no longer identify the intended current span",
 		"Existing-file edits require a target.",
 		"Targetless `type VALUE` is valid only immediately after",
 		"unchanged saved rows remain valid even when edits shifted their line numbers",
-		"On later calls, target previously changed content with a returned final-state row, a\nconfirmed mapping, or exact unanchored current text; never reconstruct a row or range endpoint.",
+		"Copy complete `LINE:HASH` endpoints from the intended span",
 		`type "return oldResult, nil" "return newResult, nil"`,
 		`C3:bcde0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab "return oldResult, nil"`,
 		"exact known target text spans logical lines or includes a trailing LF",
