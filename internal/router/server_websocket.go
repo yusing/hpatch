@@ -856,7 +856,7 @@ func (w *webSocketOutput) message(payload []byte) error {
 			// Local completion retains only the capsule, but does not admit a
 			// provider successor. Its accepted steering remains pending until
 			// that provider response actually starts.
-			e.history.parent = nil
+			e.history.parent = event.Response.ID
 			for _, item := range e.history.input {
 				s.retainedBytes -= len(item)
 			}
