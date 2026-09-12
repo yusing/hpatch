@@ -27,6 +27,14 @@ type Workspace struct {
 	CWD  string
 }
 
+// ValidateScriptSyntax checks a complete edit script without reading files,
+// resolving targets, or evaluating commands. It does not accept routed shell
+// frames; hosts validate each edit segment separately.
+func ValidateScriptSyntax(script string) error {
+	_, err := parse(script)
+	return err
+}
+
 // EditText applies target-bearing HPATCH mutations to an in-memory immutable
 // baseline. It performs no filesystem access, language validation, formatting,
 // indentation correction, or whitespace cleanup.

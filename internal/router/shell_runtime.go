@@ -81,6 +81,9 @@ func (s *shellSession) retireIdle() {
 	for name, timer := range s.timers {
 		if timer == nil {
 			_ = s.scripts.Remove(name)
+			if _, err := mixedArtifactName(strings.TrimPrefix(name, "mixed-")); strings.HasPrefix(name, "mixed-") && err == nil {
+				_ = s.scripts.Remove(name + ".lock")
+			}
 			delete(s.timers, name)
 		}
 	}

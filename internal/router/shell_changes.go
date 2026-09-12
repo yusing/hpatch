@@ -99,6 +99,8 @@ func trackedStatus(history mekugiHistory, confirmed bool) string {
 	switch {
 	case history.translationError != "":
 		return "rejected"
+	case history.carrierKind == codeModeCarrierCustom && history.toolName == mekugiToolName:
+		return "execution plan (see segment attempts)"
 	case history.alreadySatisfied:
 		return "no-op"
 	case history.applied || confirmed:

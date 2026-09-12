@@ -136,7 +136,7 @@ commands are invalid.
 
 Acceptance:
 
-1. Every accepted nonblank command is one of the six public commands.
+1. Every engine command is one of the six public edit commands. Routed mixed scripts additionally accept the shell forms below.
 2. Line, range, anchored text, and unanchored text targets parse without a separate selection command, and inline
    replacement values remain distinguishable from a text target's quoted literal.
 3. Anchored and unanchored text targets accept JSON-escaped LF and exact multiline or
@@ -152,3 +152,266 @@ Acceptance:
 6. File and mutation commands may be interleaved while all targets retain the immutable
    baseline meaning defined by `REQ-SELECT-001`.
 7. For root-scoped evaluation with root `/workspace` and cwd `bin/worktree`, path `main.go` denotes `/workspace/bin/worktree/main.go` and translates as `bin/worktree/main.go`.
+
+### Shell-in-script
+
+The routed `hpatch` tool additionally accepts `shell COMMAND`: every byte after
+the first `shell ` through the end of the physical line is one raw program.
+Quotes, pipes, redirections, and shell operators require no HPATCH escaping.
+The physical LF/CRLF separator is not part of the single-line source. A trailing
+backslash does not consume the next HPATCH line. Empty or whitespace-only source
+is a successful no-op and starts no host process.
+The literal `<<` is forbidden anywhere in single-line source, including
+inside quotes, comments, here-strings, or arithmetic. Use the block form for such
+source and for programs spanning physical lines; ordinary single-`<` redirection
+remains allowed.
+
+The multiline form is `shell <<SHELL`, followed by a UTF-8 program body (which
+may be empty or whitespace-only) and a closing physical line exactly equal to
+`SHELL`. The exact opener is
+reserved exclusively for this form: missing closes reject before execution,
+never fall back to single-line shell source. Other single-line sources containing
+`<<`, including `echo <<SHELL` and `<<SHELLx`, reject before any execution.
+
+The frame preserves all body bytes, including LF/CRLF terminators. Only the exact,
+unindented closing line is reserved; near matches, quotes, HPATCH commands,
+`PATCH`, and `TEXT` are shell data. Both forms inside HPATCH values remain
+value data. Existing whole-input and 1 MiB body limits apply to both forms.
+
+#### Segments and validation
+
+Both shell forms may appear before, between, and after edit commands, including in a
+shell-only input. Each contiguous nonblank edit segment is evaluated and validated
+as a whole against its own immutable baseline, then submitted as one host patch
+when changes exist. This is atomic validation, not a guarantee of atomic host application across files;
+[REQ-OUTPUT-001](output.md) owns application guarantees.
+
+Each shell command is one independent program using `REQ-SHELL-001` interpreter
+selectors and execution directives. Shell batches and interactive programs use
+separate shell calls. Params, shell variables, cwd changes, active file selection,
+and pending edits do not inherit across segments. Each edit segment therefore
+starts with `in` or `new`; its path base remains the request's canonical workspace
+metadata directory, not a preceding shell's cwd.
+
+Mixed scripts require Code Mode. The router validates all frames, edit syntax,
+and shell headers before emitting any execution carrier. Workspace-dependent
+target resolution, language checks, and patch translation occur only when an
+edit segment is reached, after preceding host sessions finish. Codex authorizes
+and applies each resulting patch through its normal patch tool. Neither the
+router nor the translation worker executes shell on behalf of Codex or applies
+the translated workspace edits directly.
+
+#### Failure and application outcomes
+
+No later segment starts after the first rejected edit, nonzero terminal shell
+exit, translation failure, host refusal/error, or cancellation. A yielded session
+is awaited, never restarted. Completed effects remain applied.
+
+Shell failure means the program's terminal exit status, not every individual
+command's status. The carrier does not implicitly enable `errexit` or `pipefail`.
+For example, `shell false; true` succeeds overall. Authors use `&&`, explicit
+status checks, or interpreter options when an earlier failure must determine the
+program's result. A failed program may already have made changes.
+
+Results must distinguish these outcomes:
+
+- Preflight rejection: no segment ran.
+- Edit evaluation, validation, or translation rejection before application:
+  that edit segment changed no workspace files.
+- Shell nonzero exit: the program failed, but its earlier side effects remain.
+- Validated edit no-op: the segment completed without submitting a patch; its
+  report describes no changes rather than claiming a write occurred.
+- Successful host application: that edit segment completed, and its report may
+  be published as a success report.
+- Host application error or interruption after submission: the edit may be
+  partially or fully applied. Without host confirmation, its outcome is unknown,
+  not a validation rejection or a successful completion.
+
+No failure result implies rollback. In particular, a failed or interrupted host
+application must not claim the edit segment left the workspace unchanged.
+
+#### Progress and cancellation
+
+The carrier must publish compact, model-visible checkpoints during execution,
+not only from a final `finally` block. Publish a segment-start checkpoint before
+its first host operation, mark entry into host patch application before submitting
+the patch, and publish completion only after confirmed success for that segment. Publish
+each returned native session handle before awaiting its continuation.
+
+Checkpoints identify the one-based segment, original physical line, kind, phase,
+and last confirmed status. They must let the agent distinguish translation from
+application, recognize the completed prefix, and locate known live sessions after
+an interruption. Keep this compact state available separately from verbose
+command output so log truncation does not erase the information needed to resume.
+
+On ordinary completion or a catchable failure, retain ordered segment results.
+Completed edits include their reports; shell results preserve terminal native
+fields and ordered output. The final `sequence` summary records total, started,
+and unstarted segment counts and `stopped_reason`. Catchable host errors publish
+the completed prefix and current partial output, including any outstanding
+native session, before propagating.
+
+Hard Code Mode termination may skip JavaScript cleanup and the final summary.
+Previously published checkpoints must remain available through the host's output
+mechanism. A start or application checkpoint without subsequent confirmation means
+the operation is unresolved; absence of a final summary is not evidence of success,
+rollback, or process termination.
+
+Cancelling a continuation wait is not proof that its underlying process stopped.
+Cancellation remains host-owned: use supported host cancellation mechanisms, and
+claim termination only when confirmed. If a yielded session may still be running,
+preserve its known handle for inspection or termination instead of restarting it.
+If interruption occurs before a handle or terminal result is available, report
+the activity as unresolved rather than inventing a handle or claiming it stopped.
+The caller must resolve potentially live work before retrying or starting
+overlapping work.
+
+#### Retained continuation
+
+A successfully preflighted mixed script receives a random `M` handle followed by
+32 lowercase hexadecimal digits. The original script, prepared segments, completed
+results, current segment, native-operation journal, and resume position remain in
+the existing private thread storage. Retention lasts one hour from creation,
+ends on router shutdown, and is not renewed by reads or resumes. Handles are
+thread- and workspace-scoped, not durable replay records. Invalid, expired,
+unavailable, or cross-workspace handles reject before execution.
+
+Use the routed `hpatch` tool:
+
+```text
+resume HANDLE
+resume HANDLE retry
+resume HANDLE repair
+resume HANDLE accept
+```
+
+A plain resume continues pending work without rerunning completed segments or
+confirmed native operations within the interrupted segment. It may await an
+already-known native session. Remaining edit targets are resolved against current
+files; interrupted pre-application translation is finished before being discarded
+and translated afresh. Cached translation is never used to apply a patch after
+a resume. A previously confirmed application can finish its report without
+reapplying the patch.
+
+Before any resume, resolve the previous Code Mode cell: it must have finished or
+been terminated. Cancelling that cell is not confirmation that its native work
+stopped. A pending operation without a returned result, a nonzero shell exit,
+or uncertain host application requires inspection and reconciliation.
+`retry` explicitly confirms potentially live work has ended and uncertain effects
+have been inspected; it retries only the current segment against current state.
+`accept` confirms the segment's intended state has been established externally
+and all its native work is resolved; it records `reconciled`, not a successful
+application report, and advances to the unchanged suffix. Neither action cancels
+or restarts an existing session on the agent's behalf.
+
+`retry` may be followed by a newline and one replacement segment of the same
+kind. An edit replacement includes its own `in` or `new`; a shell replacement uses
+the ordinary `shell` syntax. The replacement is retained if it fails again.
+Completed and unstarted segments remain unchanged. Never ask the agent to resend
+the complete original script or regenerate its unchanged suffix.
+
+`repair` requires one workspace edit segment after the header. It carries the same
+inspection and live-work reconciliation requirements as `retry`. The carrier inserts
+the repair before the failed segment, applies it through the normal host patch tool,
+then retries that segment and continues its retained suffix in the same invocation.
+A previously supplied replacement for the failed segment is preserved. Syntax is
+validated before effects; repair targets are validated when the repair runs.
+
+The repair is retained under the existing handle and expiry, with no new model call
+between repair, retry, and suffix execution. Its checkpoints and result carry
+`repair: true`. Sequence positions and counts include inserted repairs; completed
+prefix positions remain unchanged. Original physical-line references are preserved.
+A failed or interrupted repair stops before retrying the original segment and can
+itself be resumed, retried, replaced, or reconciled through the same handle. Completed
+repairs are not replayed after interruption. No repair is inferred from unrelated edits.
+
+Each carrier uses one argument-free `shell` control channel for checkpoints and
+edit translation. The helper discovers storage through inherited `CODEX_THREAD_ID`
+and binds a retained handle from a bounded stdin frame; no private flag, path,
+connection detail, or inline environment assignment appears in command arguments.
+Replies use bounded, acknowledged chunks so host output truncation cannot silently
+lose translation data. Checkpoints send only changed progress fields, and translation
+results already held by the control process are referenced rather than copied back
+through terminal input. Edit segments share one carrier implementation instead of
+retaining generated per-segment programs. Actual shell commands retain their ordinary
+displays. A host may still display the control-channel call and compact stdin frames,
+but it does not receive repeated full checkpoint snapshots. Closing the channel never
+cancels a workspace shell process. Abandoned unbound channels expire after one minute;
+bound channels expire with their retained handle.
+
+Checkpoint persistence is independent of Code Mode cleanup. A checkpoint is saved
+before each native operation and after its result, including known session handles.
+A hard interruption during checkpoint publication can leave the operation unresolved;
+published notifications supplement the retained record, never prove rollback.
+Revision checks stop stale carriers before further operations, but are not a
+substitute for resolving live work before resuming. Private retained state has a
+32 MiB limit; storage failure stops subsequent execution without undoing effects.
+
+Mixed scripts do not enter ordinary rejected-script recovery or publish
+cross-invocation replacement aliases. [REQ-CORRECT-001](correct.md) routes attempts
+to use edit-only recovery to this retained continuation interface.
+
+Result rows refer to the completion of their own edit segment and may be changed
+by a later segment. Retained `@shell/` edits remain a separate edit-only workflow.
+
+`ValidateScriptSyntax` validates engine syntax without filesystem access or
+evaluation. Library apply/translation entry points remain edit-only and reject
+shell commands without mutation; the routed carrier owns the mixed workflow.
+
+Additional acceptance:
+
+1. Legacy edit-only grammar and engine behavior remain unchanged. Malformed later
+   edit syntax or shell headers prevent even an otherwise valid prefix from running.
+2. Shell bodies containing HPATCH-looking source are byte-preserved; markers in
+   raw and line-framed edit values never become execution boundaries.
+3. Shell-created or modified files become the actual baseline of the following
+   edit segment. No patch is translated against a pre-shell snapshot.
+4. Edit rejection before application and shell nonzero exits leave completed
+   segments intact and later segments unstarted. A failed shell's own side effects
+   remain. Yielded host sessions finish before the next segment begins. Test both
+   a terminal nonzero program and an intermediate command failure followed by
+   terminal success; only the former stops the sequence.
+5. Truncated or malformed private translation output never reaches patch
+   application. Replay restores the original mixed input and existing carrier,
+   without retranslation, reexecution, or automatic recovery of completed effects.
+6. Native-only clients reject mixed scripts before effects while retaining their
+   ordinary HPATCH interface.
+7. Single-line commands preserve quotes, operators, and whitespace after `shell `,
+   stop at the physical line boundary, and compose with blocks and edit segments.
+   The reserved exact block opener cannot fall back to inline execution when
+   its close is missing; any other inline `<<` rejects before effects, including
+   occurrences inside quotes.
+8. A host patch that changes one file and then fails on another stops later
+   segments without reporting completion or claiming the segment was unchanged.
+   Interruption after patch submission but before confirmation is likewise an
+   unknown application outcome. Exercise this through the native host boundary,
+   not only a mocked validation rejection.
+9. Hard termination of a real Code Mode cell after a completed segment preserves
+   published progress even when `finally` does not run. Test termination while
+   awaiting an already-yielded shell session: its known handle remains available,
+   later segments do not start, and stopping the wait is never reported as proof
+   of process termination. Test interruption around host patch submission too;
+   a missing completion checkpoint must not turn uncertain effects into a safe
+   automatic retry.
+10. Verbose output exceeding the outer result budget does not hide compact
+    completion checkpoints or known session handles. A final summary is required
+    for ordinary completion and catchable failures, but not fabricated after hard
+    termination.
+11. A shell failure between edit segments can be repaired and resumed by handle,
+    without resending the unchanged suffix or replaying completed effects. Files
+    changed between failure and resume receive fresh target validation.
+12. Invalid or unavailable resume handles execute nothing. Explicit retry can
+    replace only the failed segment; ordinary edit-only recovery directs mixed
+    work to retained continuation without a false success claim or fallback to
+    an older rejected script.
+
+Native-host acceptance uses the opt-in `TestHpatchNativeFixture` bridge in
+`internal/router/hpatch_native_test.go`: set `MEKUGI_HPATCH_NATIVE_FIXTURE` to a
+session-created temporary directory and run that test with a timeout covering
+the inspection. Its `fixture.json` supplies the `nativeFixture` object for
+`internal/router/hpatch_native_driver.js`, evaluated in a real Code Mode cell.
+The driver contains repeatable scenario sources and lifecycle markers. Terminate
+the outer cell at the requested marker, rather than substituting a JavaScript
+exception; inspect actual files and sessions before resuming. Close the bridge
+with `POST /close` after resolving native work. Ordinary Go tests exercise the
+same carrier against the local host fixture but do not replace these host checks.

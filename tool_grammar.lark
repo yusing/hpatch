@@ -1,6 +1,10 @@
 start: _blank_line* script _blank_line*
 
-script: command (_separator command)*
+script: resume_command | command (_separator command)*
+
+resume_command: "resume" SP RESUME_HANDLE (SP RESUME_ACTION)? (_separator command (_separator command)*)?
+RESUME_HANDLE: /M[0-9a-f]{32}/
+RESUME_ACTION: "retry" | "accept" | "repair"
 
 ?command: path_command
         | "rm"
@@ -9,7 +13,16 @@ script: command (_separator command)*
         | text_mutation
         | text_initializer
         | inline_initializer
+        | shell_command
         | heredoc_initializer
+
+shell_command: "shell" SP (shell_block | SHELL_INLINE)
+// Separate SHELL from its suffix so closing CRLF wins longest-match lexing.
+shell_block: "<<SHELL" NL (SHELL_BODY_LINE | "SHELL" SHELL_SUFFIX NL)* "SHELL"
+SHELL_SUFFIX: /(?:[^\r\n][^\n]*|\r[^\n]+)/
+// Single-line source cannot contain <<, even in quotes. Use a block instead.
+SHELL_INLINE: /(?:(?:[^<\n]|<[^<\n])+<?|<)/
+SHELL_BODY_LINE: /(?:SHEL(?:[^L\n][^\n]*)?|SHE(?:[^L\n][^\n]*)?|SH(?:[^E\n][^\n]*)?|S(?:[^H\n][^\n]*)?|[^S\n][^\n]*)?\n/
 
 path_command: PATH_OP SP PATH
 inline_mutation: "type" SP target SP QUOTED

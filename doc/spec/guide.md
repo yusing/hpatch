@@ -84,14 +84,25 @@ The shared guidance must make these choices directly available in native and CTP
    [inspect.md](inspect.md), and [symbol.md](symbol.md).
 3. **Editing:** group ready related edits against immutable baselines; split dependent work
    only when validation or missing facts must determine the next edit. Prefer insertions and
-   targeted replacements, leaving language-aware formatting to the engine.
+   targeted replacements, leaving language-aware formatting to the engine. Mixed
+   HPATCH/shell calls require Code Mode and use separately validated edit segments
+   under [REQ-SCRIPT-001](script.md). Guidance distinguishes atomic validation from
+   potentially partial host application, explains interruption checkpoints and
+   unresolved sessions, and never treats cancellation as proof of rollback or
+   process termination.
 4. **Values and boundaries:** keep raw and collision-safe line-framed syntax, newline ownership,
    empty-value deletion, and advisory interpretation together in the shared HPATCH/2 reference.
    [REQ-SCRIPT-001](script.md), [REQ-EDIT-001](edit.md), and
    [REQ-OUTPUT-001](output.md) own the behavior.
-5. **Recovery:** choose a payload form in one shared section, using the current rejected
-   baseline rather than workspace rows. Follow [REQ-CORRECT-001](correct.md) for atomic
-   reevaluation, ancestry, and invalid corrections.
+5. **Recovery:** for edit-only rejections, choose a payload form in one shared section,
+   using the current rejected baseline rather than workspace rows. Follow
+   [REQ-CORRECT-001](correct.md) for atomic reevaluation, ancestry, invalid corrections,
+   and the redirect to retained continuation for mixed scripts. Mixed-script guidance
+   teaches `resume HANDLE`, explicit reconciliation with `retry` or `accept`,
+   failed-segment-only replacement, temporary thread-scoped lifetime, and fresh
+   target validation. It first resolves the previous cell, current files, and
+   potentially live sessions; neither failure nor an unknown outcome authorizes
+   automatic replay.
 
 Shared commentary guidance includes the actual Bash/POSIX `commentary 'text'` command
 and Code Mode `await commentary("text")` form, alongside the optional field for eligible
