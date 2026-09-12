@@ -34,7 +34,7 @@ pjdoc:
 ---
 # mekugi specification
 
-Each listed file owns one requirement. Related facts are cited by stable ID or linked; they are not copied.
+Each listed file owns one interface requirement and its acceptance cases. Related facts are cited by stable ID or linked; they are not copied.
 
 ## Inventory
 

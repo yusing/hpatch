@@ -5,7 +5,7 @@
 For `REQ-PLUGIN-001`, the router owns discovery from the public configuration surface in
 `doc/brief.md` § Public surface, complete-registry validation, stable registration order,
 global tool-name ownership, immutable process-lifetime registry state, and the fail-before-serve
-sequence required by `doc/brief.md` § Constraints. One JavaScript runtime adapter loads compiled
+sequence required by `REQ-PLUGIN-001`. One JavaScript runtime adapter loads compiled
 declaration modules and invokes their input parsers and translators; it does not own Responses
 rewriting, Code Mode capability discovery, wrappers, history, observation, workspace authority, or
 executor effects. Loading a declaration is trusted local extension code, but the adapter

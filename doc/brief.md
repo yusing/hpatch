@@ -46,10 +46,7 @@ traffic or inside that item's `functions` namespace for CLI traffic. It removes 
 parameter shape, omits `cmd`, and appends only that sanitized shape to `shell`.
 Direct `functions.exec` and top-level exec carriers remain unsupported.
 
-The exec carrier preserves the native executor result when a command yields instead of treating
-the initial call as terminal. Codex remains the sole owner of the yielded session and its native
-continuation operation; the router and plugins do not poll, resume, cancel, retry, replace, or
-persist that session.
+Yielded execution follows the result/continuation contract in [REQ-SHELL-001](spec/shell.md).
 
 The historical benchmark remains the end-to-end authority: correctness must match the
 native edit path, output tokens must be lower, and input, reasoning, request count, and
@@ -136,40 +133,14 @@ wall time must remain close to control.
 
 ## Constraints
 
-- A routed row reference combines a positive one-based logical-line hint with a lowercase
-  four-digit content hash. The hash verifies complete logical-line bytes, including
-  indentation and excluding its terminator. A shifted row resolves only when the hash is unique.
-- Routed hgrep accepts familiar ripgrep search arguments, invokes the installed `rg` with
-  internal `--json --no-config` transport, and exposes only complete current logical lines
-  with the same routed row identity. Shell syntax in an argument is data, never execution.
-- A target must resolve against the active file's immutable invocation baseline. Missing,
-  stale, reversed, incomplete, and overlapping targets reject the complete script.
-- Inline strings use compact JSON-compatible quoting with literal horizontal tabs;
-  multiline values use the grammar-constrained `<<PATCH` frame.
-- Parsing, target resolution, validation, and in-memory evaluation failures must not
-  modify files or emit a partial patch or successful final-state report.
-- Basic `Apply` returns only an error. Host variants return completed state, the rendered report,
-  and diagnostics through `HostTranslation`.
-- A successful report row is current for its named final path and may target the next
-  invocation directly. Saved pre-edit rows remain stale; when the exact next target is absent,
-  the caller performs a focused read rather than guessing or reconstructing it.
-- Final-reference projection derives from completed editor state and formatting offsets without
-  retaining another copy of original or final file content.
-- Changed Go files are parsed and formatted with Go's standard library before success.
-- Correctness is determined by required graders and path-scope checks, not reference-patch
-  similarity. End-to-end Responses usage is authoritative for task-level token results.
-- In mekugi mode the router validates the complete discovered plugin registry before opening
-  its listener or installing tool wrappers; any schema, identity, implementation, or wrapper
-  mismatch reports diagnostics and stops startup without exposing a partial registry.
-- Each configured executor-backed contribution uses a session-private basename frontend
-  inside its authenticated snapshot's `bin` directory, pointing to the same-basename
-  snapshot wrapper and then the running `mekugi`. Only the wrapped Codex PATH is
-  extended. Sessions have disjoint frontends and no shared frontend lock.
-  Built-in shell instead uses the fixed PATH-installed `shell` locator and a direct per-thread
-  runtime path selected by `CODEX_THREAD_ID`. Its private commands create no wrapper or frontend.
-- A plugin translator returns a normal Code Mode tool-call carrier rather than an exec-specific
-  envelope. The plugin API may provide an exec wrapper that alone owns the repeated outer exec
-  shape.
+Constraints are defined by their interface owners:
 
-- A plugin executor returns its current result once. Observation never causes a second execution or
-  adds a benchmark-only result shape.
+- [Script framing](spec/script.md), [verified targets](spec/select.md), and
+  [search](spec/grep.md) own syntax and target validation.
+- [Output](spec/output.md) owns failure atomicity, public return contracts, language validation,
+  and current report references; [state projection](architecture/state.md) owns formatting-aware
+  coordinates without duplicate content storage.
+- [Plugins](spec/plugin.md) and [their boundary](architecture/plugin.md) own registry validation,
+  authenticated frontends, typed carriers, and executor lifecycle.
+- [Benchmarks](spec/benchmark.md) and [metrics](spec/metrics.md) own correctness grading and
+  measured performance evidence.
