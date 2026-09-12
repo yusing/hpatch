@@ -21,7 +21,7 @@ func reduceContextCompaction(input []json.RawMessage) []json.RawMessage {
 }
 
 func reduceContextCompactionWithPlan(input []json.RawMessage, plan compactionRetentionPlan) []json.RawMessage {
-	reduced, err := reduceContextCompactionPlan(context.Background(), input, plan)
+	reduced, err := reduceContextCompactionPlan(context.Background(), input, plan, false)
 	if err != nil {
 		return input
 	}
@@ -29,10 +29,10 @@ func reduceContextCompactionWithPlan(input []json.RawMessage, plan compactionRet
 }
 
 func reduceContextCompactionContext(ctx context.Context, input []json.RawMessage) ([]json.RawMessage, error) {
-	return reduceContextCompactionPlan(ctx, input, compactionRetentionPlan{compactionRecentOperations, compactionRecentOperations})
+	return reduceContextCompactionPlan(ctx, input, compactionRetentionPlan{compactionRecentOperations, compactionRecentOperations}, false)
 }
 
-func reduceContextCompactionPlan(ctx context.Context, input []json.RawMessage, plan compactionRetentionPlan) ([]json.RawMessage, error) {
+func reduceContextCompactionPlan(ctx context.Context, input []json.RawMessage, plan compactionRetentionPlan, preservePositions bool) ([]json.RawMessage, error) {
 	if err := ctx.Err(); err != nil {
 		return input, err
 	}
@@ -200,6 +200,12 @@ func reduceContextCompactionPlan(ctx context.Context, input []json.RawMessage, p
 		retireCompactionOperationsWithFrontier(reduceRepeatedCompactionRows(output, protected), plan.operations), plan.outputs)
 	if err := ctx.Err(); err != nil {
 		return original, err
+	}
+	// Carried-message receipts can anchor fresh instructions between any two
+	// original items. All reducers above are position-preserving; do not merge
+	// records across those insertion points when receipts are being retained.
+	if preservePositions {
+		return retained, nil
 	}
 	return consolidateContextCompactionRecords(input, retained), nil
 }

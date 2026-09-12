@@ -8,23 +8,48 @@ restoration of its own input envelopes, and bounded request decoding. Codex owns
 configuration resolution, trigger timing, retained client-side context, and
 installation of the returned compaction result.
 
-Evidence reducers own reduction and the approved lossy retirement of finished
+The initial evidence reducers own reduction and the approved lossy retirement of finished
 operations. Static carrier parsing establishes invocation facts; terminal output
 establishes completion, not task closure. It does not execute scripts or interpret
 opaque reasoning. Unknown lifecycle/dependency states stay protected.
 
 The working-set selector owns token pressure and admission, not relevance
 inference. It measures candidate native histories before envelope sealing using
-the existing visible-string metric. Its 50,000-token target permits at most
-30,000 tokens of overshoot; an inadmissible history fails explicitly rather than
-relaxing authority, lifecycle, reference, diagnostic or reasoning-group rules.
-These budgets do not change Codex's scheduling or model context configuration.
+the visible-text string metric, excluding native image URL payloads. Its
+50,000-token target permits at most
+30,000 tokens of overshoot. If evidence-preserving plans cannot fit, the pressure
+selector owns a content-independent, explicitly lossy fallback compiled from the
+original history. It distributes bounded excerpts by authority, active frontier,
+visible reasoning, and historical evidence priority. Generic bounded exact-run
+repetition reduction precedes allocation outside the mandatory instruction floor.
+Request-chain and discussion reservations precede execution allocation.
+Discussion gives its newest readable assistant or agent report a bounded initial
+share before broad coverage. Within each family, weighted shares redistribute
+capacity after small items fit;
+unused capacity is shared with unfinished items. An acknowledgement cannot crowd
+out its request chain, nor can many unknown tool results consume discussion's
+initial allocation. Fully represented histories need not fill the target. Required developer/system/model instructions and
+canonical context such as `AGENTS.md` form a byte-exact floor. A floor above the
+ceiling fails explicitly; other history and lifecycle evidence have priority,
+not an unlimited exemption. All native tool/reasoning items become historical
+observations together, avoiding partial executable groups. Prefix/suffix and
+selected constraint/status excerpts are not a semantic summary or proof of irrelevance.
+A compaction-only image pass replaces ordinary native image parts with `[Image]`
+before text selection, preserving surrounding text and identity metadata.
+Image-only reduction can succeed without a text-token saving or forced retirement
+of unrelated native history. Mandatory instruction images stay exact, and normal
+turns do not strip fresh images. Carried-message receipts reconcile original images
+without returning them to model input. There is no historical image allocation
+budget; request/envelope size limits remain with their existing owners.
+The placeholder accepts visual-detail loss rather than claiming that prior
+reasoning captured the image. Text budgeting does not change Codex's scheduling
+or model context configuration.
 
 The default eight-operation continuity buffer is a warm retention preference,
 not the definition of live work. Under pressure the selector first reduces
 eligible completed output while retaining native calls and reasoning, then may
 retire more complete historical groups. The newest operation, all live or unknown
-operations, and dependency closure remain protected under every plan. Metadata
+operations, and dependency closure remain protected under every evidence plan. Metadata
 and narration reducers keep their existing conservative frontier.
 
 Each retention plan runs against the same original input. Selection never chains
@@ -49,7 +74,7 @@ frontier. Reference closure and complete-group profitability reach a stable resu
 before replacement; restoring a consumer also restores every dependency exposed by
 its retained content. Supported text and JavaScript escapes are decoded for reference
 matching, while suspicious encodings retain evidence conservatively. These records
-are factual history, not new instructions or an external archive. The envelope
+are factual history, not new instructions or an external archive. The model replay
 contains selected history only; deferred retrieval must not be implied by a digest
 or retirement marker.
 
@@ -84,7 +109,24 @@ supported local Codex compaction flows, so its unreferenced transport item IDs m
 be omitted. User and agent-message identities remain stable because those items
 can be carried by the client. Referenced IDs and recent items remain protected.
 
-The envelope owner authenticates and encrypts the retained native item array.
+The envelope owner authenticates and encrypts the retained item array. Version 2
+also carries original user/agent messages and replay positions when pressure
+selection changes or drops them, plus content-free per-item pressure diagnostics.
+Diagnostics report allocation and loss inside the encrypted envelope; restoration
+does not add them to model input. The bounded reconciliation receipts let full
+or client-truncated carried messages match without resurrecting discarded input.
+Neither diagnostics nor receipts are forwarded to the model or exposed as a
+retrieval interface.
+Restoration carries their anchors across subsequent compaction; version 1 remains
+readable for existing sessions.
+Receipts are merged in their pre-selection timeline before replay indexes are
+remapped, with aliases grouped per logical item. Unmatched content from an older
+envelope is not fresh input: overlapping snapshots fail closed rather than
+silently restoring discarded history.
+Evidence plans with receipts retain one output item per source position, avoiding
+identity-based anchor guesses or record consolidation across insertion points.
+Excerpt identity metadata stays stable while positional content classifications
+are rebuilt for the rendered content.
 Its persistent key belongs to the Mekugi configuration directory, not a thread,
 temporary plugin runtime, provider credential, or capture stream. Cross-process
 locking serializes first creation. Compression is an internal envelope-storage

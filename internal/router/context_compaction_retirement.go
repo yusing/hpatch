@@ -1016,8 +1016,8 @@ func compactionVisibleStringTokens(items ...json.RawMessage) (int, bool) {
 		if json.Unmarshal(raw, &value) != nil {
 			return 0, false
 		}
-		var visit func(any) bool
-		visit = func(current any) bool {
+		var visit func(any, bool, bool) bool
+		visit = func(current any, nativeItem, contentPart bool) bool {
 			switch current := current.(type) {
 			case string:
 				count, err := compactionRetirementTokenCodec.Count(current)
@@ -1027,20 +1027,28 @@ func compactionVisibleStringTokens(items ...json.RawMessage) (int, bool) {
 				total += count
 			case []any:
 				for _, nested := range current {
-					if !visit(nested) {
+					if !visit(nested, nativeItem, contentPart) {
 						return false
 					}
 				}
 			case map[string]any:
 				for key, nested := range current {
-					if key != "encrypted_content" && !visit(nested) {
+					// Native image URLs are transport, not visible prose. Vision
+					// retention is bounded separately by count and encoded bytes.
+					if key == "encrypted_content" || contentPart && key == "image_url" && current["type"] == "input_image" {
+						continue
+					}
+					kind, _ := current["type"].(string)
+					parts := nativeItem && (key == "content" && (kind == "message" || kind == "agent_message") ||
+						key == "output" && (kind == "function_call_output" || kind == "custom_tool_call_output"))
+					if !visit(nested, false, parts) {
 						return false
 					}
 				}
 			}
 			return true
 		}
-		if !visit(value) {
+		if !visit(value, true, false) {
 			return 0, false
 		}
 	}

@@ -105,7 +105,8 @@ func (c *contextCompactor) prepare(ctx context.Context, parsed *parsedResponsesR
 			return fail(http.StatusBadRequest, "compaction input items must be objects")
 		}
 	}
-	input, err := c.restore(ctx, input)
+	var carried []compactionCarriedItem
+	input, err := c.restoreWithCarried(ctx, input, &carried)
 	if err != nil {
 		return fail(http.StatusUnprocessableEntity, err.Error())
 	}
@@ -144,20 +145,93 @@ func (c *contextCompactor) prepare(ctx context.Context, parsed *parsedResponsesR
 			input = input[:len(input)-1]
 		}
 	}
-	reduced, _, err := selectCompactionWorkingSet(ctx, input,
+	prepared, imagesChanged, err := stripCompactionImages(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	var imageCarried []compactionCarriedItem
+	for index, original := range input {
+		if compactionCarriedMessage(original) && string(original) != string(prepared[index]) {
+			imageCarried = append(imageCarried, compactionCarriedItem{
+				Originals: []json.RawMessage{original}, Index: index, source: index,
+			})
+		}
+	}
+	reduce := reduceContextCompactionWithPlan
+	if len(carried) > 0 || len(imageCarried) > 0 {
+		reduce = func(items []json.RawMessage, plan compactionRetentionPlan) []json.RawMessage {
+			retained, err := reduceContextCompactionPlan(ctx, items, plan, true)
+			if err != nil {
+				return items
+			}
+			return retained
+		}
+	}
+	reduced, report, err := selectCompactionWorkingSet(ctx, prepared,
 		compactionTargetTokens, compactionOvershootTokens,
-		reduceContextCompactionWithPlan, compactionVisibleStringTokens)
+		reduce, compactionVisibleStringTokens)
+	// Replacing an image with a text marker is useful compaction even when
+	// the text-only metric cannot shrink. Do not escalate unrelated history.
+	if imagesChanged && errors.Is(err, errCompactionNoReduction) {
+		reduced, err = prepared, nil
+	}
+	snapshot := compactionSnapshot{Items: reduced, Carried: imageCarried}
+	var positions []int
+	if ctx.Err() == nil && err != nil && report.after > compactionTargetTokens+compactionOvershootTokens {
+		snapshot, positions, err = pressureCompactionWorkingSet(ctx, input, compactionTargetTokens)
+	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
 		}
 		return fail(http.StatusUnprocessableEntity, err.Error())
 	}
-	capsule, err := c.seal(ctx, reduced)
+	if len(carried) > 0 {
+		if positions == nil {
+			// Receipt-bearing evidence plans preserve source positions even
+			// when metadata cleanup changes an item's reconciliation identity.
+			if len(input) != len(snapshot.Items) {
+				return fail(http.StatusUnprocessableEntity, "compaction lost carried-message source positions")
+			}
+			positions = make([]int, len(input)+1)
+			for index := range positions {
+				positions[index] = index
+			}
+		}
+		// Merge in the pre-selection timeline, not by final insertion point:
+		// several consecutive dropped items can share that final position.
+		generated := make(map[int]compactionCarriedItem)
+		for _, receipt := range snapshot.Carried {
+			generated[receipt.source] = receipt
+		}
+		inherited := make(map[int][]compactionCarriedItem)
+		for _, receipt := range carried {
+			inherited[receipt.Index] = append(inherited[receipt.Index], receipt)
+		}
+		snapshot.Carried = nil
+		for source := range len(input) + 1 {
+			next, changed := generated[source]
+			for _, receipt := range inherited[source] {
+				receipt.Index = positions[source]
+				if receipt.Removed {
+					snapshot.Carried = append(snapshot.Carried, receipt)
+				} else if changed {
+					next.Originals = append(next.Originals, receipt.Originals...)
+				} else {
+					receipt.Removed = positions[source] == positions[source+1]
+					next, changed = receipt, true
+				}
+			}
+			if changed {
+				snapshot.Carried = append(snapshot.Carried, next)
+			}
+		}
+	}
+	capsule, err := c.sealSnapshot(ctx, snapshot)
 	if err != nil {
 		return fail(http.StatusUnprocessableEntity, err.Error())
 	}
-	parsed.setInput(mustMarshalJSON(reduced))
+	parsed.setInput(mustMarshalJSON(snapshot.Items))
 	return capsule, nil
 }
 
@@ -205,9 +279,14 @@ func writeContextCompactionResponse(writer io.Writer, capsule, retained json.Raw
 // them. Align those carried items with the snapshot rather than blindly dropping
 // the prefix or duplicating every user message. Unmatched current context stays.
 func (c *contextCompactor) restore(ctx context.Context, input []json.RawMessage) ([]json.RawMessage, error) {
+	return c.restoreWithCarried(ctx, input, nil)
+}
+
+func (c *contextCompactor) restoreWithCarried(ctx context.Context, input []json.RawMessage, receipts *[]compactionCarriedItem) ([]json.RawMessage, error) {
 	type restoredItem struct {
 		raw          json.RawMessage
 		fromEnvelope bool
+		originals    []json.RawMessage
 	}
 	withinBudget := func(items []restoredItem) bool {
 		remaining := responsesRequestBufferBytes - 2 // JSON array brackets.
@@ -219,6 +298,12 @@ func (c *contextCompactor) restore(ctx context.Context, input []json.RawMessage)
 				return false
 			}
 			remaining -= len(item.raw)
+			for _, original := range item.originals {
+				remaining -= len(original)
+			}
+			if remaining < 0 {
+				return false
+			}
 		}
 		return true
 	}
@@ -228,7 +313,7 @@ func (c *contextCompactor) restore(ctx context.Context, input []json.RawMessage)
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		retained, local, err := c.open(ctx, item)
+		snapshot, local, err := c.openSnapshot(ctx, item)
 		if err != nil {
 			return nil, err
 		}
@@ -236,9 +321,8 @@ func (c *contextCompactor) restore(ctx context.Context, input []json.RawMessage)
 			output = append(output, restoredItem{raw: item})
 			continue
 		}
-		retainedItems := make([]restoredItem, len(retained))
-		positions := make(map[string][]int, len(retained))
-		for index, raw := range retained {
+		retainedItems := make([]restoredItem, len(snapshot.Items))
+		for index, raw := range snapshot.Items {
 			var fields map[string]json.RawMessage
 			if json.Unmarshal(raw, &fields) != nil || fields == nil {
 				return nil, errors.New("invalid item in retained compaction history")
@@ -247,17 +331,47 @@ func (c *contextCompactor) restore(ctx context.Context, input []json.RawMessage)
 				return nil, errors.New("nested local compaction envelope is not supported")
 			}
 			retainedItems[index] = restoredItem{raw: raw, fromEnvelope: true}
-			identity := contextCompactionItemIdentity(raw)
-			positions[identity] = append(positions[identity], index)
+		}
+		removed := make(map[int][]restoredItem)
+		for _, receipt := range snapshot.Carried {
+			if receipt.Removed {
+				removed[receipt.Index] = append(removed[receipt.Index], restoredItem{fromEnvelope: true, originals: receipt.Originals})
+			} else {
+				retainedItems[receipt.Index].originals = append(retainedItems[receipt.Index].originals, receipt.Originals...)
+			}
+		}
+		var expanded []restoredItem
+		for index := range len(retainedItems) + 1 {
+			expanded = append(expanded, removed[index]...)
+			if index < len(retainedItems) {
+				expanded = append(expanded, retainedItems[index])
+			}
+		}
+		retainedItems = expanded
+		positions := make(map[string][]int, len(retainedItems))
+		for index, retained := range retainedItems {
+			for _, raw := range append(slices.Clone(retained.originals), retained.raw) {
+				if len(raw) == 0 {
+					continue
+				}
+				identity := contextCompactionItemIdentity(raw)
+				matches := positions[identity]
+				if len(matches) == 0 || matches[len(matches)-1] != index {
+					positions[identity] = append(matches, index)
+				}
+			}
 		}
 		// Codex retains the newest end of history. Match backwards so a
 		// repeated no-ID user message anchors fresh context at its latest
 		// occurrence, rather than before an older conflicting instruction.
 		matched := make([]int, len(output))
-		limit := len(retained)
+		limit := len(retainedItems)
 		for index := len(output) - 1; index >= 0; index-- {
 			matched[index] = -1
 			carried := output[index].raw
+			if len(carried) == 0 && len(output[index].originals) > 0 {
+				carried = output[index].originals[0]
+			}
 			if !output[index].fromEnvelope && contextCompactionFreshContext(carried) {
 				continue
 			}
@@ -267,7 +381,11 @@ func (c *contextCompactor) restore(ctx context.Context, input []json.RawMessage)
 				matched[index] = matches[match-1]
 			} else {
 				for candidate := range limit {
-					if contextCompactionTruncatedMatch(carried, retained[candidate]) {
+					retained := retainedItems[candidate]
+					originals := append(slices.Clone(retained.originals), retained.raw)
+					if slices.ContainsFunc(originals, func(original json.RawMessage) bool {
+						return contextCompactionTruncatedMatch(carried, original)
+					}) {
 						if matched[index] >= 0 {
 							return nil, errors.New("ambiguous truncated message in compacted history")
 						}
@@ -285,10 +403,12 @@ func (c *contextCompactor) restore(ctx context.Context, input []json.RawMessage)
 			}
 		}
 		var merged, pending []restoredItem
+		unmatchedEnvelope := false
 		cursor := 0
 		for position, carried := range output {
 			index := matched[position]
 			if index < 0 {
+				unmatchedEnvelope = unmatchedEnvelope || carried.fromEnvelope
 				pending = append(pending, carried)
 				continue
 			}
@@ -304,14 +424,24 @@ func (c *contextCompactor) restore(ctx context.Context, input []json.RawMessage)
 		if !withinBudget(candidate) {
 			return nil, errors.New("restored compaction history exceeds the router buffer budget")
 		}
+		if unmatchedEnvelope {
+			return nil, errors.New("cannot safely reconcile overlapping compaction envelopes; discarded history was not restored")
+		}
 		output = candidate
 	}
 	if !withinBudget(output) {
 		return nil, errors.New("restored compaction history exceeds the router buffer budget")
 	}
-	result := make([]json.RawMessage, len(output))
-	for index, item := range output {
-		result[index] = item.raw
+	result := make([]json.RawMessage, 0, len(output))
+	for _, item := range output {
+		if receipts != nil {
+			if len(item.originals) > 0 {
+				*receipts = append(*receipts, compactionCarriedItem{Originals: item.originals, Index: len(result), Removed: len(item.raw) == 0})
+			}
+		}
+		if len(item.raw) > 0 {
+			result = append(result, item.raw)
+		}
 	}
 	return result, nil
 

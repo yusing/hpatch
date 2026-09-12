@@ -155,7 +155,7 @@ provider request. The first compaction creates an owner-only key at
 `~/.config/mekugi/compaction.key` on Linux). Keep that key to resume compacted
 sessions, including when moving them to another installation.
 
-Compaction can discard unmarked historical details from older finished operations,
+Compaction first discards unmarked historical details from older finished operations,
 even while the task is still open. It keeps factual execution records, requests,
 visible decisions, diagnostic excerpts, referenced evidence, and recent/live work.
 Terminal results from recognized direct `go test` calls are an exception: even when
@@ -167,9 +167,33 @@ Truncated or oversized documentation can also lose unreferenced bulk; a single
 oversized evidence line retains bounded excerpts. Discarded details are not currently
 retrievable through Mekugi.
 
-Unknown or ambiguous execution states remain intact. If nothing qualifies,
-compaction reports an error rather than asking a provider for a summary.
-Compaction does not guarantee a fixed retained-history size.
+The retained history targets 50,000 visible-string tokens, with at most 30,000
+tokens of overshoot. If the initial reductions cannot fit, a budget-first pass
+keeps prioritized excerpts and drops older material regardless of tool or content
+format. Developer/system/model instructions and canonical `AGENTS.md` context
+remain intact. The latest user request and recent/live execution evidence come
+next, but user messages and live output can be excerpted when oversized.
+Repeated text can collapse to representative occurrences with an omission count.
+The selector reserves space for the request chain and discussion before execution
+bulk, with an initial preference for the latest assistant or agent report.
+Unused shares are redistributed as small items fit. It need not fill the
+50,000-token target.
+This is deliberately lossy: it cannot guarantee that every omitted detail is
+unimportant. The model receives explicit omission markers, not an invented summary.
+
+During compaction, ordinary historical images become `[Image]` placeholders,
+keeping the surrounding text. This deliberately discards visual details rather
+than assuming earlier reasoning captured them. Fresh images on normal turns and
+mandatory instruction images remain unchanged. Image data is not tokenized as
+text, and historical images no longer need a separate allocation budget.
+
+Original user/agent messages needed to reconcile Codex's carried history remain
+encrypted in the capsule, but are not returned to the model or available through
+a retrieval tool. The budget measures the restored history, not ciphertext size
+or complete provider input; fresh instructions and later messages add to it.
+Required instructions alone exceeding 80,000 tokens, invalid input, unreadable
+envelopes, or a no-op on an already-small history can still produce an error.
+Mekugi never falls back to a provider summary.
 
 Then launch:
 
@@ -708,6 +732,34 @@ make install
 For focused checks, use `go test .` for the engine,
 `go test ./internal/router` for routing, or
 `go test ./cmd/mekugi ./cmd/shell` for process entry points.
+
+To inspect compaction loss using an installed Codex client:
+
+```sh
+MEKUGI_COMPACTION_CODEX_BIN="$(command -v codex)" go test ./internal/router -run '^TestCompactionInstalledCodex$' -count=1 -v
+```
+
+These loopback fixtures make no provider inference requests. Pressure cases log
+per-item token counts, retention decisions, and the next request's token count.
+They check specified continuation facts and client compatibility, not model
+reasoning quality on real task histories.
+
+For an offline replay of an existing session's first recorded compaction window,
+use the rollout check. The optional audit directory receives original/retained
+history and per-item diagnostics, so it must already exist with owner-only
+permissions. Original session files are read-only; no historical tool calls or
+provider inference are executed.
+
+```sh
+compaction_audit_dir="$(mktemp -d)"
+MEKUGI_COMPACTION_ROLLOUT="/absolute/path/rollout.jsonl" \
+MEKUGI_COMPACTION_AUDIT_DIR="$compaction_audit_dir" \
+go test ./internal/router -run '^TestCompactionRolloutReplay$' -count=1 -v
+```
+
+The replay measures recorded items, not omitted model instructions or request/tool
+framing. Passing its budget/restoration checks does not establish task-fact retention;
+inspect the exported before/after histories for that assessment.
 
 ## License
 

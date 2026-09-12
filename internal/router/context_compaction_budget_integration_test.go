@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -106,12 +105,12 @@ func TestCompactionBudgetHTTPAdmission(t *testing.T) {
 			authority int
 			status    int
 		}{
-			{"protected-over-ceiling", 90_000, http.StatusUnprocessableEntity},
-			{"protected-within-overshoot", 60_000, http.StatusOK},
+			{"user-over-ceiling", 90_000, http.StatusOK},
+			{"user-within-overshoot", 60_000, http.StatusOK},
 		} {
 			t.Run(fmt.Sprintf("%s/v2=%t", test.name, v2), func(t *testing.T) {
 				input := append([]json.RawMessage{mustMarshalJSON(map[string]any{
-					"type": "message", "role": "user", "content": strings.Repeat("authority ", test.authority),
+					"type": "message", "role": "user", "content": "Continue the router task.\n" + strings.Repeat("detail ", test.authority) + "\nDo not deploy.",
 				})}, compactHTTPHistory()...)
 				path := "/v1/responses/compact"
 				if v2 {
@@ -131,15 +130,6 @@ func TestCompactionBudgetHTTPAdmission(t *testing.T) {
 				}))(response, request)
 				if response.Code != test.status {
 					t.Fatalf("status = %d, want %d: %.300s", response.Code, test.status, response.Body.String())
-				}
-				if test.status != http.StatusOK {
-					if !strings.Contains(response.Body.String(), "ceiling 80000") {
-						t.Fatal("budget failure omitted its actual ceiling")
-					}
-					if _, err := os.Stat(compactor.keyPath); !os.IsNotExist(err) {
-						t.Fatalf("inadmissible history reached envelope sealing: %v", err)
-					}
-					return
 				}
 				var compacted struct {
 					Output []json.RawMessage `json:"output"`
@@ -170,11 +160,17 @@ func TestCompactionBudgetHTTPAdmission(t *testing.T) {
 					t.Fatal(err)
 				}
 				tokens, ok := compactionVisibleStringTokens(restored...)
-				if !ok || tokens <= compactionTargetTokens || tokens > compactionTargetTokens+compactionOvershootTokens {
+				if !ok || tokens > compactionTargetTokens+compactionOvershootTokens {
 					t.Fatalf("overshoot not measured at native replay: %d", tokens)
 				}
-				if !bytes.Equal(restored[0], input[0]) {
-					t.Fatal("overshoot was achieved by truncating authority")
+				if test.authority > compactionTargetTokens+compactionOvershootTokens {
+					visible := mustMarshalJSON(restored)
+					if tokens > compactionTargetTokens || !bytes.Contains(visible, []byte("mekugi repetition:")) ||
+						!bytes.Contains(visible, []byte("Continue the router task.")) || !bytes.Contains(visible, []byte("Do not deploy.")) {
+						t.Fatal("oversized user message lost instructions or retained repetitive bulk")
+					}
+				} else if tokens <= compactionTargetTokens || !bytes.Equal(restored[0], input[0]) {
+					t.Fatal("within-allowance user message was changed")
 				}
 			})
 		}

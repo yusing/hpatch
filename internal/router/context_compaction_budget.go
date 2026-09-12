@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -10,6 +11,8 @@ const (
 	compactionTargetTokens    = 50_000
 	compactionOvershootTokens = 30_000
 )
+
+var errCompactionNoReduction = errors.New("no supported token reduction is available for this history")
 
 // A retention plan changes eligibility, never the evidence-preservation rules.
 // Output-only pruning gets the first opportunity to release the warm frontier:
@@ -101,7 +104,7 @@ func selectCompactionWorkingSet(
 		return nil, report, fmt.Errorf("native compaction history retains %d visible-string tokens (before %d; target %d + overshoot %d = ceiling %d); protected or unsupported context was not discarded", report.after, before, target, overshoot, target+overshoot)
 	}
 	if report.after >= before {
-		return nil, report, fmt.Errorf("no supported token reduction is available for this history (%d visible-string tokens); protected context was not discarded and no provider compaction was requested", before)
+		return nil, report, fmt.Errorf("%w (%d visible-string tokens); protected context was not discarded and no provider compaction was requested", errCompactionNoReduction, before)
 	}
 	return best, report, nil
 }

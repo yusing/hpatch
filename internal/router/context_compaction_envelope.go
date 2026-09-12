@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -24,12 +25,31 @@ import (
 
 const (
 	contextCompactionPrefix   = "mekugi.compaction.v1:"
+	contextCompactionV2Prefix = "mekugi.compaction.v2:"
 	contextCompactionIDPrefix = "cmp_mekugi_"
 )
 
+type compactionSnapshot struct {
+	Items   []json.RawMessage         `json:"items"`
+	Report  *compactionPressureReport `json:"pressure_report,omitempty"`
+	Carried []compactionCarriedItem   `json:"carried,omitempty"`
+}
+
+// Originals are authenticated reconciliation evidence, never model input. Codex
+// can carry a no-ID message or an arbitrary client-truncated version alongside
+// the capsule. Retaining its original here lets us match it without resurrecting
+// its omitted content. Index is a replay item or insertion point when Removed.
+type compactionCarriedItem struct {
+	Originals []json.RawMessage `json:"originals"`
+	Index     int               `json:"index"`
+	Removed   bool              `json:"removed,omitzero"`
+	source    int
+}
+
 // The key is installation-owned, not session-owned: resumed and forked Codex
-// histories must remain readable after a router restart. Only encrypted retained
-// history travels in the envelope; no transcript archive or retrieval is used.
+// histories must remain readable after a router restart. Retained history and
+// client-reconciliation receipts travel encrypted; no external archive or model
+// retrieval interface is used.
 type contextCompactor struct {
 	keyPath string
 	aeadMu  sync.Mutex
@@ -89,7 +109,16 @@ func (c *contextCompactor) cipher(ctx context.Context, create bool) (cipher.AEAD
 }
 
 func (c *contextCompactor) seal(ctx context.Context, items []json.RawMessage) (json.RawMessage, error) {
-	plaintext, err := marshalProtocolJSON(items)
+	return c.sealSnapshot(ctx, compactionSnapshot{Items: items})
+}
+
+func (c *contextCompactor) sealSnapshot(ctx context.Context, snapshot compactionSnapshot) (json.RawMessage, error) {
+	prefix := contextCompactionPrefix
+	var payload any = snapshot.Items
+	if len(snapshot.Carried) > 0 || snapshot.Report != nil {
+		prefix, payload = contextCompactionV2Prefix, snapshot
+	}
+	plaintext, err := marshalProtocolJSON(payload)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +137,7 @@ func (c *contextCompactor) seal(ctx context.Context, items []json.RawMessage) (j
 	if err != nil {
 		return nil, err
 	}
-	encoded := contextCompactionPrefix + base64.RawStdEncoding.EncodeToString(aead.Seal(nil, nil, compressed.Bytes(), []byte(contextCompactionPrefix)))
+	encoded := prefix + base64.RawStdEncoding.EncodeToString(aead.Seal(nil, nil, compressed.Bytes(), []byte(prefix)))
 	digest := sha256.Sum256([]byte(encoded))
 	return marshalProtocolJSON(map[string]any{
 		"type":              "compaction",
@@ -118,6 +147,12 @@ func (c *contextCompactor) seal(ctx context.Context, items []json.RawMessage) (j
 }
 
 func (c *contextCompactor) open(ctx context.Context, raw json.RawMessage) ([]json.RawMessage, bool, error) {
+	snapshot, local, err := c.openSnapshot(ctx, raw)
+	return snapshot.Items, local, err
+}
+
+func (c *contextCompactor) openSnapshot(ctx context.Context, raw json.RawMessage) (compactionSnapshot, bool, error) {
+	var snapshot compactionSnapshot
 	var item struct {
 		Type    string `json:"type"`
 		ID      string `json:"id"`
@@ -125,45 +160,59 @@ func (c *contextCompactor) open(ctx context.Context, raw json.RawMessage) ([]jso
 	}
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(raw, &fields) != nil {
-		return nil, false, nil
+		return snapshot, false, nil
 	}
 	item.Type = jsonString(fields, "type")
 	item.ID = jsonString(fields, "id")
 	item.Content = jsonString(fields, "encrypted_content")
 	local := strings.HasPrefix(item.Content, "mekugi.compaction.") || strings.HasPrefix(item.ID, contextCompactionIDPrefix)
 	if !local {
-		return nil, false, nil
+		return snapshot, false, nil
 	}
-	if item.Type != "compaction" || !strings.HasPrefix(item.Content, contextCompactionPrefix) {
-		return nil, true, errors.New("unsupported or damaged mekugi compaction envelope")
+	prefix := contextCompactionPrefix
+	if strings.HasPrefix(item.Content, contextCompactionV2Prefix) {
+		prefix = contextCompactionV2Prefix
 	}
-	encrypted, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(item.Content, contextCompactionPrefix))
+	if item.Type != "compaction" || !strings.HasPrefix(item.Content, prefix) {
+		return snapshot, true, errors.New("unsupported or damaged mekugi compaction envelope")
+	}
+	encrypted, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(item.Content, prefix))
 	if err != nil {
-		return nil, true, errors.New("invalid mekugi compaction envelope encoding")
+		return snapshot, true, errors.New("invalid mekugi compaction envelope encoding")
 	}
 	aead, err := c.cipher(ctx, false)
 	if err != nil {
-		return nil, true, err
+		return snapshot, true, err
 	}
-	compressed, err := aead.Open(nil, nil, encrypted, []byte(contextCompactionPrefix))
+	compressed, err := aead.Open(nil, nil, encrypted, []byte(prefix))
 	if err != nil {
-		return nil, true, errors.New("mekugi compaction envelope authentication failed")
+		return snapshot, true, errors.New("mekugi compaction envelope authentication failed")
 	}
 	decompressor, err := zlib.NewReader(bytes.NewReader(compressed))
 	if err != nil {
-		return nil, true, errors.New("invalid mekugi compaction envelope payload")
+		return snapshot, true, errors.New("invalid mekugi compaction envelope payload")
 	}
 	defer decompressor.Close()
 	plaintext, err := io.ReadAll(io.LimitReader(decompressor, responsesRequestBufferBytes+1))
 	if err != nil || len(plaintext) > responsesRequestBufferBytes {
-		return nil, true, errors.New("mekugi compaction envelope exceeds the router buffer budget or is damaged")
+		return snapshot, true, errors.New("mekugi compaction envelope exceeds the router buffer budget or is damaged")
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, true, err
+		return snapshot, true, err
 	}
-	var items []json.RawMessage
-	if json.Unmarshal(plaintext, &items) != nil || len(items) == 0 {
-		return nil, true, errors.New("invalid retained mekugi compaction history")
+	if prefix == contextCompactionPrefix {
+		err = json.Unmarshal(plaintext, &snapshot.Items)
+	} else {
+		err = json.Unmarshal(plaintext, &snapshot)
 	}
-	return items, true, nil
+	if err != nil || len(snapshot.Items) == 0 {
+		return compactionSnapshot{}, true, errors.New("invalid retained mekugi compaction history")
+	}
+	for _, carried := range snapshot.Carried {
+		if len(carried.Originals) == 0 || slices.ContainsFunc(carried.Originals, func(raw json.RawMessage) bool { return !compactionCarriedMessage(raw) }) || carried.Index < 0 || carried.Index > len(snapshot.Items) ||
+			(!carried.Removed && carried.Index == len(snapshot.Items)) {
+			return compactionSnapshot{}, true, errors.New("invalid compaction carried-message receipt")
+		}
+	}
+	return snapshot, true, nil
 }

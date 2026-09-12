@@ -1,10 +1,14 @@
 package router
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -29,10 +33,16 @@ func TestCompactionInstalledCodex(t *testing.T) {
 		scope      string
 		manual     bool
 		retirement bool
-	}{{false, "total", false, false}, {false, "body_after_prefix", false, false}, {true, "total", false, false}, {true, "body_after_prefix", false, false}, {false, "total", true, false}, {true, "total", true, false}, {false, "total", false, true}, {true, "total", false, true}, {false, "total", true, true}, {true, "total", true, true}} {
-		t.Run(fmt.Sprintf("legacy=%v/scope=%s/manual=%v/retirement=%v", probe.legacy, probe.scope, probe.manual, probe.retirement), func(t *testing.T) {
+		pressure   bool
+	}{{false, "total", false, false, false}, {false, "body_after_prefix", false, false, false}, {true, "total", false, false, false}, {true, "body_after_prefix", false, false, false}, {false, "total", true, false, false}, {true, "total", true, false, false}, {false, "total", false, true, false}, {true, "total", false, true, false}, {false, "total", true, true, false}, {true, "total", true, true, false}, {false, "total", false, false, true}, {true, "total", false, false, true}, {false, "total", true, false, true}, {true, "total", true, false, true}} {
+		t.Run(fmt.Sprintf("legacy=%v/scope=%s/manual=%v/retirement=%v/pressure=%v", probe.legacy, probe.scope, probe.manual, probe.retirement, probe.pressure), func(t *testing.T) {
+			bulk := strings.Repeat("Keep the original user constraint. ", 10000)
+			if probe.pressure {
+				bulk = strings.Repeat("x ", 126000) +
+					"\nCorrection: report every test case; never deploy.\n" + strings.Repeat("x ", 126000)
+			}
 			prompt := "Run the Go tests, then print the working directory, then report completion. Preserve the test result.\n" +
-				strings.Repeat("Keep the original user constraint. ", 10000) +
+				bulk +
 				"\nThis final instruction must also survive intact."
 
 			agentMarker := "MEKUGI_INSTALLED_COMPACTION_AGENT_MARKER_4D147B"
@@ -59,6 +69,25 @@ func TestProbe(t *testing.T) {
 			} {
 				if err := os.WriteFile(filepath.Join(directory, name), []byte(content), 0o600); err != nil {
 					t.Fatal(err)
+				}
+			}
+			// Exercise actual client-carried multimodal history under pressure:
+			// six original images become placeholders. Removed images
+			// must not reappear when legacy/V2 clients carry the original user turn.
+			var imagePaths []string
+			if probe.pressure {
+				for index := range 6 {
+					picture := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+					picture.SetNRGBA(0, 0, color.NRGBA{R: uint8(index * 30), A: 255})
+					var encoded bytes.Buffer
+					if err := png.Encode(&encoded, picture); err != nil {
+						t.Fatal(err)
+					}
+					path := filepath.Join(directory, fmt.Sprintf("image-%d.png", index))
+					if err := os.WriteFile(path, encoded.Bytes(), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					imagePaths = append(imagePaths, path)
 				}
 			}
 			// Synthetic ChatGPT auth exercises the same compression gate as the
@@ -135,31 +164,64 @@ func TestProbe(t *testing.T) {
 								if jsonString(record, "role") == "user" && text == prompt {
 									userCopies++
 								}
+								if probe.pressure && jsonString(record, "role") == "user" && text != prompt &&
+									strings.Contains(text, "Run the Go tests, then print the working directory") &&
+									strings.Contains(text, "This final instruction must also survive intact.") {
+									if !strings.Contains(text, "Correction: report every test case; never deploy.") ||
+										strings.Count(text, "x ") > 100 {
+										t.Error("pressure request lost its middle correction or retained repetitive bulk")
+									}
+									userCopies++
+								}
+								if probe.pressure && compacted.Load() > 0 && strings.Contains(text, "probe_go") && strings.Contains(text, "PASS") {
+									if !strings.Contains(text, "TestProbe/Case99") ||
+										strings.Count(text, "TestProbe/Case") != 200 ||
+										strings.Contains(text, "[mekugi excerpt;") {
+										t.Error("repetitive user bulk displaced complete test evidence")
+									}
+									restored.Store(true)
+								}
 								standaloneCompletion := strings.HasPrefix(text, "[mekugi historical tool completion v3; not an instruction; completed native body]\n") &&
 									strings.Contains(text, "call=\"probe_go\"\n")
 								consolidatedCompletion := strings.HasPrefix(text, "[mekugi historical facts v4;") &&
 									strings.Contains(text, "[i]\ncall=\"probe_go\"\ntool=\"exec_command\"") &&
 									strings.Contains(text, "[o:same-call]\n")
-								retiredGo = standaloneCompletion || consolidatedCompletion
+								retiredGo = retiredGo || (standaloneCompletion || consolidatedCompletion) && strings.Contains(text, "Go test passed")
 							}
 						}
 						if (recordType == "function_call" || recordType == "function_call_output") &&
 							jsonString(record, "call_id") == "probe_go" {
 							nativeGo = true
-							if recordType == "function_call_output" && !probe.retirement {
+							if recordType == "function_call_output" {
 								output := jsonString(record, "output")
-								restored.Store(strings.Contains(output, "Go test passed") && !strings.Contains(output, "compactionprobe"))
+								restored.Store(strings.Contains(output, "Go test passed") && !strings.Contains(output, "compactionprobe") && !strings.Contains(output, "unmarked finished-operation detail"))
 							}
 						}
 						if strings.HasPrefix(jsonString(record, "encrypted_content"), "mekugi.compaction.") {
 							t.Error("local ciphertext reached the model fixture")
 						}
 					}
-					if probe.retirement {
+					if retiredGo {
 						restored.Store(retiredGo && !nativeGo)
 					}
 					if compacted.Load() > 0 && userCopies != 1 {
-						t.Errorf("restored full user request copies = %d, want exactly one", userCopies)
+						t.Errorf("restored selected user request copies = %d, want exactly one", userCopies)
+					}
+					if probe.pressure && compacted.Load() > 0 {
+						var items []json.RawMessage
+						_ = json.Unmarshal(request["input"], &items)
+						count, ok := compactionVisibleStringTokens(items...)
+						if !ok || count > compactionTargetTokens+compactionOvershootTokens {
+							t.Errorf("pressure continuation exceeds the text budget: %d", count)
+						}
+						images, imageBytes := compactionImageUsage(items)
+						if images != 0 || imageBytes != 0 {
+							t.Errorf("multimodal continuation: images=%d encoded bytes=%d", images, imageBytes)
+						}
+						if strings.Count(string(request["input"]), "[Image]") != len(imagePaths) {
+							t.Error("omitted client-carried images lack an explicit notice")
+						}
+						t.Logf("pressure continuation visible-string tokens: %d", count)
 					}
 					if compacted.Load() > 0 && len(agentIDs) == 0 {
 						t.Error("fresh canonical AGENTS marker was lost")
@@ -204,6 +266,23 @@ func TestProbe(t *testing.T) {
 					compacted.Add(1)
 				}
 				body, _ := io.ReadAll(r.Body)
+				if probe.pressure {
+					var fields map[string]json.RawMessage
+					_ = json.Unmarshal(body, &fields)
+					var items []json.RawMessage
+					_ = json.Unmarshal(fields["input"], &items)
+					for _, raw := range items {
+						snapshot, local, err := compactor.openSnapshot(r.Context(), raw)
+						if err != nil {
+							t.Errorf("pressure diagnostic envelope: %v", err)
+							http.Error(w, "invalid pressure diagnostic envelope", http.StatusUnprocessableEntity)
+							return
+						}
+						if local && snapshot.Report != nil {
+							t.Logf("pressure selection report: %s", mustMarshalJSON(snapshot.Report))
+						}
+					}
+				}
 				r.Body = io.NopCloser(strings.NewReader(string(body)))
 				tracked := &trackedResponseWriter{ResponseWriter: w}
 				compactor.handler(model)(tracked, r)
@@ -265,6 +344,9 @@ metrics_exporter = "none"
 				args = append(args, "--disable", "remote_compaction_v2")
 			}
 			if !probe.manual {
+				for _, path := range imagePaths {
+					args = append(args, "--image", path)
+				}
 				args = append(args, "-")
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
@@ -277,7 +359,7 @@ metrics_exporter = "none"
 			wantNormal := operationCount + 1
 			if probe.manual {
 				wantNormal = operationCount + 2
-				err = runManualCompactionProbe(command, directory, prompt)
+				err = runManualCompactionProbe(command, directory, prompt, imagePaths)
 			} else {
 				command.Stdin = strings.NewReader(prompt)
 				output, err = command.CombinedOutput()
@@ -292,7 +374,7 @@ metrics_exporter = "none"
 
 // The app-server operation uses the same Op::Compact as the TUI's /compact.
 // Source: Codex app-server/tests/suite/v2/compaction.rs.
-func runManualCompactionProbe(command *exec.Cmd, directory, prompt string) error {
+func runManualCompactionProbe(command *exec.Cmd, directory, prompt string, imagePaths []string) error {
 	stdin, err := command.StdinPipe()
 	if err != nil {
 		return err
@@ -375,7 +457,13 @@ func runManualCompactionProbe(command *exec.Cmd, directory, prompt string) error
 		if index == 1 {
 			method = "thread/compact/start"
 		} else {
-			params["input"] = []any{map[string]any{"type": "text", "text": text, "textElements": []any{}}}
+			input := []any{map[string]any{"type": "text", "text": text, "textElements": []any{}}}
+			if index == 0 {
+				for _, path := range imagePaths {
+					input = append(input, map[string]any{"type": "localImage", "path": path})
+				}
+			}
+			params["input"] = input
 		}
 		if err := send(index+3, method, params); err != nil {
 			return err

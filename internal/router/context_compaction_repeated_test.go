@@ -209,17 +209,42 @@ func TestCompactionRolloutReplay(t *testing.T) {
 	if err := scanner.Err(); err != nil {
 		t.Fatal(err)
 	}
-	reduced := reduceContextCompaction(input)
-	changed := len(input) - len(reduced)
-	if changed == 0 {
-		for index := range input {
-			if string(input[index]) != string(reduced[index]) {
-				changed++
-			}
+	compactor := &contextCompactor{keyPath: filepath.Join(t.TempDir(), "compaction.key")}
+	parsed, err := parseResponsesRequest(mustMarshalJSON(map[string]any{"model": "loopback", "input": input}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	preparedCapsule, err := compactor.prepare(t.Context(), &parsed, http.Header{}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, local, err := compactor.openSnapshot(t.Context(), preparedCapsule)
+	if err != nil || !local {
+		t.Fatalf("cannot inspect the selected replay: %v", err)
+	}
+	reduced, pressure := selected.Items, selected.Report != nil
+	expected, _, err := stripCompactionImages(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exactRetained := make(map[string]int, len(reduced))
+	for _, raw := range reduced {
+		exactRetained[string(raw)]++
+	}
+	changed := 0
+	for _, raw := range input {
+		if exactRetained[string(raw)] > 0 {
+			exactRetained[string(raw)]--
+		} else {
+			changed++
 		}
 	}
+
 	retainedCursor := 0
 	for index := range input {
+		if pressure && !contextCompactionFreshContext(input[index]) {
+			continue
+		}
 		var fields map[string]json.RawMessage
 		_ = json.Unmarshal(input[index], &fields)
 		kind := jsonString(fields, "type")
@@ -233,7 +258,7 @@ func TestCompactionRolloutReplay(t *testing.T) {
 		for retainedCursor < len(reduced) {
 			candidate := reduced[retainedCursor]
 			retainedCursor++
-			if string(input[index]) == string(candidate) || compactionReplayAllowsOnlyMetadataCleanup(input[index], candidate) {
+			if string(expected[index]) == string(candidate) || compactionReplayAllowsOnlyMetadataCleanup(expected[index], candidate) {
 				found = true
 				break
 			}
@@ -245,7 +270,6 @@ func TestCompactionRolloutReplay(t *testing.T) {
 	if changed == 0 {
 		t.Fatal("rollout has no supported reduction")
 	}
-	compactor := &contextCompactor{keyPath: filepath.Join(t.TempDir(), "compaction.key")}
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(mustMarshalJSON(map[string]any{
 		"model": "loopback", "input": input, "stream": true,
@@ -315,6 +339,51 @@ func TestCompactionRolloutReplay(t *testing.T) {
 	legacyRestored, err := compactor.restore(t.Context(), legacyResponse.Output)
 	if err != nil || contextCompactionCanonicalJSON(mustMarshalJSON(legacyRestored)) != contextCompactionCanonicalJSON(mustMarshalJSON(reduced)) {
 		t.Fatalf("legacy replay duplicated or lost selected context: %v", err)
+	}
+	// Opt-in local artifacts allow loss inspection against actual source items.
+	// Never put private transcript content in test output or modify the rollout.
+	if directory := os.Getenv("MEKUGI_COMPACTION_AUDIT_DIR"); directory != "" {
+		info, err := os.Stat(directory)
+		if err != nil || !info.IsDir() || !filepath.IsAbs(directory) || info.Mode().Perm()&0077 != 0 {
+			t.Fatal("MEKUGI_COMPACTION_AUDIT_DIR must be an existing absolute owner-only directory")
+		}
+		sealed, local, err := compactor.openSnapshot(t.Context(), capsule)
+		if err != nil || !local {
+			t.Fatal("cannot inspect selected local snapshot")
+		}
+		before, _ := compactionVisibleStringTokens(input...)
+		after, _ := compactionVisibleStringTokens(restored...)
+		requiredItems, requiredTokens := 0, 0
+		for _, raw := range input {
+			if contextCompactionFreshContext(raw) {
+				requiredItems++
+				count, _ := compactionVisibleStringTokens(raw)
+				requiredTokens += count
+			}
+		}
+		summary := map[string]any{
+			"source": path, "boundary": "recorded response items before first compaction, or EOF",
+			"before_tokens": before, "after_tokens": after, "before_items": len(input), "after_items": len(restored),
+			"changed_original_items": changed, "required_items": requiredItems, "required_tokens": requiredTokens,
+			"pressure": pressure, "pressure_report": sealed.Report,
+		}
+		for name, content := range map[string][]byte{
+			"before.json":  mustMarshalJSON(input),
+			"after.json":   mustMarshalJSON(restored),
+			"summary.json": mustMarshalJSON(summary),
+		} {
+			file, err := os.OpenFile(filepath.Join(directory, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+			if err != nil {
+				t.Fatal("cannot create private compaction audit artifact")
+			}
+			_, writeErr := file.Write(content)
+			closeErr := file.Close()
+			if writeErr != nil || closeErr != nil {
+				t.Fatal("cannot write private compaction audit artifact")
+			}
+		}
+		t.Logf("real rollout replay: tokens=%d -> %d; items=%d -> %d; required=%d items/%d tokens; pressure=%v",
+			before, after, len(input), len(restored), requiredItems, requiredTokens, pressure)
 	}
 	// Report only aggregate structural reasons, never private transcript text.
 	calls := make(map[string]map[string]json.RawMessage)
@@ -414,6 +483,9 @@ func logCompactionTokenProfile(t *testing.T, before, after []json.RawMessage) in
 					}
 				case map[string]any:
 					for key, part := range value {
+						if key == "image_url" && value["type"] == "input_image" {
+							continue
+						}
 						if key == "encrypted_content" {
 							if text, ok := part.(string); ok {
 								m.opaqueBytes += len(text)
