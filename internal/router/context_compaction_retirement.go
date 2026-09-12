@@ -199,6 +199,13 @@ func retireCompactionOperationsWithFrontier(input []json.RawMessage, recent int)
 			}
 		}
 	}
+	// Earlier reducers have already exchanged evidence for these references.
+	// Pin their targets before candidate-output scanning can erase the notes,
+	// including references within one otherwise-retirable reasoning/tool group.
+	// Re-read the reduced input so newly generated source-row notes count too.
+	for id := range contextCompactionReferencedResults(input) {
+		pin(id)
+	}
 	for _, g := range groups {
 		blocked := g.blocked || g.end > cutoff
 		for index := g.start; index < g.end; index++ {
@@ -602,7 +609,8 @@ func compactionRetiredTextKeepingRows(text string, referenced map[string]bool, r
 	keep := make([]bool, len(lines))
 	for index, line := range lines {
 		sourceRow := compactionCompleteSourceRow.MatchString(line)
-		if compactionTextReferencesRows(line, referenced, ranges) {
+		// Replacement notes remain dependencies even when their consumer retires.
+		if compactionRetainedReference.MatchString(line) || compactionTextReferencesRows(line, referenced, ranges) {
 			keep[index] = true
 		}
 		if sourceRow {

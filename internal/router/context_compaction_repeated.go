@@ -180,10 +180,20 @@ func contextCompactionReferencedResults(input []json.RawMessage) map[string]bool
 		if json.Unmarshal(raw, &fields) != nil {
 			continue
 		}
-		if kind := jsonString(fields, "type"); kind != "function_call_output" && kind != "custom_tool_call_output" {
+		var evidence json.RawMessage
+		switch jsonString(fields, "type") {
+		case "function_call_output", "custom_tool_call_output":
+			evidence = fields["output"]
+		case "message":
+			// Retired consumers carry the same notes in factual assistant records.
+			if jsonString(fields, "role") != "assistant" {
+				continue
+			}
+			evidence = fields["content"]
+		default:
 			continue
 		}
-		compactionVisitReferenceStrings(fields["output"], func(text string) {
+		compactionVisitReferenceStrings(evidence, func(text string) {
 			for _, match := range compactionRetainedReference.FindAllStringSubmatch(text, -1) {
 				if id, err := strconv.Unquote(match[1]); err == nil {
 					protected[id] = true

@@ -252,7 +252,8 @@ func contextCompactionCommand(command string) string {
 		}
 		return "search"
 
-	case "cat", "hread":
+	case "cat", "hcat", "hread":
+		// hread remains recognizable in histories captured before the rename.
 		return "read"
 	}
 	return ""
