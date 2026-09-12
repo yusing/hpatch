@@ -143,10 +143,9 @@ The inspect_file built-in owns bounded structural inspection of one regular file
 absolute or executor-cwd-relative path resolution; Codex owns permissions. It uses pinned Lezer
 parsers for Go, Python, Markdown, JSON, and every stable TypeScript 7 source format. Outline
 `line` and `line_end` are shared verified-row identities for the inclusive span and are copyable
-HPATCH targets. The default projection contains navigation metadata; explicit source selection
-adds bounded exact syntax for matching names or JSON pointers. Unsupported extensions stop after
-file metadata. The renderer owns the 64 KiB complete-document budget, per-source byte bounds,
-and explicit truncation; parser recovery remains an independent result flag.
+HPATCH targets. The projection contains navigation metadata without source bodies.
+Unsupported extensions stop after file metadata. The renderer owns the 64 KiB
+complete-document budget and explicit truncation; parser recovery remains an independent result flag.
 
 The generated built-in JavaScript and runtime host are materialized inside the authenticated
 process snapshot. The directly launched shell child verifies that snapshot before loading an

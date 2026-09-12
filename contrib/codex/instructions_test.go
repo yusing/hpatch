@@ -120,6 +120,9 @@ func TestInstructionsBindCommentaryToSupportedTools(t *testing.T) {
 				"Attach progress commentary only to a supported tool call",
 				"When no available tool supports commentary, continue",
 				"Never emit a standalone assistant message with\n`phase: \"commentary\"`",
+				"`commentary 'text'`",
+				"`await commentary(\"text\")`",
+				"do not support the shell commentary command",
 				"standalone commentary messages are router-owned",
 			} {
 				if !strings.Contains(test.instructions, required) {
@@ -130,10 +133,42 @@ func TestInstructionsBindCommentaryToSupportedTools(t *testing.T) {
 	}
 }
 
+func TestNonAstraExecutionGuidanceKeepsAstraFocused(t *testing.T) {
+	for _, compact := range []bool{false, true} {
+		sol := InstructionsForModel("gpt-5.6-sol", compact)
+		astra := InstructionsForModel("gpt-6-astra", compact)
+		for _, detailed := range []string{
+			"Do not create separate executions merely because reads are independent",
+			"wait \"$first_check_pid\" || checks_status=$?",
+			"wait \"$second_check_pid\" || checks_status=$?",
+			"even when the tool has no `commentary`",
+			"A nearby brace's hash is not interchangeable",
+		} {
+			if !strings.Contains(sol, detailed) || strings.Contains(astra, detailed) {
+				t.Errorf("compact %v: detailed non-Astra guidance is missing or leaked into Astra: %q", compact, detailed)
+			}
+		}
+		if !strings.Contains(astra, "Group ready reads and searches in one multiline script") {
+			t.Errorf("compact %v: Astra omits concise execution guidance", compact)
+		}
+	}
+}
+
+func TestInstructionsDoNotPreferSequentialBatchesForIndependentCommands(t *testing.T) {
+	for _, model := range []string{"gpt-5.6-sol", "gpt-6-astra"} {
+		for _, compact := range []bool{false, true} {
+			got := InstructionsForModel(model, compact)
+			if strings.Contains(got, "prefer one batch for ready, independent") {
+				t.Fatalf("model %q compact %v steers independent commands into separate sequential executions", model, compact)
+			}
+		}
+	}
+}
+
 func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 	for _, required := range []string{
 		"Use separate shell calls for interactive programs",
-		"prefer one batch for ready, independent, noninteractive programs",
+		"Explicit batches require Code Mode and run sequentially",
 		"#!batch=NEXT_PROGRAM\n#!params={\"yield_time_ms\":1000}\necho hello\nNEXT_PROGRAM\n#!python3\nprint(\"hello\")",
 		"Submit free-form programs to `functions.shell`",
 		"Bash: write commands directly, without a shebang.",
@@ -155,7 +190,7 @@ func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 		"Reads and edits do not renew them",
 		"Save durable source in workspace files",
 	} {
-		for _, model := range []string{"", "gpt-6-astra"} {
+		for _, model := range []string{"gpt-5.6-sol", "gpt-6-astra"} {
 			for _, compact := range []bool{false, true} {
 				if !strings.Contains(InstructionsForModel(model, compact), required) {
 					t.Errorf("model %q compact %v: instructions omit shell workflow %q", model, compact, required)
@@ -240,7 +275,7 @@ func TestInstructionsConsolidateDeliveredContracts(t *testing.T) {
 				"`continuation` notice's `next_call`",
 				"Retained scripts are thread-private",
 				"`--preview-bytes N`",
-				"`inspect_file --source NAME PATH`",
+				"`inspect_file PATH` for bounded metadata",
 				"plain lines query the\ncurrent snapshot",
 				"For values, framing, paths, conflicting commands, or mixed corrections",
 				"not workspace files",

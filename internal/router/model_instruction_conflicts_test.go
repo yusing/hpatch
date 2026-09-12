@@ -2,6 +2,7 @@ package router
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -116,6 +117,68 @@ func TestActiveAstraPromptWithoutLegacyExecWarning(t *testing.T) {
 	for _, invalid := range []string{strings.Replace(stock, safety, "changed safety rule", 1), stock + safety} {
 		if _, _, err := renderModelInstructions(invalid, false, guidance); err == nil {
 			t.Fatal("unknown or duplicated active safety anchor accepted")
+		}
+	}
+}
+
+func TestRecordedSolPromptRewritesBatchAndWrappedCommentary(t *testing.T) {
+	// Fragments observed in the 2026-09-11 Sol instruction dump. The prefix and
+	// line break differ from the cached model templates.
+	const recorded = `Keep unrelated authorization intact.
+If the user asks a question or requests status during active work, answer briefly in commentary,
+then resume the active task or wait unless the user clearly asks you to stop.
+- To reduce round trips, batch independent searches, reads, and other tool calls in one functions.exec using await Promise.allSettled([...]); keep each batch bounded to decision-relevant output by selecting needed ranges or fields first, and inspect every returned result. If output truncates, retrieve only the missing evidence rather than repeating an unchanged whole scan. Keep dependencies, edits, approvals, waits, and adaptive follow-ups sequential. Avoid unnecessary output.
+Preserve unrelated validation policy.`
+	for _, model := range []string{"gpt-5.6-sol", "gpt-6-astra"} {
+		for _, compact := range []bool{false, true} {
+			for _, carrier := range []string{"instructions", "developer"} {
+				t.Run(fmt.Sprintf("%s/%t/%s", model, compact, carrier), func(t *testing.T) {
+					guidance := codexinstructions.InstructionsForModel(model, compact)
+					input := recorded + "\n" + codexinstructions.InstructionsForModel("gpt-5.6-sol", false)
+					request := parsedResponsesRequest{fields: map[string]json.RawMessage{"model": mustTestJSON(t, model)}}
+					if carrier == "instructions" {
+						request.fields[carrier] = mustTestJSON(t, input)
+					} else {
+						request.fields["input"] = mustTestJSON(t, []any{map[string]any{"type": "message", "role": "developer", "content": input}})
+					}
+					if err := rewriteReceivedModelInstructions(t.Context(), &request, false, guidance); err != nil {
+						t.Fatal(err)
+					}
+					var got string
+					if carrier == "instructions" {
+						if err := json.Unmarshal(request.fields[carrier], &got); err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						var messages []struct{ Content string }
+						if err := json.Unmarshal(request.fields["input"], &messages); err != nil {
+							t.Fatal(err)
+						}
+						got = messages[0].Content
+					}
+					if strings.Contains(got, "Promise.allSettled") || strings.Contains(got, "answer briefly in commentary") {
+						t.Fatal("recorded conflicting guidance survived request rewriting")
+					}
+					for _, want := range []string{
+						"Keep unrelated authorization intact.",
+						"Preserve unrelated validation policy.",
+						"functions.shell script",
+						"unless the user clearly asks you to stop",
+						"supported tool commentary when available",
+					} {
+						if !strings.Contains(got, want) {
+							t.Errorf("missing %q", want)
+						}
+					}
+					if strings.Count(got, guidance) != 1 {
+						t.Fatal("selected model guidance must occur once")
+					}
+					refreshed, _, err := renderModelInstructions(got, false, guidance)
+					if err != nil || refreshed != got {
+						t.Fatalf("recorded prompt refresh is not idempotent: %v", err)
+					}
+				})
+			}
 		}
 	}
 }

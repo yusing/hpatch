@@ -38,8 +38,12 @@ All programs are parsed and translated before any carrier is emitted; invalid la
 reject the entire batch without running its valid prefix. Batch programs require a nonempty
 body. A retained reference remains a sole `#!script=` call, and its resolved input may be a batch.
 
-Batches require Code Mode and are for noninteractive work. Agent guidance encourages batching
-ready, independent, noninteractive programs and directs interactive programs to separate calls
+Batches require Code Mode and are for noninteractive work. Agent guidance defaults to one
+multiline script for ready commands sharing an interpreter and execution options, not one
+batch program per command. Slower independent commands may use shell background jobs and
+wait for every result when shared output and state permit concurrency. Explicit batches are
+reserved for separate interpreters, execution options, or isolated shell state; they remain
+sequential, with a combined result after completion. Interactive programs use separate calls
 so their prompts and native continuation handles remain available for input. The router prepares
 separate native exec arguments for each program
 before sending one ordered Code Mode carrier to Codex. Each native execution receives its own

@@ -60,8 +60,8 @@ command sessions, and patch diff UI. No fork, no config edits, no daemon.
 - **Read only what the edit needs.**
   - Inside `functions.shell`, `hgrep` searches with verified rows, `hsymbol`
     finds semantic definitions and references, and `hcat` reads exact source ranges.
-  - `inspect_file` returns a structural outline with editable spans, or selected
-    declaration and JSON-value source in the same call with `--source`.
+  - `inspect_file` returns a structural outline with editable spans without
+    exposing source bodies.
   - `hcat --max-tokens N` and `hgrep --max-tokens N` set a strict output token
     ceiling. Add `--preview-bytes N` for bounded long-line previews.
     Omitted content is explicit; previews retain the complete row's verified identity.
@@ -322,7 +322,17 @@ It distinguishes an outer Code Mode cell from a native process session and keeps
 the original output intact. Following that call resumes existing work rather than
 starting the script again.
 
-With Code Mode available, a call can batch noninteractive programs in order:
+Commands sharing an interpreter and execution options normally belong in one multiline
+script, without a batch header. Independent background jobs can use shell `&` and `wait`;
+wait for every job and preserve failures. Short reads generally do not need background jobs.
+
+Bash and POSIX scripts can include `commentary 'Checked the inputs; processing the remaining items.'`
+to publish progress without mixing it into command output. Code Mode supports
+`await commentary("Checked the inputs; processing the remaining items.");`. Other interpreters
+do not support the shell commentary command.
+
+When programs need separate interpreters, execution options, or isolated shell state,
+Code Mode can run an explicit sequential batch:
 
 ```text
 #!batch=NEXT_PROGRAM
@@ -349,7 +359,8 @@ Programs run sequentially, including waiting for long-running sessions, and
 continue after nonzero exits by default. Use `#!batch-stop=SEPARATOR` to leave
 later programs unstarted after a nonzero terminal exit, with the same params
 inheritance and all-program validation. The ordered `results` array contains each
-program's output and native result fields. A host error stops the batch while
+program's output and native result fields after the batch finishes; batches do not run in
+parallel. A host error stops the batch while
 preserving completed results and partial output. The `batch` summary reports the
 policy, started/unstarted counts, and stop reason. Native-only clients require
 separate calls. Use separate calls for interactive programs too, so their
@@ -363,7 +374,7 @@ programs**, not as standalone utilities in your terminal:
 | `hcat` | Read verified source rows | None |
 | `hgrep` | Search text with verified row references | `rg` |
 | `hsymbol` | Look up definitions and references | `gopls` for Go; TypeScript 7 as `tsc` for JS, TS, and JSON; `pyright-langserver` for Python |
-| `inspect_file` | Inspect structure, optionally including selected source | None |
+| `inspect_file` | Inspect a structural outline | None |
 
 Semantic lookup can start with a known line number:
 `hsymbol def source.go 42 MyFunction`. Use `LINE:HASH` instead when the query
@@ -371,11 +382,9 @@ must verify a prior read. `hsymbol --workspace /path/to/project refs source.go 4
 selects a resolver root without changing shell state and returns absolute result
 paths. Semantic results stay confined to that root.
 
-Structural inspection accepts ordinary relative or absolute paths.
-`inspect_file --source MyFunction source.go` returns the matching declaration and
-its verified span; `inspect_file --source /settings config.json` selects a JSON
-value by pointer. Source prefixes are bounded and report omitted bytes. Without
-`--source`, inspection remains outline-only.
+Structural inspection accepts one ordinary relative or absolute path.
+`inspect_file source.go` returns an outline whose verified spans can be used as
+HPATCH targets.
 
 For long lines, both verified readers offer an explicit bounded preview:
 `hcat --max-tokens 2000 --preview-bytes 160 source.ts` or

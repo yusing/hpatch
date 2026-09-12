@@ -20,10 +20,8 @@ import {
   byteLength,
   createExecutorTool,
   errorText,
-  utf8SourcePrefix,
   stripOptionalFinalNewline,
 } from "./common.ts";
-import {splitArguments} from "./hgrep.ts";
 import {decodeJavaScriptStringLiteral} from "./javascript_string.ts";
 import {inspectFileShapeSchemaJSON} from "./inspect_file_schema.ts";
 
@@ -83,7 +81,6 @@ type JSONEntry = {
 type OutlineEntry = CodeEntry | MethodEntry | HeadingEntry | FrontmatterEntry | JSONEntry;
 type PublicOutlineEntry = Omit<OutlineEntry, "line" | "line_end"> & {
   line: string;
-  source?: {text: string; source_bytes: number; omitted_bytes: number};
   line_end: string;
 };
 type LocatedEntry = {
@@ -164,7 +161,6 @@ type InspectionData = {
   size_bytes: number;
   line_count: number | null;
   parse_complete: boolean;
-  selection?: string;
   outline: PublicOutlineEntry[];
 };
 
@@ -1003,9 +999,7 @@ export function sourceFormat(filePath: string): SourceFormat | null {
   };
 }
 
-type SourceSelection = {name: string; bytes: number};
-
-function hashOutline(lines: LineMap, outline: LocatedEntry[], selection?: SourceSelection): PublicOutlineEntry[] {
+function hashOutline(lines: LineMap, outline: LocatedEntry[]): PublicOutlineEntry[] {
   // All entries refer to this immutable source snapshot, including repeated endpoints.
   const identities = new Map<number, string>();
   function rowIdentity(line: number): string {
@@ -1021,26 +1015,16 @@ function hashOutline(lines: LineMap, outline: LocatedEntry[], selection?: Source
     identities.set(line, identity);
     return identity;
   }
-  return outline
-    .filter(({entry}) => selection === undefined
-      || ("pointer" in entry ? entry.pointer : entry.name) === selection.name)
-    .map(({entry, offset, end}) => {
-      const result = {
-        ...entry,
-        line: rowIdentity(entry.line),
-        line_end: rowIdentity(selection === undefined ? entry.line_end : lines.lineAt(Math.max(offset, end - 1))),
-      };
-      if (selection === undefined) {
-        return result;
-      }
-      return {...result, source: utf8SourcePrefix(lines.source.slice(offset, end), selection.bytes)};
-    });
+  return outline.map(({entry}) => ({
+    ...entry,
+    line: rowIdentity(entry.line),
+    line_end: rowIdentity(entry.line_end),
+  }));
 }
 
 function parseContent(
   source: string,
   format: SourceFormat,
-  selection?: SourceSelection,
 ): {parseComplete: boolean; outline: PublicOutlineEntry[]; lineCount: number} {
   const lines = new LineMap(source);
   try {
@@ -1048,7 +1032,7 @@ function parseContent(
       const tree = codeTree(source, format);
       return {
         parseComplete: !hasParseError(tree),
-        outline: hashOutline(lines, ordered(codeOutline(source, lines, format, tree)), selection),
+        outline: hashOutline(lines, ordered(codeOutline(source, lines, format, tree))),
         lineCount: lines.count,
       };
     }
@@ -1057,14 +1041,14 @@ function parseContent(
       const outline = markdownOutline(source, lines, tree);
       return {
         parseComplete: !hasParseError(tree) && outline.parseComplete,
-        outline: hashOutline(lines, ordered(outline.entries), selection),
+        outline: hashOutline(lines, ordered(outline.entries)),
         lineCount: lines.count,
       };
     }
     const tree = jsonParser.parse(source);
     return {
       parseComplete: !hasParseError(tree),
-      outline: hashOutline(lines, ordered(jsonOutline(source, lines, tree)), selection),
+      outline: hashOutline(lines, ordered(jsonOutline(source, lines, tree))),
       lineCount: lines.count,
     };
   } catch (error) {
@@ -1134,7 +1118,7 @@ function filesystemFailure(error: unknown): InspectFailure {
   return new InspectFailure("read", `cannot inspect path: ${errorText(error)}`);
 }
 
-async function inspect(input: string, selection?: SourceSelection): Promise<InspectionData> {
+async function inspect(input: string): Promise<InspectionData> {
   const normalized = normalizeInputPath(input);
   const target = path.resolve(normalized);
 
@@ -1158,7 +1142,6 @@ async function inspect(input: string, selection?: SourceSelection): Promise<Insp
       size_bytes: info.size,
       line_count: null,
       parse_complete: true,
-      ...(selection === undefined ? {} : {selection: selection.name}),
       outline: [],
     };
   }
@@ -1175,7 +1158,7 @@ async function inspect(input: string, selection?: SourceSelection): Promise<Insp
   } catch {
     throw new InspectFailure("not_utf8", "supported file is not valid UTF-8");
   }
-  const parsed = parseContent(source, format, selection);
+  const parsed = parseContent(source, format);
   return {
     path: resultPath,
     kind: format.kind,
@@ -1183,7 +1166,6 @@ async function inspect(input: string, selection?: SourceSelection): Promise<Insp
     size_bytes: bytes.byteLength,
     line_count: parsed.lineCount,
     parse_complete: parsed.parseComplete,
-    ...(selection === undefined ? {} : {selection: selection.name}),
     outline: parsed.outline,
   };
 }
@@ -1192,9 +1174,6 @@ function inspectFileInput(input: string): string[] {
   const value = stripOptionalFinalNewline(input);
   if (value === "") {
     return [];
-  }
-  if (value.startsWith("--source ") || value.startsWith("--source-bytes ")) {
-    return splitArguments(value);
   }
   if (value.startsWith("\"")) {
     try {
@@ -1207,7 +1186,7 @@ function inspectFileInput(input: string): string[] {
   return [value];
 }
 
-export const inspectFileDescription = `Inspect one host-readable regular file and return bounded JSON metadata and a structural outline. Leading --source NAME selects exact names or JSON pointers and includes bounded source; --source-bytes N sets its per-entry prefix bound (1–8192, default 8192). Outline line and line_end are copyable LINE:HASH identities, not source text.
+export const inspectFileDescription = `Inspect one host-readable regular file and return bounded JSON metadata and a structural outline. Outline line and line_end are copyable LINE:HASH identities, not source text.
 
 Result shape schema:
 ${inspectFileShapeSchemaJSON}`;
@@ -1221,34 +1200,11 @@ export function createInspectFileTool(description: string, grammar: string): Too
     async execute(argv) {
       let suppliedPath: string | null = null;
       try {
-        let offset = 0;
-        let name: string | undefined;
-        let bytes: number | undefined;
-        while (argv[offset] === "--source" || argv[offset] === "--source-bytes") {
-          const option = argv[offset];
-          const value = argv[offset + 1];
-          if (value === undefined) {
-            throw new InspectFailure("usage", `${option} requires a value`);
-          }
-          if (option === "--source") {
-            if (name !== undefined) {
-              throw new InspectFailure("usage", "--source cannot repeat");
-            }
-            name = value;
-          } else {
-            if (bytes !== undefined || !/^[1-9][0-9]*$/u.test(value) || Number(value) > 8192) {
-              throw new InspectFailure("usage", "--source-bytes requires one integer from 1 to 8192");
-            }
-            bytes = Number(value);
-          }
-          offset += 2;
+        if (argv.length !== 1) {
+          throw new InspectFailure("usage", "inspect_file expects PATH");
         }
-        if (argv.length - offset !== 1 || bytes !== undefined && name === undefined) {
-          throw new InspectFailure("usage", "inspect_file expects [--source NAME [--source-bytes N]] PATH");
-        }
-        suppliedPath = argv[offset];
-        const selection = name === undefined ? undefined : {name, bytes: bytes ?? 8192};
-        const stdout = success(await inspect(suppliedPath, selection));
+        suppliedPath = argv[0];
+        const stdout = success(await inspect(suppliedPath));
         return {stdout, exitCode: 0};
       } catch (error) {
         const cause = error instanceof InspectFailure
