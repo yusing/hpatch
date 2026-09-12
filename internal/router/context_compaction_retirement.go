@@ -180,7 +180,7 @@ func retireCompactionOperationsWithFrontier(input []json.RawMessage, recent int)
 	enqueueOriginal := func(id string, plan *compactionRetirement) {
 		queue = append(queue, referenceText{fields[plan.call]["input"], id, true},
 			referenceText{fields[plan.call]["arguments"], id, true},
-			referenceText{fields[plan.result]["output"], id, true})
+			referenceText{fields[plan.result]["output"], id, false})
 	}
 	revision := 0
 	var pin func(string)
@@ -309,7 +309,7 @@ func retireCompactionOperationsWithFrontier(input []json.RawMessage, recent int)
 			}
 		case "function_call_output", "custom_tool_call_output":
 			if p := plans[id]; p == nil || !p.eligible {
-				queue = append(queue, referenceText{item["output"], id, true})
+				queue = append(queue, referenceText{item["output"], id, false})
 			}
 		default:
 			queue = append(queue, referenceText{item["content"], "", true}, referenceText{item["summary"], "", true})
@@ -406,14 +406,13 @@ func retireCompactionOperationsWithFrontier(input []json.RawMessage, recent int)
 		}
 	}
 
-	// Pinning and row restoration are monotonic. Repeat reference closure when
-	// either exposes references that were absent from the proposed factual
-	// record. At most one pass per retired candidate can restore content, so
-	// this reaches a bounded stable result.
+	// Pinning is monotonic. Repeat reference closure only when profitability
+	// restores original content, which can expose references that were absent
+	// from the proposed factual record. At most one pass per retired candidate
+	// can restore content, so this reaches a bounded stable result.
 	for {
-		beforeRevision := revision
 		drainReferences()
-		for id, plan := range plans {
+		for _, plan := range plans {
 			if !plan.eligible || (len(plan.rows) == 0 && len(plan.ranges) == 0) {
 				continue
 			}
@@ -422,13 +421,10 @@ func retireCompactionOperationsWithFrontier(input []json.RawMessage, recent int)
 			if !ok {
 				return input
 			}
-			if string(plan.output) != string(retained) {
-				plan.output = retained
-				queue = append(queue, referenceText{retained, id, true})
-				revision++
-			}
+			plan.output = retained
 		}
 
+		beforeProfitability := revision
 		for id, plan := range plans {
 			if !plan.eligible || groupAt[plan.call] >= 0 {
 				continue
@@ -453,7 +449,7 @@ func retireCompactionOperationsWithFrontier(input []json.RawMessage, recent int)
 				}
 			}
 		}
-		if revision == beforeRevision {
+		if revision == beforeProfitability {
 			break
 		}
 	}

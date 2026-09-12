@@ -116,13 +116,16 @@ func TestCompactionReferencedResultsScansOnlySpecialResultNotes(t *testing.T) {
 	if !contextCompactionReferencedResults([]json.RawMessage{failed})["later-source"] {
 		t.Fatal("surviving failed result note did not protect its referenced evidence")
 	}
+	retired := mustMarshalJSON(map[string]any{
+		"type": "message", "role": "assistant", "content": note,
+	})
+	if !contextCompactionReferencedResults([]json.RawMessage{retired})["later-source"] {
+		t.Fatal("surviving factual assistant note did not protect its referenced evidence")
+	}
 
 	decoys := []json.RawMessage{
 		compactTestOutput("plain-id", "later-source", 1),
 		compactTestOutput("prefixed-note", "ordinary output: "+note, 1),
-		mustMarshalJSON(map[string]any{
-			"type": "message", "role": "assistant", "content": note,
-		}),
 	}
 	if protected := contextCompactionReferencedResults(decoys); len(protected) != 0 {
 		t.Fatal("non-special or non-result text was treated as a replacement note")

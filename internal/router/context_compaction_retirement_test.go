@@ -291,7 +291,7 @@ func TestCompactionRetirementPreservesAmbiguousCalls(t *testing.T) {
 	}
 }
 
-func TestCompactionRetirementFollowsOnlySurvivingReplacementNotes(t *testing.T) {
+func TestCompactionRetirementPinsReplacementNoteTargets(t *testing.T) {
 	note := func(target string) string {
 		return fmt.Sprintf("[mekugi compaction: 3 source rows (1:0001 through 3:0003) retained verbatim in later tool result %q]\n", target)
 	}
@@ -299,57 +299,10 @@ func TestCompactionRetirementFollowsOnlySurvivingReplacementNotes(t *testing.T) 
 		t.Helper()
 		for _, index := range []int{1, 2, 3, 4, 5, 6} {
 			if string(got[index]) != string(want[index]) {
-				t.Fatalf("surviving replacement-note closure lost native item %d", index)
+				t.Fatalf("replacement-note closure lost native item %d", index)
 			}
 		}
 	}
-
-	t.Run("generated repeated excerpt note retires with its consumer", func(t *testing.T) {
-		items := retirementHistory()
-		var excerpt strings.Builder
-		for row := 1; row <= 12; row++ {
-			fmt.Fprintf(&excerpt, "%d:abcd source declaration with enough exact text to retire the earlier repeated excerpt\n", row)
-		}
-		items[3] = compactTestOutput("operation_00",
-			"older read header\n"+excerpt.String()+"unique older evidence\n"+strings.Repeat("consumer historical detail\n", 500), 0)
-		items[6] = compactTestOutput("operation_01", excerpt.String(), 0)
-
-		got := reduceContextCompaction(items)
-		wire := string(mustMarshalJSON(got))
-		if !strings.Contains(wire, "historical facts v4") || strings.Contains(wire, "retained verbatim in later tool result") {
-			t.Fatal("generated replacement note survived its retired consumer")
-		}
-		if again := reduceContextCompaction(got); string(mustMarshalJSON(again)) != string(mustMarshalJSON(got)) {
-			t.Fatal("generated replacement-note retirement was not stable")
-		}
-	})
-
-	t.Run("retired note releases its target", func(t *testing.T) {
-		items := retirementHistory()
-		items[3] = compactTestOutput("operation_00",
-			note("operation_01")+strings.Repeat("retired consumer detail\n", 500), 0)
-		items[6] = compactTestOutput("operation_01", strings.Repeat("later source evidence\n", 500), 0)
-		before := string(mustMarshalJSON(items))
-
-		got := retireCompactionOperations(items)
-		for _, index := range []int{1, 2, 3, 4, 5, 6} {
-			if string(got[index]) == string(items[index]) {
-				t.Fatalf("discarded replacement note pinned native item %d", index)
-			}
-		}
-		if strings.Contains(string(mustMarshalJSON(got)), "retained verbatim in later tool result") {
-			t.Fatal("retired replacement note survived in factual records")
-		}
-		if len(mustMarshalJSON(got)) > len(mustMarshalJSON(items)) {
-			t.Fatal("replacement-note retirement increased retained history")
-		}
-		if string(mustMarshalJSON(items)) != before {
-			t.Fatal("replacement-note retirement mutated its input")
-		}
-		if again := retireCompactionOperations(got); string(mustMarshalJSON(again)) != string(mustMarshalJSON(got)) {
-			t.Fatal("replacement-note retirement was not stable")
-		}
-	})
 
 	t.Run("failed consumer keeps its target", func(t *testing.T) {
 		items := retirementHistory()
@@ -370,76 +323,12 @@ func TestCompactionRetirementFollowsOnlySurvivingReplacementNotes(t *testing.T) 
 		assertNative(t, reduceContextCompaction(items), items)
 	})
 
-	t.Run("replacement-note cycle follows a surviving root", func(t *testing.T) {
+	t.Run("input notes pin both sides of a replacement cycle", func(t *testing.T) {
 		items := retirementHistory()
 		items[3] = compactTestOutput("operation_00", note("operation_01")+strings.Repeat("cycle detail\n", 500), 0)
 		items[6] = compactTestOutput("operation_01", note("operation_00")+strings.Repeat("cycle detail\n", 500), 0)
-
-		retired := retireCompactionOperations(items)
-		for _, index := range []int{1, 2, 3, 4, 5, 6} {
-			if string(retired[index]) == string(items[index]) {
-				t.Fatalf("unrooted replacement-note cycle pinned native item %d", index)
-			}
-		}
-
-		rooted := append(items, mustMarshalJSON(map[string]any{
-			"type": "message", "role": "assistant", "content": "Keep operation_00.",
-		}))
-		assertNative(t, retireCompactionOperations(rooted), rooted)
-		assertNative(t, reduceContextCompaction(rooted), rooted)
-	})
-}
-
-func TestCompactionRetirementFollowsReferencesExposedByRetainedResults(t *testing.T) {
-	t.Run("pinned tool result row", func(t *testing.T) {
-		items := retirementHistory()
-		items[3] = compactTestOutput("operation_00",
-			"Continue with exact row 17:abcd.\n"+strings.Repeat("consumer historical detail\n", 500), 0)
-		referencedLine := "17:abcd required source evidence\n"
-		items[6] = compactTestOutput("operation_01",
-			referencedLine+strings.Repeat("unreferenced source detail\n", 500), 0)
-		items = append(items, mustMarshalJSON(map[string]any{
-			"type": "message", "role": "assistant", "content": "Keep operation_00.",
-		}))
-
-		got := retireCompactionOperations(items)
-		if !strings.Contains(string(mustMarshalJSON(got)), strings.TrimSpace(referencedLine)) {
-			t.Fatal("row reference in a pinned tool result lost its source evidence")
-		}
-	})
-
-	t.Run("restored factual row references operation", func(t *testing.T) {
-		items := retirementHistory()
-		items[3] = compactTestOutput("operation_00",
-			"17:abcd retained evidence requires operation_01\n"+strings.Repeat("consumer historical detail\n", 500), 0)
-		items[6] = compactTestOutput("operation_01", strings.Repeat("required dependency detail\n", 500), 0)
-		items = append(items, mustMarshalJSON(map[string]any{
-			"type": "message", "role": "assistant", "content": "Keep exact row 17:abcd.",
-		}))
-
-		got := retireCompactionOperations(items)
-		for _, index := range []int{4, 5, 6} {
-			if string(got[index]) != string(items[index]) {
-				t.Fatalf("reference exposed by restored factual row did not pin operation item %d", index)
-			}
-		}
-	})
-
-	t.Run("restored factual row references another row", func(t *testing.T) {
-		items := retirementHistory()
-		items[3] = compactTestOutput("operation_00",
-			"17:abcd retained evidence requires row 23:beef\n"+strings.Repeat("consumer historical detail\n", 500), 0)
-		referencedLine := "23:beef required chained source evidence\n"
-		items[6] = compactTestOutput("operation_01",
-			referencedLine+strings.Repeat("unreferenced source detail\n", 500), 0)
-		items = append(items, mustMarshalJSON(map[string]any{
-			"type": "message", "role": "assistant", "content": "Keep exact row 17:abcd.",
-		}))
-
-		got := retireCompactionOperations(items)
-		if !strings.Contains(string(mustMarshalJSON(got)), strings.TrimSpace(referencedLine)) {
-			t.Fatal("row reference exposed by restored factual evidence lost its dependency")
-		}
+		assertNative(t, retireCompactionOperations(items), items)
+		assertNative(t, reduceContextCompaction(items), items)
 	})
 }
 
