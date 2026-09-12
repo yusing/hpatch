@@ -105,7 +105,7 @@ func TestTokenCommentaryRequiresCurrentUsageDespitePriorTotals(t *testing.T) {
 			if final.usageObserved {
 				t.Fatal("test unexpectedly observed current usage")
 			}
-			if strings.Contains(string(output), "Tokens:") || !strings.Contains(string(output), "Actual answer") {
+			if strings.Contains(string(output), "Tokens:") || strings.Contains(string(output), "Actual answer") {
 				t.Fatalf("stale usage reported: %s", output)
 			}
 			if _, available := final.threadUsageCounts(); !available {

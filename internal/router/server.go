@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -38,6 +39,7 @@ var errUpstreamResponseWithoutTerminal = errors.New("upstream Responses response
 // Session is available only after initialization and listener binding succeed.
 type Session struct {
 	BaseURL           string
+	JournalEnabled    bool
 	GrokEnabled       bool
 	AXReadOutput      string
 	FrontendDirectory string
@@ -272,7 +274,7 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 		serverError <- server.Serve(listener)
 	}()
 	if ready != nil && ctx.Err() == nil {
-		session := Session{BaseURL: baseURL, FrontendDirectory: frontendDirectory, GrokEnabled: *flags.grokEnabled}
+		session := Session{BaseURL: baseURL, FrontendDirectory: frontendDirectory, GrokEnabled: *flags.grokEnabled, JournalEnabled: *flags.mode == "mekugi"}
 		if debug != nil {
 			session.AXReadOutput = debug.paths[4]
 		}
@@ -510,6 +512,8 @@ func executeRequest(
 	compactTokens *ctp2Codec,
 	mentor *mentorHandoff,
 ) (requestErr error) {
+	journalOriginal := maps.Clone(parsedRequest.fields)
+	journalStartWindow := journalRequestWindow(ctx)
 	finalization := requestFinalization{failurePhase: requestFailurePrepare}
 	debug, debugID := debugRequest(ctx)
 	started := time.Now()
@@ -699,6 +703,11 @@ func executeRequest(
 		response.Body.Close()
 		return fmt.Errorf("execute request: inspect upstream response: %w", err)
 	}
+	defer func() {
+		if mekugiTransform != nil {
+			mekugiTransform.ReleaseDelivery()
+		}
+	}()
 	var responseTransform responseTransformer
 	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
 		if handoffRequest != nil {
@@ -757,6 +766,23 @@ func executeRequest(
 		}
 		stagedBody = staged.Bytes()
 	}
+	if !streamResponse && mekugiTransform != nil && mekugiTransform.journalContinue {
+		next, err := nextJournalRequest(journalOriginal, mekugiTransform)
+		if err != nil {
+			return err
+		}
+		nextCtx, err := continueJournalContext(executionCtx, mekugiTransform)
+		if err != nil {
+			return err
+		}
+		mekugiTransform.Close()
+		resetJournalExchange(provider)
+		start, cancel := context.WithTimeout(nextCtx, journalStartWindow)
+		defer cancel()
+		finalization.observation.outcome = requestOutcomeCompleted
+		finalization.failurePhase = ""
+		return executeRequest(start, nextCtx, next, headers, sessionID, provider, output, issues, mekugiCalls, compactTokens, mentor)
+	}
 	if !streamResponse && response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices && !acceptsResponseEnd(finalization.upstreamTerminalState) {
 		finalization.failurePhase = requestFailureTerminalValidation
 		return fmt.Errorf("execute request: %w", errUpstreamResponseWithoutTerminal)
@@ -783,6 +809,8 @@ func executeRequest(
 		if _, err := output.Write(stagedBody); err != nil {
 			return fmt.Errorf("execute request: copy upstream response: %w", err)
 		}
+		confirmResponseDelivery(responseTransform, stagedBody)
+		releaseResponseDelivery(responseTransform)
 	} else {
 		finalization.failurePhase = requestFailureInspectResponse
 		finalization.upstreamTerminalState, err = copyUpstreamBodyTransformed(output, response, streamResponse, responseTransform, observeUsage)
@@ -790,6 +818,23 @@ func executeRequest(
 			finalization.classifyCopyError(err)
 			return fmt.Errorf("execute request: %w", err)
 		}
+	}
+	if streamResponse && mekugiTransform != nil && mekugiTransform.journalContinue {
+		next, err := nextJournalRequest(journalOriginal, mekugiTransform)
+		if err != nil {
+			return err
+		}
+		nextCtx, err := continueJournalContext(executionCtx, mekugiTransform)
+		if err != nil {
+			return err
+		}
+		mekugiTransform.Close()
+		resetJournalExchange(provider)
+		start, cancel := context.WithTimeout(nextCtx, journalStartWindow)
+		defer cancel()
+		finalization.observation.outcome = requestOutcomeCompleted
+		finalization.failurePhase = ""
+		return executeRequest(start, nextCtx, next, headers, sessionID, provider, output, issues, mekugiCalls, compactTokens, mentor)
 	}
 	if streamResponse && response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices && !acceptsResponseEnd(finalization.upstreamTerminalState) {
 		finalization.failurePhase = requestFailureTerminalValidation

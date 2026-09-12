@@ -54,14 +54,16 @@ func (t *mekugiResponseTransform) lowerCodeModeCommentary(callID, input string) 
 
 	token := t.proxy.commentary.subscribe(t.historySessionID, callID, t.commentaryAuthor)
 	if token != "" {
-		t.proxy.commentary.bindActivity(token, t.threadID)
+		t.proxy.commentary.bindJournalQuestion(token, t.journalQuestion)
+		t.proxy.commentary.bindActivity(token, t.shellThreadID)
 		t.commentarySubscriptions = append(t.commentarySubscriptions, commentarySubscription{token: token, callID: callID})
 	}
 	outcome := "prepared"
 	if token == "" {
-		outcome = "unavailable"
+		t.featureTrace.record("journal", "code_mode", "lowering", "unavailable", callID, "")
+		return "", false, errors.New("journal publisher unavailable")
 	}
-	t.featureTrace.record("commentary", "code_mode", "lowering", outcome, callID, "")
+	t.featureTrace.record("journal", "code_mode", "lowering", outcome, callID, "")
 	replacements := make([]string, len(calls))
 	for index := len(calls) - 1; index >= 0; index-- {
 		call := calls[index]
@@ -75,18 +77,14 @@ func (t *mekugiResponseTransform) lowerCodeModeCommentary(callID, input string) 
 			end := childCall.end - call.argumentStart
 			argument = argument[:start] + replacements[child] + argument[end:]
 		}
-		replacement := "await (void (" + argument + "))"
-		if token != "" {
-			command := workerCommand("shell", []string{
-				commentaryOnceArgument,
-				t.proxy.commentaryEndpoint,
-				token,
-			})
-			commandExpression := strconv.Quote(command+" '") +
-				" + encodeURIComponent(String(" + argument + ")).replaceAll(\"'\", \"%27\") + \"'\""
-			replacement = "await (void (await tools.exec_command({cmd: " + commandExpression + ", login: false})))"
-		}
-		replacements[index] = replacement
+		command := workerCommand("shell", []string{
+			commentaryOnceArgument,
+			t.proxy.commentaryEndpoint,
+			token,
+		})
+		commandExpression := strconv.Quote(command+" '") +
+			" + encodeURIComponent(JSON.stringify(" + argument + ")).replaceAll(\"'\", \"%27\") + \"'\""
+		replacements[index] = "await tools.exec_command({cmd: " + commandExpression + ", login: false})"
 	}
 
 	result := input

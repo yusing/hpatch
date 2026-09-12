@@ -40,6 +40,9 @@ func TestBufferedAnswerSSEFraming(t *testing.T) {
 				case "completed", "failed":
 					terminal := finalAnswerTestTerminal(t, stop, false)
 					wire.WriteString("event: response." + stop + ending + "data: " + string(terminal) + ending + ending)
+					if stop == "completed" {
+						expected = nil
+					}
 					expected = append(expected, terminal)
 				case "transform_error":
 					wire.WriteString("event: response.completed" + ending + `data: {"type":"response.completed","response":null}` + ending + ending)

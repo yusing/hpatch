@@ -14,6 +14,11 @@ func TestChildTokenUsageProjectsToRoot(t *testing.T) {
 				root, _ := prepareActivityTest(t, proxy, "shared-session", "root", "", "/root", nil)
 				other, _ := prepareActivityTest(t, proxy, "other-session", "other-root", "", "/root", nil)
 				child, _ := prepareActivityTest(t, proxy, "shared-session", "child", "root", "/root/worker", nil)
+				if outcome == "completed" {
+					if _, err := proxy.journals.apply(t.Context(), proxy.replayStore, child.directory, child.shellThreadID, "", []journalMutation{{Op: "add", Text: new("Child milestone")}}); err != nil {
+						t.Fatal(err)
+					}
+				}
 				root.drainActivity() // Discard the unrelated start notice.
 				root.Close()         // Reports must survive until the next root response.
 
@@ -57,6 +62,10 @@ func TestChildTokenUsageProjectsToRoot(t *testing.T) {
 						if err != nil {
 							t.Fatal(err)
 						}
+						for _, event := range events {
+							child.Delivered(event)
+						}
+						child.ReleaseDelivery()
 						childOutput = bytes.Join(events, nil)
 					} else {
 						var err error
@@ -64,14 +73,18 @@ func TestChildTokenUsageProjectsToRoot(t *testing.T) {
 						if err != nil {
 							t.Fatal(err)
 						}
+						child.Delivered(childOutput)
+						child.ReleaseDelivery()
 					}
 				}
 				wantUsage := outcome == "completed"
 				if bytes.Contains(childOutput, []byte("Tokens:")) != wantUsage {
 					t.Fatalf("child usage eligibility: %s", childOutput)
 				}
-				if wantUsage && bytes.Index(childOutput, []byte("Tokens:")) >= bytes.Index(childOutput, []byte("Child result.")) {
-					t.Fatalf("usage replaced or followed child answer: %s", childOutput)
+				if wantUsage && (bytes.Contains(childOutput, []byte("Child result.")) ||
+					!bytes.Contains(childOutput, []byte("Journal saved:")) ||
+					bytes.Index(childOutput, []byte("Tokens:")) >= bytes.Index(childOutput, []byte("Journal saved:"))) {
+					t.Fatalf("usage did not precede the synthetic child result: %s", childOutput)
 				}
 				child.Close()
 
@@ -94,6 +107,16 @@ func TestChildTokenUsageProjectsToRoot(t *testing.T) {
 				if got := bytes.Count(output, []byte("Tokens:")); got != map[bool]int{false: 0, true: 1}[wantUsage] {
 					t.Fatalf("root usage report count = %d: %s", got, output)
 				}
+				if bytes.Contains(childOutput, []byte("Journal flush")) {
+					t.Fatalf("child completed with a premature flush: %s", childOutput)
+				}
+				if stream && bytes.Contains(output, []byte("Child milestone")) {
+					t.Fatalf("child journal appeared before main completion: %s", output)
+				}
+				if !stream && wantUsage && !bytes.Contains(output, []byte("Child milestone")) {
+					t.Fatalf("main completion lost child journal: %s", output)
+				}
+				root.ReleaseDelivery()
 				if wantUsage {
 					counts, _ := child.threadUsageCounts()
 					want := "[`/root/worker`] " + formatTokenUsageReport(counts)

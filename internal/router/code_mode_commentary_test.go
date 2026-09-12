@@ -13,9 +13,9 @@ func TestCodeModeCommentaryLowersRuntimeExpressionAndPreservesOriginal(t *testin
 	transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 	source := "for (let i = 1; i <= 2; i++) {\n" +
-		"  await commentary(`Running ${i}/2`);\n" +
+		"  await journal(`Running ${i}/2`);\n" +
 		"}\n" +
-		"text('await commentary(ignored)');"
+		"text('await journal(ignored)');"
 	item := map[string]json.RawMessage{
 		"type": mustMarshalJSON("custom_tool_call"), "name": mustMarshalJSON(transform.codeModeToolName),
 		"call_id": mustMarshalJSON("call-code"), "id": mustMarshalJSON("item-code"), "input": mustMarshalJSON(source),
@@ -26,12 +26,12 @@ func TestCodeModeCommentaryLowersRuntimeExpressionAndPreservesOriginal(t *testin
 		t.Fatalf("changed = %v, error %v", changed, err)
 	}
 	lowered := jsonString(item, "input")
-	for _, required := range []string{"await tools.exec_command", "encodeURIComponent(String(`Running ${i}/2`))", commentaryOnceArgument} {
+	for _, required := range []string{"await tools.exec_command", "encodeURIComponent(JSON.stringify(`Running ${i}/2`))", commentaryOnceArgument} {
 		if !strings.Contains(lowered, required) {
 			t.Fatalf("lowered input missing %q: %s", required, lowered)
 		}
 	}
-	if strings.Count(lowered, commentaryOnceArgument) != 1 || !strings.Contains(lowered, "text('await commentary(ignored)')") {
+	if strings.Count(lowered, commentaryOnceArgument) != 1 || !strings.Contains(lowered, "text('await journal(ignored)')") {
 		t.Fatalf("lowered input = %s", lowered)
 	}
 	history := transform.local["call-code"]
@@ -46,11 +46,11 @@ func TestCodeModeCommentaryLowersRuntimeExpressionAndPreservesOriginal(t *testin
 	}
 }
 
-func TestCodeModeCommentaryUsesOneRouteAndFallsBackToEvaluation(t *testing.T) {
+func TestCodeModeJournalUsesOneRouteAndRejectsExhaustion(t *testing.T) {
 	transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 	lowered, changed, err := transform.lowerCodeModeCommentary(
-		"call-code", "await commentary('first');\nawait commentary('second');",
+		"call-code", "await journal({op: 'add', text: 'first'});\nawait journal({op: 'add', text: 'second'});",
 	)
 	if err != nil || !changed || strings.Count(lowered, commentaryOnceArgument) != 2 {
 		t.Fatalf("lowered = %q, changed = %v, error %v", lowered, changed, err)
@@ -67,21 +67,20 @@ func TestCodeModeCommentaryUsesOneRouteAndFallsBackToEvaluation(t *testing.T) {
 			t.Fatalf("route %d was rejected early", index)
 		}
 	}
-	lowered, changed, err = transform.lowerCodeModeCommentary("call-fallback", "await commentary(sideEffect());")
-	if err != nil || !changed || !strings.Contains(lowered, "await (void (sideEffect()))") ||
-		strings.Contains(lowered, commentaryOnceArgument) {
+	lowered, changed, err = transform.lowerCodeModeCommentary("call-fallback", "await journal(sideEffect());")
+	if err == nil || changed || lowered != "" {
 		t.Fatalf("fallback = %q, changed = %v, error %v", lowered, changed, err)
 	}
 }
 
-func TestCodeModeCommentarySupportsNestingAndAlwaysReturnsUndefined(t *testing.T) {
+func TestCodeModeJournalSupportsNestedExpressions(t *testing.T) {
 	transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 	lowered, changed, err := transform.lowerCodeModeCommentary(
-		"call-nested", `await commentary(await commentary("inner"));`,
+		"call-nested", `await journal({op: "edit", id: await journal({op: "add", text: "inner"}), text: "outer"});`,
 	)
 	if err != nil || !changed || strings.Count(lowered, commentaryOnceArgument) != 2 ||
-		strings.Count(lowered, "await (void (await tools.exec_command") != 2 {
+		strings.Count(lowered, "await tools.exec_command") != 2 {
 		t.Fatalf("lowered = %q, changed = %v, error = %v", lowered, changed, err)
 	}
 }
@@ -89,7 +88,7 @@ func TestCodeModeCommentarySupportsNestingAndAlwaysReturnsUndefined(t *testing.T
 func TestCodeModeCommentaryLowersAuthoritativeStreamingInput(t *testing.T) {
 	transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
-	source := `await commentary("Working");`
+	source := `await journal({op: "add", text: "Working"});`
 	added := mustTestJSON(t, map[string]any{
 		"type": "response.output_item.added", "item": map[string]any{
 			"type": "custom_tool_call", "id": "item-code", "call_id": "call-code",
@@ -218,7 +217,7 @@ func TestCodeModeWithoutExplicitCommentaryPreservesOutput(t *testing.T) {
 func TestCodeModeUnparseableInputPassesThrough(t *testing.T) {
 	for _, source := range []string{
 		`text("unterminated);`,
-		`await commentary("Working"); text(`,
+		`await journal("Working"); text(`,
 		`const value: number = 1; text(value);`,
 	} {
 		for _, streaming := range []bool{false, true} {
