@@ -336,11 +336,23 @@ func compactionSourceDecodeJSEscape(text string) (value string, width int, recog
 			return "", 3, true, true
 		}
 		return "", 2, true, true
-	case '0':
-		if len(text) > 2 && text[2] >= '0' && text[2] <= '9' {
-			return "", 0, true, false
+	case '0', '1', '2', '3', '4', '5', '6', '7':
+		// Non-strict legacy octal consumes at most three digits for 0..3,
+		// but only two for 4..7: \720003 is ':' followed by "0003".
+		limit := 4 // Backslash plus at most three octal digits.
+		if text[1] >= '4' {
+			limit = 3
 		}
-		return "\x00", 2, true, true
+		codePoint := rune(text[1] - '0')
+		width := 2
+		for width < min(len(text), limit) && text[width] >= '0' && text[width] <= '7' {
+			codePoint = codePoint*8 + rune(text[width]-'0')
+			width++
+		}
+		return string(codePoint), width, true, true
+	case '8', '9':
+		// NonOctalDecimalEscapeSequence in non-strict string literals.
+		return text[1:2], 2, true, true
 	case 'x':
 		if len(text) < 3 || compactionSourceHexValue(text[2]) < 0 {
 			return "", 0, false, false
@@ -355,7 +367,16 @@ func compactionSourceDecodeJSEscape(text string) (value string, width int, recog
 		}
 		return compactionSourceDecodeJSUnicodeEscape(text)
 	default:
-		return "", 0, false, false
+		// NonEscapeCharacter is an identity escape, including \: and \_.
+		// Consume one code point; Unicode line continuations contribute none.
+		codePoint, size := utf8.DecodeRuneInString(text[1:])
+		if codePoint == utf8.RuneError && size == 1 {
+			return "", 0, true, false
+		}
+		if codePoint == '\u2028' || codePoint == '\u2029' {
+			return "", size + 1, true, true
+		}
+		return text[1 : size+1], size + 1, true, true
 	}
 }
 
