@@ -2,6 +2,7 @@ package router
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -396,7 +397,7 @@ func TestSubagentMixedReadRunFallbacks(t *testing.T) {
 		"cat a\nfor f in *.go; do cat \"$f\"; done",
 		"cat a\ncat b &",
 	} {
-		if got, want := toolActivityShell(source), "Run\n"+toolActivityFenced("bash", source); got != want {
+		if got, want := toolActivityShell(source), "Read `a`\n\nRun "+toolActivityCode(strings.TrimPrefix(source, "cat a\n")); got != want {
 			t.Errorf("%s: got %q, want %q", source, got, want)
 		}
 	}
@@ -626,5 +627,99 @@ func TestShellBatchActivityDisplay(t *testing.T) {
 		if got := toolActivityShell(invalid); got != "Run\n"+toolActivityFenced("", invalid) {
 			t.Fatalf("invalid batch lost source: %q", got)
 		}
+	}
+}
+
+func TestSubagentShellCommentaryAndDiscovery(t *testing.T) {
+	for _, tc := range []struct{ source, want string }{
+		{"commentary 'Checking tools.'", ""},
+		{"commentary \"$progress\"\ncommentary 'More progress.'", ""},
+		{"commentary 'Checking.'\nprintf done", "Run `printf done`"},
+		{"commentary 'Checking.'\nhgrep --max-tokens 2000 -F -e 'needle' a.go", "Search `--max-tokens 2000 -F -e 'needle' a.go`"},
+		{"command -v codex-code-mode-host || true", "Inspect `command -v codex-code-mode-host || true`"},
+		{"find /home/ubuntu/projects/codex -type f -name codex-code-mode-host -perm -111 -print 2>/dev/null | head -n 40",
+			"Search `find /home/ubuntu/projects/codex -type f -name codex-code-mode-host -perm -111 -print 2>/dev/null | head -n 40`"},
+		{"find /home/ubuntu/projects/codex -type f -path '*/target/*' -name '*code*mode*host*' -print 2>/dev/null | head -n 40",
+			"Search `find /home/ubuntu/projects/codex -type f -path '*/target/*' -name '*code*mode*host*' -print 2>/dev/null | head -n 40`"},
+		{"ls -ld /clone/code-mode-host /clone/code-mode-runtime", "List `-ld /clone/code-mode-host /clone/code-mode-runtime`"},
+		{"hgrep --max-tokens 2000 needle a.go\nfalse || true", "Search `--max-tokens 2000 needle a.go`\n\nRun `false || true`"},
+		{"#!batch=NEXT\ncommentary 'Working'\nNEXT\ncat a", "Read `a`"},
+	} {
+		t.Run(tc.source, func(t *testing.T) {
+			if got := toolActivityShell(tc.source); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+	for _, source := range []string{
+		"commentary \"$(touch marker)\"",
+		"find /tmp/cache -type f -delete",
+		"find /tmp/cache -type f -exec rm '{}' ';'",
+		"find /tmp/cache -fprint results",
+		"commentary 'Working' > progress.txt",
+		"find /tmp -print 2>errors | head -n 40",
+		"find /tmp -print | head -n \"$limit\"",
+		"command -v tool || rm file",
+		"#!python3\ncommentary('Working')",
+	} {
+		if got := toolActivityShell(source); !strings.HasPrefix(got, "Run\n") || !strings.Contains(got, source) {
+			t.Fatalf("unsafe simplification: %q", got)
+		}
+	}
+}
+
+func TestSubagentDiscoveryActivityJSONAndSSE(t *testing.T) {
+	const script = "commentary 'Checking whether the host is installed.'\n" +
+		"command -v codex-code-mode-host || true\n" +
+		"find /clone -type f -name codex-code-mode-host -perm -111 -print 2>/dev/null | head -n 40\n" +
+		"find /clone -type f -path '*/target/*' -name '*code*mode*host*' -print 2>/dev/null | head -n 40\n" +
+		"ls -ld /clone/code-mode-host /clone/code-mode-runtime\n" +
+		"hgrep --max-tokens 2000 -F host /clone/config"
+	for _, stream := range []bool{false, true} {
+		t.Run(map[bool]string{false: "json", true: "sse"}[stream], func(t *testing.T) {
+			proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+			root, _ := prepareActivityTest(t, proxy, "root", "r", "", "/root", nil)
+			child, _ := prepareActivityTest(t, proxy, "child", "c", "r", "/root/host_test_evidence", nil)
+			for i, source := range []string{"commentary 'Progress only.'", script} {
+				call := map[string]any{
+					"type": "custom_tool_call", "name": "shell", "id": fmt.Sprintf("display-%d", i),
+					"call_id": fmt.Sprintf("display-%d", i), "input": source,
+				}
+				if stream {
+					if _, err := child.TransformSSE(mustMarshalJSON(map[string]any{"type": "response.output_item.done", "item": call})); err != nil {
+						t.Fatal(err)
+					}
+				} else if _, err := child.TransformJSON(mustMarshalJSON(map[string]any{"status": "completed", "output": []any{call}})); err != nil {
+					t.Fatal(err)
+				}
+			}
+			output, err := root.TransformJSON([]byte(`{"status":"completed","output":[]}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"Inspect", "Search", "List", "--max-tokens 2000", "/root/host_test_evidence", "*code*mode*host*"} {
+				if !strings.Contains(string(output), want) {
+					t.Fatalf("missing %q: %s", want, output)
+				}
+			}
+			for _, hidden := range []string{"Progress only.", "Checking whether", "Run", "commentary '", "```bash"} {
+				if strings.Contains(string(output), hidden) {
+					t.Fatalf("unexpected %q: %s", hidden, output)
+				}
+			}
+		})
+	}
+}
+
+func TestSubagentMixedHeredocPreview(t *testing.T) {
+	const body = "cat <<EOF; printf done\nhello\nEOF\n"
+	source := "commentary 'Working'\n" + body + "commentary 'Finished'\n"
+	want := "Run\n" + toolActivityFenced("bash", strings.TrimRight(body, "\n"))
+	if got := toolActivityShell(source); got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	source = "cat a\n" + body
+	if got, want := toolActivityShell(source), "Run\n"+toolActivityFenced("bash", source); got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }
