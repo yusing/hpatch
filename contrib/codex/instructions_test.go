@@ -114,6 +114,8 @@ func TestInstructionsExposeJournalAuthoring(t *testing.T) {
 	}{
 		{name: "CTP", instructions: InstructionsForModel("", true)},
 		{name: "native", instructions: InstructionsForModel("", false)},
+		{name: "astra CTP", instructions: InstructionsForModel("gpt-6-astra", true)},
+		{name: "astra native", instructions: InstructionsForModel("gpt-6-astra", false)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			for _, required := range []string{
@@ -121,7 +123,10 @@ func TestInstructionsExposeJournalAuthoring(t *testing.T) {
 				"`functions.journal`",
 				"Each mutation array is atomic",
 				"Do not use `update_plan`, Tasks lists, or standalone `phase: \"commentary\"` messages",
-				"Do not write a final-channel answer",
+				"do not write a final-channel answer",
+				"`{\"op\":\"finish\"}`",
+				"This ends the turn without another model request",
+				"Do not use a wait tool to finish",
 				"Final-channel text is suppressed, including questions",
 				"`journal add 'Tests passed' --report-now`",
 				"`await journal({op: \"add\", text: \"Tests passed\", report_now: true})`",
@@ -142,7 +147,6 @@ func TestNonAstraExecutionGuidanceKeepsAstraFocused(t *testing.T) {
 			"Do not create separate executions merely because reads are independent",
 			"wait \"$first_check_pid\" || checks_status=$?",
 			"wait \"$second_check_pid\" || checks_status=$?",
-			"Do not record every\ncommand, search, or restatement",
 			"A nearby brace's hash is not interchangeable",
 		} {
 			if !strings.Contains(sol, detailed) || strings.Contains(astra, detailed) {

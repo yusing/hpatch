@@ -9,8 +9,11 @@ replay store's filesystem lock for cross-process serialization but never evicts 
 `internal/router/commentary.go` retains the existing argument projection and exact replay
 provenance machinery, generalized so eligible function tools receive `journal` mutations.
 `internal/router/journal_tool.go` handles `functions.journal` directly in the response transform.
-It records local router calls and supplies their results through a request continuation without
-dispatching a host executor. Codex receives a named `function_call_output` without `call_id`,
+It records local router calls and ordinarily supplies their results through a request continuation without
+dispatching a host executor. A successful direct finish operation instead selects terminal
+delivery in the same response when no client-dispatched calls remain. Completion intent stays
+on that response transform, not in durable journal state; replay cannot finish another turn.
+Codex receives a named `function_call_output` without `call_id`,
 using an `fco_` item ID correlated against durable replay. Request preparation restores the
 original provider call and paired result, and rebases any incremental WebSocket input whose
 client prefix differs from the restored provider prefix.

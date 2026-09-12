@@ -30,7 +30,8 @@ command sessions, and patch diff UI. No fork, no config edits, no daemon.
   - `report_now` shows a labelled **Journal update** immediately, distinct from stock
     commentary and reasoning summaries. At successful completion, **Journal flush** shows
     every new or revised entry, including live updates. Only revisions already flushed are
-    skipped. Journals replace the separate final-answer essay.
+    skipped. Journals replace the separate final-answer essay. Agents finish with a direct
+    journal finish call, which completes the turn without an extra model request.
   - Scripts can record milestones without mixing them into command output. Child updates
     carry the agent's path when Codex supplies its identity.
   - When Codex supplies parent-thread metadata, child activity also appears inline

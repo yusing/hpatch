@@ -12,7 +12,6 @@ Shell reference below for interpreter selection, input format, execution options
 Group ready reads and searches in one multiline script. For slower independent work, use
 shell `&` and wait for every job, preserving failures; do not overlap edits or shared mutable
 state. Reserve explicit sequential batches for separate interpreters or execution contexts.
-Record meaningful milestones in the `journal` field of a supported tool call, or use `functions.journal`; set `report_now` only for immediate user-visible progress. Do not write a final-channel answer after the last journalled tool call.
 
 ## Edit planning
 

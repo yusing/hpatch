@@ -24,6 +24,7 @@ type journalCodexProvider struct {
 	turns             map[string]int
 	childResultSeen   bool
 	journalResultSeen bool
+	childRequests     int
 }
 
 func (p *journalCodexProvider) forwardExecution(_, _ context.Context, body []byte, headers http.Header, _ string) (*http.Response, error) {
@@ -46,15 +47,12 @@ func (p *journalCodexProvider) forwardExecution(_, _ context.Context, body []byt
 	call := func(name string, args any) map[string]any {
 		return map[string]any{"type": "function_call", "id": fmt.Sprintf("fc_%s_%d", thread, turn), "call_id": fmt.Sprintf("call_%s_%d", thread, turn), "name": name, "namespace": map[bool]string{true: "functions", false: "journal_fixture_agents"}[name == "journal"], "arguments": string(mustMarshalJSON(args)), "status": "completed"}
 	}
-	answer := func() map[string]any {
-		return map[string]any{"type": "message", "id": fmt.Sprintf("msg_%s_%d", thread, turn), "role": "assistant", "phase": "final_answer", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": "PROVIDER_FINAL_MUST_NOT_APPEAR", "annotations": []any{}}}}
-	}
 	if child {
-		if turn == 1 {
-			item = call("journal", map[string]any{"op": "add", "text": "Native child milestone", "report_now": true})
-		} else {
-			item = answer()
+		p.childRequests++
+		if turn != 1 {
+			return nil, fmt.Errorf("child finish triggered an extra provider request")
 		}
+		item = call("journal", map[string]any{"op": "finish", "journal": []any{map[string]any{"op": "add", "text": "Native child milestone", "report_now": true}}})
 	} else {
 		switch {
 		case turn == 1:
@@ -64,7 +62,7 @@ func (p *journalCodexProvider) forwardExecution(_, _ context.Context, body []byt
 		case strings.Contains(input, "Journal flushed: 1 new, 0 already flushed"):
 			p.childResultSeen = true
 			p.journalResultSeen = strings.Contains(input, "function_call_output") && strings.Contains(input, `\"id\":\"j1\"`)
-			item = answer()
+			item = call("journal", map[string]any{"op": "finish"})
 		case turn < 8:
 			item = call("wait_agent", map[string]any{"timeout_ms": 10000})
 		default:
@@ -121,8 +119,8 @@ func TestJournalNativeCodexSpawnE2E(t *testing.T) {
 	if !provider.childResultSeen || !provider.journalResultSeen {
 		t.Fatalf("native consumer lost journal result or child summary: child=%v journal=%v\nstdout: %.8000s\nstderr: %.8000s", provider.childResultSeen, provider.journalResultSeen, stdout.String(), stderr.String())
 	}
-	if strings.Contains(stdout.String(), "PROVIDER_FINAL_MUST_NOT_APPEAR") {
-		t.Fatal("provider final text escaped journal terminal suppression")
+	if provider.childRequests != 1 {
+		t.Fatalf("child provider requests = %d, want exactly one", provider.childRequests)
 	}
 	if !strings.Contains(stdout.String(), "Journal update") || !strings.Contains(stdout.String(), "Journal flush ") {
 		t.Fatal("native consumer did not display distinct live updates and terminal flushes")

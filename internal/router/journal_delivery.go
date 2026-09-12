@@ -329,7 +329,7 @@ func (t *mekugiResponseTransform) decorateJournalJSON(payload []byte) ([]byte, e
 	if err := json.Unmarshal(payload, &response); err != nil {
 		return nil, err
 	}
-	terminal := jsonString(response, "status") == "completed" && journalTerminalEligible(t.journalProviderOutput)
+	terminal := jsonString(response, "status") == "completed" && t.journalTerminalReady()
 	messages, err := t.prepareJournalDelivery(terminal)
 	if err != nil {
 		return nil, err

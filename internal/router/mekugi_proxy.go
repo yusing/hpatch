@@ -275,6 +275,7 @@ type mekugiResponseTransform struct {
 	journalClientCalls        bool
 	journalTerminal           bool
 	journalContinue           bool
+	journalFinishRequested    bool
 	finalAnswer               finalAnswerStream
 	usageObserved             bool
 
@@ -1521,11 +1522,19 @@ func (t *mekugiResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 }
 
 func (t *mekugiResponseTransform) transformSSE(payload []byte) ([][]byte, error) {
+	var prefix [][]byte
 	if t.journalActive {
-		if events, handled, err := t.interceptJournalSSE(payload); handled || err != nil {
+		events, handled, err := t.interceptJournalSSE(payload)
+		if handled || err != nil {
 			return events, err
 		}
+		prefix = events
 	}
+	visible, err := t.transformNonJournalSSE(payload)
+	return append(prefix, visible...), err
+}
+
+func (t *mekugiResponseTransform) transformNonJournalSSE(payload []byte) ([][]byte, error) {
 	if len(t.subagentDeferred) != 0 {
 		t.subagentDeferred = t.retainCommentary(t.subagentDeferred...)
 		if len(t.subagentDeferred) == 0 {
@@ -2069,7 +2078,7 @@ func (t *mekugiResponseTransform) transformResponse(payload []byte, terminalStat
 		object["output"] = encoded
 	}
 	if t.journalActive {
-		t.journalContinue = status == "completed" && len(t.journalResults) != 0 && !t.journalClientCalls
+		t.journalContinue = status == "completed" && len(t.journalResults) != 0 && !t.journalClientCalls && !t.journalTerminalReady()
 		if len(journalPrefix.clientResults) != 0 {
 			var output []map[string]json.RawMessage
 			if err := json.Unmarshal(object["output"], &output); err != nil {

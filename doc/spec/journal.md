@@ -26,9 +26,21 @@ and reasoning summaries without rewriting stock output. Deletes are silent unles
 an already-reported ID.
 
 Mekugi mode also exposes `functions.journal` with one operation: `list`, `add`, `edit`, or
-`delete`. List is read-only and may address only a proven ancestor or descendant journal. Unknown
+`delete`, or `finish`. List is read-only and may address only a proven ancestor or descendant journal. Unknown
 or conflicted ancestry fails closed. Mutations return router-assigned IDs. The dedicated tool includes `journal_ids` for any batched field mutations, independently of its main operation result. Journal calls are
 router state operations and do not invoke an executor.
+
+Direct `functions.journal({"op":"finish","journal":[...]})` requests turn completion,
+optionally applying the last atomic mutation array in the same call. Finish takes final mutations
+only through `journal`; other operands must be unset or at their empty/default values. Agents call it alone after required tool
+results arrive, rather than waiting or generating another final-answer turn. On a successful
+response with successful journal results and no client-dispatched calls, it flushes and
+returns the terminal response without another provider request. Mixed client calls remain
+host-dispatched and prevent completion; journal operation error results continue for correction.
+Invalid or rejected batched mutations fail translation under the existing atomic field contract.
+Failed, incomplete, or interrupted responses never complete or flush via finish.
+Completion intent is response-local: replay, resume, and forks do not finish a new turn.
+Finish is not exposed through runtime shell or Code Mode journal publication.
 
 At a successful terminal response with no client-dispatched calls, the router emits a deterministic
 flush containing only unflushed revisions, including previously live-reported entries, skips it
@@ -93,6 +105,7 @@ and drains already-buffered provider output rather than leaking a successful pro
    token metrics, followed by the child summary when applicable. They suppress provider
    final text; failures and interruptions do not terminal-flush.
 7. The native Codex spawn fixture proves that journal results survive client normalization
-   and that the parent receives the child's synthetic summary.
+   and that the parent receives the child's synthetic summary after one child provider request
+   containing finish and its last mutations, with no final-answer continuation.
 8. Debug evidence separates applied mutations, runtime wiring, live rendering, and
    terminal flushing without recording journal bodies or private publication credentials.

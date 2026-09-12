@@ -47,15 +47,15 @@ func exposeJournalTool(fields map[string]json.RawMessage, catalog *responsesTool
 	catalog.appendTop([]*responsesToolDefinition{newResponsesToolDefinition(map[string]json.RawMessage{
 		"type":        mustMarshalJSON("function"),
 		"name":        mustMarshalJSON(journalToolName),
-		"description": mustMarshalJSON("Read or update the calling thread's durable milestone journal. list may name a proven ancestor or descendant agent. Mutations return router-assigned IDs. report_now shows progress immediately."),
+		"description": mustMarshalJSON("Manage the calling thread's durable milestone journal. Mutations return router-assigned IDs."),
 		"strict":      mustMarshalJSON(false),
 		"parameters": mustMarshalJSON(map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"op":         map[string]any{"type": "string", "enum": []string{"list", "add", "edit", "delete"}},
+				"op":         map[string]any{"type": "string", "enum": []string{"list", "add", "edit", "delete", "finish"}},
 				"id":         map[string]any{"type": "string", "description": "Router-assigned item ID; required for edit and delete."},
 				"text":       map[string]any{"type": "string", "description": "Required nonblank milestone text for add and edit."},
-				"agent":      map[string]any{"type": "string", "description": "Canonical agent path, for list only. Defaults to the caller."},
+				"agent":      map[string]any{"type": "string", "description": "Canonical path of a proven ancestor or descendant, for list only. Defaults to the caller."},
 				"report_now": map[string]any{"type": "boolean"},
 			},
 			"required": []string{"op"},
@@ -139,6 +139,8 @@ func (t *mekugiResponseTransform) executeJournalCall(item map[string]json.RawMes
 	var result any
 	if err := decoder.Decode(&args); err != nil || decoder.Decode(new(any)) != io.EOF {
 		result = map[string]any{"ok": false, "error": "invalid journal arguments"}
+	} else if args.Op == "finish" && (args.ID != "" || args.Text != nil || args.Agent != "" || args.ReportNow) {
+		result = map[string]any{"ok": false, "error": "journal finish accepts only op and batched journal mutations"}
 	} else {
 		if len(args.Journal) != 0 {
 			mutations, err := decodeJournalMutations(args.Journal)
@@ -151,7 +153,9 @@ func (t *mekugiResponseTransform) executeJournalCall(item map[string]json.RawMes
 			}
 		}
 		var err error
-		if args.Op == "list" {
+		if args.Op == "finish" {
+			result = map[string]any{"ok": true, "finish_requested": true}
+		} else if args.Op == "list" {
 			if args.ID != "" || args.Text != nil || args.ReportNow {
 				err = errors.New("journal list accepts only agent and batched journal mutations")
 			}
@@ -201,7 +205,30 @@ func (t *mekugiResponseTransform) executeJournalCall(item map[string]json.RawMes
 	}
 	t.journalCalls[callID] = item
 	t.journalResults = append(t.journalResults, output)
+	if args.Op == "finish" && result.(map[string]any)["ok"] == true {
+		t.journalFinishRequested = true
+	}
 	return output, nil
+}
+
+// Completion is invocation-local. Replaying a retained finish result must never
+// finish a later turn, and client-dispatched work still belongs to the host.
+func (t *mekugiResponseTransform) journalTerminalReady() bool {
+	if !t.journalFinishRequested {
+		return len(t.journalResults) == 0 && journalTerminalEligible(t.journalProviderOutput)
+	}
+	if t.journalClientCalls || len(t.journalPending) != 0 {
+		return false
+	}
+	for _, result := range t.journalResults {
+		var outcome struct {
+			OK bool `json:"ok"`
+		}
+		if json.Unmarshal([]byte(jsonString(result, "output")), &outcome) != nil || !outcome.OK {
+			return false
+		}
+	}
+	return true
 }
 
 // The client retains local results but never dispatches these router calls.
@@ -345,28 +372,47 @@ func (t *mekugiResponseTransform) interceptJournalSSE(payload []byte) ([][]byte,
 		}
 	case "response.completed":
 		var output []map[string]json.RawMessage
-		if len(t.journalProviderOutput) == 0 && json.Unmarshal(event.Response["output"], &output) == nil {
+		var results [][]byte
+		if json.Unmarshal(event.Response["output"], &output) == nil && len(output) != 0 {
 			t.journalProviderOutput = output
 			for _, item := range output {
+				// Some providers complete calls only in the terminal snapshot.
+				// Apply those calls before deciding whether to continue or flush,
+				// and emit the same client result as an item-done event would.
+				if isJournalCall(item) {
+					if jsonString(item, "status") == "incomplete" || jsonString(item, "status") == "in_progress" {
+						return nil, true, errors.New("incomplete journal call at completion")
+					}
+					delete(t.journalPending, jsonString(item, "id"))
+					seen := t.journalCalls[jsonString(item, "call_id")] != nil
+					result, err := t.executeJournalCall(item)
+					if err != nil {
+						return nil, true, err
+					}
+					if !seen {
+						results = append(results, journalResultEvent(result))
+					}
+				}
 				if !isJournalCall(item) && blocksTokenUsage(item) {
 					t.journalClientCalls = true
 				}
 			}
 		}
-		t.journalTerminal = len(t.journalResults) == 0 && journalTerminalEligible(t.journalProviderOutput)
+		t.journalTerminal = t.journalTerminalReady()
 		if t.journalTerminal {
 			t.finalAnswer.suppressed = t.finalAnswer.events
 			t.finalAnswer.events = nil
 			t.finalAnswer.bytes = 0
 		}
-		if len(t.journalResults) != 0 && !t.journalClientCalls {
+		if len(t.journalResults) != 0 && !t.journalClientCalls && !t.journalTerminal {
 			if len(t.journalPending) != 0 {
 				return nil, true, errors.New("incomplete journal call at completion")
 			}
 			t.journalContinue = true
 			t.finalAnswer.flush()
-			return nil, true, t.commitHistory()
+			return results, true, t.commitHistory()
 		}
+		return results, false, nil
 	}
 	return nil, false, nil
 }
