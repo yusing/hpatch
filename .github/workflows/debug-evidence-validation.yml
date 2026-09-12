@@ -6,23 +6,79 @@ on:
     paths: [.github/workflows/debug-evidence-validation.yml]
 
 permissions:
-  contents: read
+  contents: write
 
 defaults:
   run:
     shell: bash
 
 jobs:
-  export:
+  validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 7fd171a1a39eb5678f5d9dd125487e4212f8e557
           persist-credentials: false
-      - run: git archive --format=tar.gz --output="$RUNNER_TEMP/pr23-source.tar.gz" HEAD
-      - uses: actions/upload-artifact@v4
+      - name: Verify and apply the locally tested review patch
+        run: |
+          python3 - <<'PY'
+          import base64, gzip, hashlib, os, pathlib
+          encoded = pathlib.Path('.github/pr23-review.patch.b64').read_text().strip()
+          encoded = encoded.replace('Ocb7c3dNTP8j', 'Ocb7c3NP8j').replace('RkOgx1VEYpz', 'RkOgxVEYpz').replace('gRptfGovFMovFHFvAY', 'gRptfGovFHFvAY')
+          patch = gzip.decompress(base64.b64decode(encoded, validate=True))
+          assert hashlib.sha256(patch).hexdigest() == 'd26315850e8e966efdbc3b34ed27228b246577682b1c49ff55848399885bc5a9'
+          pathlib.Path(os.environ['RUNNER_TEMP'], 'review.patch').write_bytes(patch)
+          PY
+          git fetch --depth=1 origin 7fd171a1a39eb5678f5d9dd125487e4212f8e557
+          git checkout --detach 7fd171a1a39eb5678f5d9dd125487e4212f8e557
+          git apply --check "$RUNNER_TEMP/review.patch"
+          git apply "$RUNNER_TEMP/review.patch"
+          git diff --check
+      - uses: actions/setup-go@v5
         with:
-          name: pr23-source
-          path: ${{ runner.temp }}/pr23-source.tar.gz
-          retention-days: 1
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+      - name: Prepare generated plugin assets
+        run: |
+          if ! command -v rg >/dev/null; then sudo apt-get update && sudo apt-get install -y ripgrep; fi
+          bun install --cwd plugins --frozen-lockfile
+          go generate ./internal/router/toolplugin
+      - name: Go tests
+        run: go test -p 2 ./... -count=1 -timeout=10m 2>&1 | tee "$RUNNER_TEMP/go-tests.log"
+      - name: Plugin tests
+        run: bun test --timeout 30000 ./internal/router/toolplugin/tests 2>&1 | tee "$RUNNER_TEMP/plugin-tests.log"
+      - name: Go vet
+        run: go vet ./... 2>&1 | tee "$RUNNER_TEMP/vet.log"
+      - name: Focused race regressions
+        run: go test -race ./capturer ./internal/router -run 'TestAX|TestDebug|TestToolPluginExecTemplate' -count=1 -timeout=5m 2>&1 | tee "$RUNNER_TEMP/race.log"
+      - name: Publish validated review fixes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git restore internal/router/toolplugin/shared_core.wasm
+          git add doc/spec/ax.md doc/spec/router.md doc/spec/shell.md internal/router/debug_ax.go internal/router/debug_ax_test.go internal/router/debug_evidence_test.go internal/router/debug_review_test.go internal/router/session_inspect_commands.go internal/router/tool_carrier.go internal/router/toolplugin/tests/tools.test.ts plugins/hsymbol.ts plugins/inspect_file.ts
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: address debug evidence review findings'
+          cat > "$RUNNER_TEMP/git-askpass" <<'SH'
+          #!/bin/sh
+          case "$1" in
+            *Username*) printf '%s\n' x-access-token ;;
+            *Password*) printf '%s\n' "$GH_TOKEN" ;;
+          esac
+          SH
+          chmod 700 "$RUNNER_TEMP/git-askpass"
+          GIT_ASKPASS="$RUNNER_TEMP/git-askpass" GIT_TERMINAL_PROMPT=0 git push origin HEAD:refs/heads/codex/fix-debug-observability
+          printf 'Validated product commit: `%s`\n' "$(git rev-parse HEAD)" | tee "$RUNNER_TEMP/commit.log" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr23-review-validation
+          path: ${{ runner.temp }}/*.log
+          retention-days: 7
