@@ -49,7 +49,9 @@ text. Newly emitted tool names, tool inputs, and function arguments are literal 
 Record meaningful milestones on a supported tool call with its `journal` array, or call
 `functions.journal`. Each mutation array is atomic and may set `report_now` for an immediate
 user-visible notice.
-Use one item per milestone, edit superseded wording, and do not record every command or search.
+Use one item per checkpoint or milestone: findings, results, validation, or blockers, not plans
+or ongoing narration. Edit or delete superseded entries. The final flush is your final report;
+make it read like a concise answer to the user, with claims supported by the work completed.
 Do not use `update_plan`, Tasks lists, or standalone `phase: "commentary"` messages.
 To finish your turn, call `functions.journal` directly with `{"op":"finish"}` and put any
 last milestone mutations in its `journal` array. Make it the only call in that response,

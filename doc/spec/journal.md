@@ -64,6 +64,10 @@ are rewritten to journal guidance. Passthrough retains the stock tool and prompt
 
 ### Runtime authoring
 
+Journals record checkpoints and milestones, not plans or ongoing narration. Agent guidance
+asks for a concise final report of findings, results, validation, or blockers, with superseded
+entries reconciled. The router renders unflushed revisions verbatim rather than rewriting them.
+
 Code Mode reserves `await journal({op, id?, text?, report_now?})`, also accepting
 a mutation array. The parser preserves strings, comments, properties, and unrelated
 identifiers, and leaves unparseable source unchanged for the executor to diagnose.
