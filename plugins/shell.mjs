@@ -1,3 +1,4 @@
+import {formatHRunOutput} from "./hrun.ts";
 import {spawn} from "node:child_process";
 import {closeSync} from "node:fs";
 import {Socket} from "node:net";
@@ -219,6 +220,9 @@ function executeInterpreter(argv, context) {
 function executeScript(argv, context) {
   if (argv.length < 2) {
     return {stderr: "shell: missing interpreter or script body\n", exitCode: 1};
+  }
+  if (argv[0] === "--hrun-output") {
+    return formatHRunOutput(argv.slice(1));
   }
   const interpreter = interpreterIdentity(argv[0]);
   // Bash and POSIX shell programs must pass through the router's mvdan/sh

@@ -30,11 +30,12 @@ When parts of this file is stale after your work, update this file.
 | Codex-facing WebSocket sessions, incremental history, and steering | `internal/router/server_websocket.go` |
 | Codex authentication and upstream Responses transport | `internal/router/client.go`, `internal/router/client_websocket.go` |
 | Tool replacement, host translation, and response restoration | `internal/router/mekugi_proxy.go` |
+| Bash/POSIX execution and bounded external-command output | `internal/router/shell_runner.go`, `internal/router/shell_hrun.go` |
 | AX runtime evidence and offline measurements | `capturer/ax.go`; actual private-reader dispatch in `internal/router/shell_runner.go` |
 | Offline logical session inspection | `internal/router/session_inspect.go`, dispatched by `cmd/mekugi/main.go` |
 | Durable replay records, request-visible history, and rejected-script recovery | `internal/router/mekugi_store.go`, `internal/router/mekugi_history.go`, `internal/router/mekugi_recovery.go` |
 | Carrier catalog and model-visible projection | `internal/router/tool_carrier.go`, `internal/router/tool_registry.go` |
-| Built-in tool sources and private execution runtime | `plugins`, `internal/router/toolplugin` |
+| Built-in tool sources, shared GPT-5 output tokenization, and private execution runtime | `plugins` (tokenization in `plugins/tokens.ts`), `internal/router/toolplugin` |
 | Fixed shell-runtime locator and per-thread runtime path | `cmd/shell`, `internal/shellruntime`, `internal/router/shell_runtime.go` |
 | Configured plugin discovery, authenticated snapshots, and frontends | `internal/router/toolplugin/runtime.go`, `internal/router/tool_registry.go`, `internal/router/tool_wrapper.go` |
 | Router process signals, wrapped Codex lifecycle, private model-catalog snapshot, and top-level exit behavior | `cmd/mekugi/main.go`, `cmd/mekugi/wrap.go`, `cmd/mekugi/catalog.go` |

@@ -147,6 +147,15 @@ keep the worker alive by retaining inherited streams after cancellation or outpu
 Every command in a PTY-backed shell remains in the worker's foreground group because `mvdan/sh`
 does not coordinate job-control handoff across pipelines; cancellation uses a bounded
 inherited-pipe wait.
+The same shell middleware owns `hrun` argument validation and bounded prefix/tail display.
+Hrun reuses the existing external-command execution owner with substituted capture writers;
+it owns no alternate process or session lifecycle. Line-only selection stays in the Go capture
+owner without tokenization. Exact token selection uses a private formatting operation on the existing shell executor, sharing the readers' bundled GPT-5
+tokenizer. Large tokenization pieces use heap-ordered byte-pair merges with the pinned
+model's vocabulary and splitting rules; cancellation can retire the formatting invocation.
+Hrun stays outside the plugin contribution and AX reader catalogs. The direct carrier excludes hrun, and declaration validation reserves
+its name. Hcat owns whole-row tail selection inside its existing reader implementation.
+
 Other interpreter basenames retain the JavaScript executor's anonymous script descriptor path.
 
 Shell transformation never adds router-owned flags. The shell runtime owner supplies commentary

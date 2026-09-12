@@ -300,3 +300,21 @@ func TestInstructionsConsolidateDeliveredContracts(t *testing.T) {
 		}
 	}
 }
+
+func TestInstructionsTeachBoundedCommandOutputAndTailReads(t *testing.T) {
+	for _, model := range []string{"gpt-6-astra", "gpt-5.6-sol"} {
+		for _, compact := range []bool{false, true} {
+			got := InstructionsForModel(model, compact)
+			for _, required := range []string{
+				"hrun [-n N] [--max-tokens N] [--tail] -- COMMAND [ARG...]",
+				"preserves the command's exit status",
+				"`hcat [-n N] [--tail]`",
+				"first/last complete rows",
+			} {
+				if !strings.Contains(got, required) {
+					t.Errorf("model=%q compact=%t missing %q", model, compact, required)
+				}
+			}
+		}
+	}
+}

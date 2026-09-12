@@ -296,12 +296,148 @@ describe("reader budgets and previews", () => {
   });
 });
 
+describe("hcat line limits", () => {
+  test("selects complete head/tail lines before optional token limits", async () => {
+    const directory = await temporaryDirectory("hcat-lines-");
+    const file = path.join(directory, "rows.txt");
+    const tool = createHCatTool("", "");
+    await writeFile(file, "one\r\ntwo\rthree\nfour");
+    for (const [flags, expected] of [
+      [["-n", "2"], formatVerifiedRow(1, "one") + formatVerifiedRow(2, "two")],
+      [["--tail", "-n", "2"], formatVerifiedRow(3, "three") + formatVerifiedRow(4, "four")],
+      [["-n", "2", "--max-tokens", "100"], formatVerifiedRow(1, "one") + formatVerifiedRow(2, "two")],
+      [["--tail", "-n", "2", "--max-tokens", "100"], formatVerifiedRow(3, "three") + formatVerifiedRow(4, "four")],
+    ] as const) {
+      const result = await tool.execute([...flags, file], executionContext);
+      expect(result.stdout).toBe(expected);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("2-line limit");
+    }
+    const range = await tool.execute(["--tail", "-n", "1", file, "1:2"], executionContext);
+    expect(range.stdout).toBe(formatVerifiedRow(2, "two"));
+    expect(await tool.parse('-n 2 --tail "rows.txt"', {resolvePath: value => `/root/${value}`})).toEqual(
+      ["-n", "2", "--tail", "/root/rows.txt"]);
+    for (const flags of [["-n"], ["-n", "0"], ["-n", "01"], ["-n", "1", "-n", "2"], ["-n", "9007199254740992"]]) {
+      expect((await tool.execute([...flags, file], executionContext)).failureClass).toBe("invalid_arguments");
+    }
+  });
+
+  test("line-only mode admits long complete rows beyond the default token ceiling", async () => {
+    const directory = await temporaryDirectory("hcat-line-long-");
+    const file = path.join(directory, "rows.txt");
+    const content = "word ".repeat(20000);
+    await writeFile(file, `${content}\nend`);
+    const tool = createHCatTool("", "");
+    const head = await tool.execute(["-n", "1", file], executionContext);
+    expect(head.stdout).toBe(formatVerifiedRow(1, content));
+    const tail = await tool.execute(["--tail", "-n", "2", file], executionContext);
+    expect(tail.stdout).toBe(formatVerifiedRow(1, content) + formatVerifiedRow(2, "end"));
+    expect(tail.exitCode).toBe(0);
+    const limited = await tool.execute(["-n", "1", "--max-tokens", "20", file], executionContext);
+    expect(limited.stdout).toBe("");
+    const tailLimited = await tool.execute(["--tail", "-n", "2", "--max-tokens", "20", file], executionContext);
+    expect(tailLimited.stdout).toBe(formatVerifiedRow(2, "end"));
+    await writeFile(file, `first\n${"x".repeat(2_000_000)}`);
+    const smallHead = await tool.execute(["-n", "1", file], executionContext);
+    expect(smallHead.stdout).toBe(formatVerifiedRow(1, "first"));
+    expect(smallHead.stderr).toContain("1-line limit");
+    // Skipping unselected rows must not skip whole-source UTF-8 validation.
+    await writeFile(file, Buffer.concat([Buffer.from("first\n"), Buffer.from([0xff])]));
+    expect((await tool.execute(["-n", "1", file], executionContext)).stderr).toContain("not UTF-8");
+
+    await writeFile(file, "");
+    expect((await tool.execute(["--tail", "-n", "2", file], executionContext)).exitCode).toBe(0);
+  });
+});
+
+describe("hcat tail", () => {
+  test("returns a whole-row suffix within the budget, including ranges and previews", async () => {
+    const directory = await temporaryDirectory("hcat-tail-");
+    const file = path.join(directory, "rows with spaces.txt");
+    await writeFile(file, "first\r\nsecond\rthird\nlast", "utf8");
+    const tool = createHCatTool("test", "");
+    const last = formatVerifiedRow(4, "last");
+    const budget = countGPT5Tokens(last);
+    const result = await tool.execute(["--tail", "--max-tokens", String(budget), file], executionContext);
+    expect(result.stdout).toBe(last);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("output incomplete");
+    expect(countGPT5Tokens(result.stdout!)).toBeLessThanOrEqual(budget);
+
+    const complete = await tool.execute(["--max-tokens", "200", "--tail", file, "2:3"], executionContext);
+    expect(complete.stdout).toBe(formatVerifiedRow(2, "second") + formatVerifiedRow(3, "third"));
+    expect(complete.exitCode).toBe(0);
+    const preview = await tool.execute(["--preview-bytes", "2", "--tail", "--max-tokens", "200", file, "4:4"], executionContext);
+    expect(JSON.parse(preview.stdout!)).toMatchObject({row: `4:${hashLine("last")}`, preview: "la", omitted_bytes: 2});
+    expect(preview.exitCode).toBe(0);
+    expect(await tool.parse('--tail --max-tokens 100 "rows with spaces.txt" 0:2',
+      {resolvePath: (value: string) => `/root/${value}`})).toEqual([
+      "--tail", "--max-tokens", "100", "/root/rows with spaces.txt", "1:2",
+    ]);
+  });
+
+  test("continues after oversized rows but never skips an oversized final row", async () => {
+    const directory = await temporaryDirectory("hcat-tail-long-");
+    const file = path.join(directory, "rows");
+    const tool = createHCatTool("test", "");
+    for (const large of [" x".repeat(1000), "a".repeat(2_000_000)]) {
+      await writeFile(file, `first\n${large}\nlast\n`, "utf8");
+      const result = await tool.execute(["--tail", "--max-tokens", "20", file], executionContext);
+      expect(result.stdout).toBe(formatVerifiedRow(3, "last"));
+      expect(result.exitCode).toBe(1);
+      await writeFile(file, `first\n${large}`, "utf8");
+      const final = await tool.execute(["--tail", "--max-tokens", "20", file], executionContext);
+      expect(final.stdout).toBe("");
+      expect(final.exitCode).toBe(1);
+    }
+  });
+
+  test("bounds a long scan while retaining the final rows", async () => {
+    const directory = await temporaryDirectory("hcat-tail-scan-");
+    const file = path.join(directory, "rows");
+    await writeFile(file, "same\n".repeat(10_000), "utf8");
+    const result = await createHCatTool("test", "").execute(
+      ["--tail", "--max-tokens", "100", file], executionContext);
+    expect(result.stdout).toEndWith(formatVerifiedRow(10_000, "same"));
+    expect(countGPT5Tokens(result.stdout!)).toBeLessThanOrEqual(100);
+    expect(result.exitCode).toBe(1);
+  });
+
+  test("handles a long single-piece final row without quadratic tokenization", async () => {
+    const directory = await temporaryDirectory("hcat-tail-long-piece-");
+    const file = path.join(directory, "rows");
+    const content = " ".repeat(1_500_000);
+    await writeFile(file, "before\n".repeat(50) + content, "utf8");
+    const result = await createHCatTool("test", "").execute(
+      ["--tail", "--max-tokens", "15500", file], executionContext);
+    expect(result.stdout).toEndWith(formatVerifiedRow(51, content));
+    expect(result.exitCode).toBe(0);
+  }, 15_000);
+
+  test("validates flags and all source bytes, even outside the retained suffix", async () => {
+    const directory = await temporaryDirectory("hcat-tail-validation-");
+    const file = path.join(directory, "rows");
+    const tool = createHCatTool("test", "");
+    for (const options of [["--tail"], ["--tail", "--max-tokens", "20", "--tail"]]) {
+      const result = await tool.execute([...options, file], executionContext);
+      expect(result.failureClass).toBe("invalid_arguments");
+    }
+    await writeFile(file, Buffer.concat([Buffer.from([0xff]), Buffer.from("\nlast\n")]));
+    const invalid = await tool.execute(["--tail", "--max-tokens", "20", file], executionContext);
+    expect(invalid.stdout).toBeUndefined();
+    expect(invalid.stderr).toContain("not UTF-8");
+    await writeFile(file, "", "utf8");
+    const empty = await tool.execute(["--tail", "--max-tokens", "20", file], executionContext);
+    expect(empty).toMatchObject({stdout: "", exitCode: 0});
+  });
+});
+
 describe("hcat built-in plugin", () => {
   test("keeps the private description call-local", () => {
     const description = plugin.tools[0].specification.description.replace(/\s+/g, " ");
     expect(description).toContain("Read one UTF-8 file or inclusive logical-line range");
     expect(description).toContain("`LINE:HASH TEXT`");
-    expect(description).toContain("`hcat PATH [START:END]`");
+    expect(description).toContain("`hcat [-n N] [--max-tokens N] [--preview-bytes N] [--tail] PATH [START:END]`");
     for (const persistent of ["authorized edit", "ordinary read", "HPATCH targets", "through `shell`"]) {
       expect(description).not.toContain(persistent);
     }
@@ -333,6 +469,26 @@ describe("hcat built-in plugin", () => {
       "\"unterminated",
     ]) {
       expect(rustRegexMatches(format.definition, input)).toBe(false);
+    }
+  });
+
+  test("preserves quoted option-like paths through execution", async () => {
+    const directory = await temporaryDirectory("hcat-option-path-");
+    process.chdir(directory);
+    const tool = createHCatTool("", "");
+    for (const name of ["--tail", "--max-tokens", "--preview-bytes", "-n"]) {
+      const file = path.join(directory, name);
+      await writeFile(file, "first\nsecond\n");
+      for (const [prefix, range, expected] of [
+        ["", "", formatVerifiedRow(1, "first") + formatVerifiedRow(2, "second")],
+        ["-n 1 --tail ", " 2:2", formatVerifiedRow(2, "second")],
+      ]) {
+        const argv = await tool.parse(`${prefix}${JSON.stringify(name)}${range}`, {
+          resolvePath: value => value,
+        });
+        expect(argv).toContain(`./${name}`);
+        expect(await tool.execute(argv, executionContext)).toMatchObject({stdout: expected, exitCode: 0});
+      }
     }
   });
 

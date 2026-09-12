@@ -35,6 +35,8 @@ func TestSubagentToolDisplay(t *testing.T) {
 		{"shell", "cat /skills/writing-readme/SKILL.md", "Skill Read `writing-readme`"},
 		{"shell", "cat a\ncat b", "Read `a`\n\nRead `b`"},
 		{"shell", "hcat --preview-bytes 80 --max-tokens 100 a.go 1:20", "Read `a.go 1:20`"},
+		{"shell", "hcat --tail -n 20 a.go", "Read `a.go`"},
+		{"shell", "hcat --tail --max-tokens 100 a.go", "Read `a.go`"},
 		{"shell", "hcat a.go 1:20", "Read `a.go 1:20`"},
 		{"shell", "hgrep -n -F -e 'some text' a.go", "Search `-n -F -e 'some text' a.go`"},
 		{"shell", "hcat --max-tokens 15500 --preview-bytes 65536 a.go 0:1", "Read `a.go 0:1`"},
@@ -113,6 +115,7 @@ func TestSubagentMCPToolDisplay(t *testing.T) {
 
 func TestSubagentToolDisplayInvalidReaderOptions(t *testing.T) {
 	for _, input := range []string{
+		"hcat -n 0 a.go", "hcat -n 1 -n 2 a.go", "hcat -n 9007199254740992 a.go",
 		"hcat --max-tokens 0 a.go", "hcat --max-tokens -1 a.go",
 		"hcat --max-tokens 15501 a.go", "hcat --max-tokens 01 a.go",
 		"hcat --max-tokens 1 --max-tokens 2 a.go", "hcat --max-tokens a.go",

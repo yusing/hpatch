@@ -25,7 +25,7 @@ const shellCommandNames = new Set([
   "printf", "pushd", "pwd", "read", "readarray", "readonly", "return", "select", "set",
   "shift", "shopt", "source", "suspend", "test", "then", "time", "times", "trap",
   "true", "type", "typeset", "ulimit", "umask", "unalias", "unset", "until", "wait",
-  "while",
+  "while", "hrun",
 ]);
 
 function byteLength(value) {

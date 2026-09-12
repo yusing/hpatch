@@ -8,6 +8,7 @@ import {
 } from "mekugi:core/v1";
 
 import {
+  countGPT5Tokens,
   byteLength,
   errorText,
   createExecutorTool,
@@ -101,6 +102,55 @@ function parseReadSpec(input: string): ReadSpec {
 }
 
 
+// Retain a byte-bounded suffix while scanning, then tokenize only the final
+// candidates. Counting a full token window on every source row is unnecessary.
+class VerifiedRowTail {
+  #rows: string[] = [];
+  #head = 0;
+  #bytes = 0;
+  incomplete = false;
+
+  constructor(private readonly maxTokens?: number, private readonly maxLines?: number) {}
+
+  append(row: string): void {
+    this.#rows.push(row);
+    this.#bytes += byteLength(row);
+    while ((this.maxLines !== undefined && this.#rows.length - this.#head > this.maxLines)
+        || (this.maxTokens !== undefined && this.#bytes > this.maxTokens * MAX_POSSIBLE_GPT5_TOKEN_BYTES)) {
+      this.#bytes -= byteLength(this.#rows[this.#head]);
+      this.#rows[this.#head++] = "";
+      this.incomplete = true;
+    }
+    if (this.#head > 1024) {
+      this.#rows = this.#rows.slice(this.#head);
+      this.#head = 0;
+    }
+  }
+
+  omitRow(): void {
+    this.#rows = [];
+    this.#head = 0;
+    this.#bytes = 0;
+    this.incomplete = true;
+  }
+
+  finish(): {current: string; incomplete: boolean} {
+    if (this.maxTokens === undefined) {
+      return {current: this.#rows.slice(this.#head).join(""), incomplete: this.incomplete};
+    }
+    let current = "";
+    for (let index = this.#rows.length - 1; index >= this.#head; index -= 1) {
+      const candidate = this.#rows[index] + current;
+      if (this.maxTokens !== undefined && countGPT5Tokens(candidate) > this.maxTokens) {
+        this.incomplete = true;
+        break;
+      }
+      current = candidate;
+    }
+    return {current, incomplete: this.incomplete};
+  }
+}
+
 type ComparedOutput = {
   current: string;
   incomplete: boolean;
@@ -128,8 +178,12 @@ async function readHashLines(spec: ReadSpec, options: ReaderOptions): Promise<Co
     let content = "";
     let limitReason: string | undefined;
     let contentBytes = 0;
+    const tail = options.tail ? new VerifiedRowTail(options.maxTokens, options.maxLines) : undefined;
+    let oversizedRow = false;
     const output = new VerifiedRowOutput(options.maxTokens);
 
+    let selectedLines = 0;
+    let lineOutput = "";
     const selected = () => wholeFile
       || (lineNumber >= spec.startLine && lineNumber <= spec.endLine);
     const appendContent = (text: string): void => {
@@ -137,26 +191,49 @@ async function readHashLines(spec: ReadSpec, options: ReaderOptions): Promise<Co
         return;
       }
       lineOpen = true;
-      if (!selected() || output.incomplete) {
+      if (!selected() || oversizedRow || (!tail && output.incomplete)) {
         return;
       }
+      if (!tail && options.maxLines !== undefined && selectedLines >= options.maxLines) {
+        output.incomplete = true;
+        return;
+      }
+
       contentBytes += byteLength(text);
-      if (contentBytes > VERIFIED_ROW_MAX_TOKENS * MAX_POSSIBLE_GPT5_TOKEN_BYTES) {
+      if (!(options.maxLines !== undefined && options.maxTokens === undefined && options.previewBytes === undefined)
+          && contentBytes > VERIFIED_ROW_MAX_TOKENS * MAX_POSSIBLE_GPT5_TOKEN_BYTES) {
         // Bound candidate storage even when only a preview will be emitted.
         if (options.previewBytes !== undefined) {
           limitReason = `row ${lineNumber} exceeds the ${VERIFIED_ROW_MAX_TOKENS * MAX_POSSIBLE_GPT5_TOKEN_BYTES}-byte inspection bound; use a byte-window reader\n`;
         }
         content = "";
-        output.incomplete = true;
+        oversizedRow = true;
+        if (tail) {
+          tail.omitRow();
+        } else {
+          output.incomplete = true;
+        }
         return;
       }
       content += text;
     };
     const finishLine = (): void => {
-      if (selected() && !output.incomplete) {
-        const row = formatReaderRow(lineNumber, content, options);
-        output.append(row);
+      if (selected() && !oversizedRow && (tail || !output.incomplete)) {
+        selectedLines += 1;
+        if (!tail && options.maxLines !== undefined && selectedLines > options.maxLines) {
+          output.incomplete = true;
+        } else {
+          const row = formatReaderRow(lineNumber, content, options);
+          if (tail) {
+            tail.append(row);
+          } else if (options.maxLines !== undefined && options.maxTokens === undefined) {
+            lineOutput += row;
+          } else {
+            output.append(row);
+          }
+        }
       }
+      oversizedRow = false;
       content = "";
       contentBytes = 0;
       lineNumber += 1;
@@ -226,7 +303,7 @@ async function readHashLines(spec: ReadSpec, options: ReaderOptions): Promise<Co
     const warning = !wholeFile && missingStartLine <= spec.endLine
       ? `hcat: ${missingStartLine}-${spec.endLine}: [out of range]\n`
       : undefined;
-    return {current: output.current, incomplete: output.incomplete, warning, limitReason};
+    return {...(tail?.finish() ?? {current: options.maxLines !== undefined && options.maxTokens === undefined ? lineOutput : output.current, incomplete: output.incomplete}), warning, limitReason};
   } finally {
     await handle.close();
   }
@@ -236,22 +313,28 @@ async function readHashLines(spec: ReadSpec, options: ReaderOptions): Promise<Co
 /**
  * hcatArguments converts parsed hcat input to the internal argv representation.
  */
-function hcatArguments(input: string): string[] {
+function hcatArguments(input: string): {argv: string[]; pathIndex: number} {
   const prefix: string[] = [];
-  while (input.startsWith("--max-tokens ") || input.startsWith("--preview-bytes ")) {
-    const match = input.match(/^(--(?:max-tokens|preview-bytes)) ([^ ]+)(?: |$)/u);
+  while (input.startsWith("--max-tokens ") || input.startsWith("--preview-bytes ")
+      || input.startsWith("--tail ") || input.startsWith("-n ")) {
+    if (input.startsWith("--tail ")) {
+      prefix.push("--tail");
+      input = input.slice("--tail ".length);
+      continue;
+    }
+    const match = input.match(/^(-n|--(?:max-tokens|preview-bytes)) ([^ ]+)(?: |$)/u);
     if (match === null) {
       throw new Error("reader option requires a value");
     }
     prefix.push(match[1], match[2]);
     input = input.slice(match[0].length);
   }
-  readerOptions(prefix);
+  readerOptions(prefix, true);
   const spec = parseReadSpec(stripOptionalFinalNewline(input));
   if (spec.startLine === 0) {
-    return [...prefix, spec.path];
+    return {argv: [...prefix, spec.path], pathIndex: prefix.length};
   }
-  return [...prefix, spec.path, `${spec.startLine}:${spec.endLine}`];
+  return {argv: [...prefix, spec.path, `${spec.startLine}:${spec.endLine}`], pathIndex: prefix.length};
 }
 
 
@@ -282,16 +365,18 @@ export function createHCatTool(description: string, grammar: string): Tool<strin
     description,
     grammar,
     argv(input, context) {
-      const argumentsValue = hcatArguments(input);
-      const {offset} = readerOptions(argumentsValue);
-      argumentsValue[offset] = context.resolvePath(argumentsValue[offset]);
-      return argumentsValue;
+      const {argv, pathIndex} = hcatArguments(input);
+      // Preserve the parsed boundary after flattening into executor argv.
+      // Relative option-like names need a path spelling, not an option spelling.
+      const resolved = context.resolvePath(argv[pathIndex]);
+      argv[pathIndex] = resolved.startsWith("-") ? `./${resolved}` : resolved;
+      return argv;
     },
     async execute(argv) {
       let options: ReaderOptions;
       let spec: ReadSpec;
       try {
-        const parsed = readerOptions(argv);
+        const parsed = readerOptions(argv, true);
         options = parsed.options;
         spec = parseReadSpec(stripOptionalFinalNewline(hcatInput(parsed.rest)));
       } catch (error) {

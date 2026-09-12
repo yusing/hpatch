@@ -343,10 +343,18 @@ describe("installable shell plugin", () => {
     const builtinRoot = path.join(snapshotRoot, "builtin");
     await mkdir(builtinRoot);
     await Promise.all([
-      copyFile(new URL("../../../../plugins/shell.mjs", import.meta.url), path.join(snapshotRoot, "shell.mjs")),
       copyFile(new URL("../core-v1.mjs", import.meta.url), path.join(builtinRoot, "core-v1.mjs")),
       copyFile(new URL("../shared_core.wasm", import.meta.url), path.join(builtinRoot, "shared_core.wasm")),
     ]);
+    const bundled = await Bun.build({
+      entrypoints: [fileURLToPath(new URL("../../../../plugins/shell.mjs", import.meta.url))],
+      outdir: snapshotRoot,
+      naming: "shell.mjs",
+      target: "node",
+      format: "esm",
+      external: ["mekugi:core/v1"],
+    });
+    expect(bundled.success).toBe(true);
     const validated = spawnSync("node", [hostPath], {
       cwd: snapshotRoot,
       encoding: "utf8",

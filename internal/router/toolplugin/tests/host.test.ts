@@ -153,6 +153,14 @@ describe("plugin declaration validation", () => {
     expect(response.errors.join("\n")).toContain(diagnostic);
   });
 
+  test("reserves the shell-owned hrun name", async () => {
+    const {response} = await validateDeclaration(
+      pluginDeclaration().replace('name: "grammar_test"', 'name: "hrun"'),
+    );
+    expect(response.plugins).toEqual([]);
+    expect(response.errors.join("\n")).toContain("collides with a shell keyword or built-in");
+  });
+
   test("reports independent declaration errors together", async () => {
     const directory = await temporaryDirectory();
     await Promise.all([
