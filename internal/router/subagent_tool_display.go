@@ -326,7 +326,9 @@ func toolActivityShellLanguage(script, language string) string {
 		if programs, err := shellsyntax.Split(script); err == nil {
 			displays := make([]string, 0, len(programs))
 			for _, program := range programs {
-				displays = append(displays, toolActivityShellLanguage(program, language))
+				if display := toolActivityShellLanguage(program, language); display != "" {
+					displays = append(displays, display)
+				}
 			}
 			return strings.Join(displays, "\n\n")
 		}
@@ -388,17 +390,39 @@ func toolActivityReads(script string) (string, bool) {
 	if err != nil || len(program.Stmts) == 0 {
 		return "", false
 	}
+	// Heredoc bodies may occur after another statement on the same line,
+	// outside Stmt.End(). Preserve the whole source rather than slicing them.
+	hasHeredoc := false
+	syntax.Walk(program, func(node syntax.Node) bool {
+		if redirect, ok := node.(*syntax.Redirect); ok && redirect.Hdoc != nil {
+			hasHeredoc = true
+		}
+		return !hasHeredoc
+	})
+	if hasHeredoc {
+		var source strings.Builder
+		offset := 0
+		for _, statement := range program.Stmts {
+			if display, ok := toolActivityStatement(script, statement); ok && display == "" {
+				source.WriteString(script[offset:int(statement.Pos().Offset())])
+				offset = int(statement.End().Offset())
+			}
+		}
+		if offset == 0 {
+			return "", false
+		}
+		source.WriteString(script[offset:])
+		return "Run\n" + toolActivityFenced("bash", strings.Trim(source.String(), "\r\n")), true
+	}
 	var displays []string
 	classified := false
 	for _, statement := range program.Stmts {
-		call, ok := statement.Cmd.(*syntax.CallExpr)
-		if !ok || len(call.Args) == 0 || len(call.Assigns) != 0 || len(statement.Redirs) != 0 ||
-			statement.Background || statement.Negated || statement.Coprocess || statement.Disown {
-			return "", false
-		}
-		display, ok := toolActivityReadCommand(script, call)
+		display, ok := toolActivityStatement(script, statement)
 		if ok {
 			classified = true
+			if display == "" {
+				continue
+			}
 		} else {
 			start, end := int(statement.Pos().Offset()), int(statement.End().Offset())
 			source := script[start:end]
@@ -424,16 +448,152 @@ func toolActivityReads(script string) (string, bool) {
 	return strings.Join(displays, "\n\n"), true
 }
 
+// Recognize only transparent search bounds and executable lookups. Keep their
+// complete source, including redirections and guards, rather than implying that
+// a pipeline's stages are independent operations.
+func toolActivityStatement(script string, statement *syntax.Stmt) (string, bool) {
+	if statement.Background || statement.Negated || statement.Coprocess || statement.Disown {
+		return "", false
+	}
+	if binary, ok := statement.Cmd.(*syntax.BinaryCmd); ok {
+		right, ok := binary.Y.Cmd.(*syntax.CallExpr)
+		if !ok || len(right.Assigns) != 0 || len(binary.Y.Redirs) != 0 ||
+			binary.Y.Background || binary.Y.Negated || binary.Y.Coprocess || binary.Y.Disown {
+			return "", false
+		}
+		var argv []string
+		for _, arg := range right.Args {
+			value, literal := shellCatLiteral(arg)
+			if !literal {
+				if !toolActivityPatternWord(arg) {
+					return "", false
+				}
+				value = script[int(arg.Pos().Offset()):int(arg.End().Offset())]
+			}
+			argv = append(argv, value)
+		}
+		left, ok := toolActivityStatement(script, binary.X)
+		if !ok {
+			return "", false
+		}
+		label := ""
+		if binary.Op == syntax.Pipe && (strings.HasPrefix(left, "Search ") || strings.HasPrefix(left, "Search\n")) {
+			filter, search := toolActivityStatement(script, binary.Y)
+			if toolActivitySearchFilter(argv) || search &&
+				(strings.HasPrefix(filter, "Search ") || strings.HasPrefix(filter, "Search\n")) {
+				label = "Search"
+			}
+		}
+		if binary.Op == syntax.OrStmt && strings.HasPrefix(left, "Inspect ") &&
+			len(argv) == 1 && argv[0] == "true" {
+			label = "Inspect"
+		}
+		if label != "" && len(statement.Redirs) == 0 {
+			return label + " " + toolActivityCode(script[int(statement.Pos().Offset()):int(statement.End().Offset())]), true
+		}
+		return "", false
+	}
+	call, ok := statement.Cmd.(*syntax.CallExpr)
+	if !ok || len(call.Args) == 0 || len(call.Assigns) != 0 {
+		return "", false
+	}
+	command, literal := shellCatLiteral(call.Args[0])
+	if literal && command == commentaryArgumentName && len(statement.Redirs) == 0 {
+		// Expanding progress text can itself run commands. Do not hide that work.
+		executable := false
+		syntax.Walk(call, func(node syntax.Node) bool {
+			switch node.(type) {
+			case *syntax.CmdSubst, *syntax.ProcSubst:
+				executable = true
+			}
+			return !executable
+		})
+		return "", !executable
+	}
+	if len(statement.Redirs) != 0 {
+		// Only discarded stderr is transparent to these search previews.
+		if command != "find" && command != "hgrep" && command != "rg" && command != "grep" {
+			return "", false
+		}
+		for _, redirect := range statement.Redirs {
+			path, literal := shellCatLiteral(redirect.Word)
+			if redirect.Op != syntax.RdrOut || redirect.N == nil || redirect.N.Value != "2" || !literal || path != "/dev/null" {
+				return "", false
+			}
+		}
+	}
+	display, ok := toolActivityReadCommand(script, call)
+	if ok && len(statement.Redirs) != 0 {
+		return "Search " + toolActivityCode(script[int(statement.Pos().Offset()):int(statement.End().Offset())]), true
+	}
+	return display, ok
+}
+
+// These filters retain the complete pipeline in the preview. File operands,
+// output-file flags, and dynamic bounds are not transparent output filters.
+func toolActivitySearchFilter(argv []string) bool {
+	if len(argv) == 0 {
+		return false
+	}
+	switch argv[0] {
+	case "head", "tail":
+		bound := ""
+		if len(argv) == 3 && argv[1] == "-n" {
+			bound = argv[2]
+		} else if len(argv) == 2 {
+			var option bool
+			bound, option = strings.CutPrefix(argv[1], "-")
+			if !option {
+				return false
+			}
+		}
+		_, valid := toolActivityPositiveDecimal(bound, 1<<53-1)
+		return valid
+	case "sort":
+		for _, arg := range argv[1:] {
+			flags, ok := strings.CutPrefix(arg, "-")
+			if !ok || flags == "" || strings.Trim(flags, "nru") != "" {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// Search and list details preserve shell patterns verbatim. Accept word
+// patterns without expanding them; never treat substitutions as literal paths.
+func toolActivityPatternWord(word *syntax.Word) bool {
+	valid := true
+	syntax.Walk(word, func(node syntax.Node) bool {
+		switch node.(type) {
+		case *syntax.Word, *syntax.Lit, *syntax.SglQuoted, *syntax.DblQuoted, nil:
+		default:
+			valid = false
+		}
+		return valid
+	})
+	return valid
+}
+
 func toolActivityReadCommand(script string, call *syntax.CallExpr) (string, bool) {
 	var operations []struct{ label, detail string }
 	add := func(label, detail string) {
 		operations = append(operations, struct{ label, detail string }{label, detail})
 	}
+	command, literal := shellCatLiteral(call.Args[0])
+	if !literal {
+		return "", false
+	}
+	patterns := command == "rg" || command == "hgrep" || command == "grep" || command == "ls"
 	var argv []string
 	for _, arg := range call.Args {
 		value, literal := shellCatLiteral(arg)
 		if !literal {
-			return "", false
+			if !patterns || !toolActivityPatternWord(arg) {
+				return "", false
+			}
+			value = script[int(arg.Pos().Offset()):int(arg.End().Offset())]
 		}
 		argv = append(argv, value)
 	}
@@ -527,14 +687,24 @@ func toolActivityReadCommand(script string, call *syntax.CallExpr) (string, bool
 		}
 		add("Inspect", argv[1])
 	case "ls":
-		if len(argv) > 2 || (len(argv) == 2 && strings.HasPrefix(argv[1], "-")) {
+		detail := "."
+		if len(argv) > 1 {
+			detail = script[int(call.Args[1].Pos().Offset()):int(call.End().Offset())]
+		}
+		add("List", detail)
+	case "command":
+		if len(argv) != 3 || argv[1] != "-v" || argv[2] == "" || strings.HasPrefix(argv[2], "-") {
 			return "", false
 		}
-		path := "."
-		if len(argv) == 2 {
-			path = argv[1]
+		add("Inspect", script[int(call.Pos().Offset()):int(call.End().Offset())])
+	case "find":
+		for _, arg := range argv[1:] {
+			switch arg {
+			case "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls":
+				return "", false
+			}
 		}
-		add("List", path)
+		fallthrough
 	case "rg", "hgrep", "grep":
 		if len(argv) < 2 {
 			return "", false

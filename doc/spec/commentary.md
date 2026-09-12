@@ -146,7 +146,8 @@ These reads can share a script with other classified operations without forcing 
 `skills-mgr get <skill-name>/<reference-path>` displays `Skill Reference Read` with the
 full skill/reference operand. Optional read ranges remain visible for both forms.
 Simple listing, search, and structural inspection commands use `List`, `Search`, and `Inspect`
-labels, retaining search flags and operands. Native web/file search, image viewing/generation,
+labels, retaining search flags and operands. Search and listing previews preserve shell wildcard
+patterns verbatim without expanding them; substitutions still retain the original `Run` source. Native web/file search, image viewing/generation,
 code execution, input sending, and editing calls use descriptive operation labels.
 Hcat and inspect_file previews validate literal option bounds, duplicates, and operand
 placement before classification; invalid forms retain their source-level `Run` display.
@@ -169,9 +170,17 @@ Mixed scripts of simple commands classify each command independently. An unclass
 retains its source as a `Run` action without hiding neighboring `Search`, `Read`, or other
 classified operations. Single-line `Run` details in these mixed summaries use inline code;
 multiline details use fenced code blocks. Scripts with no classified commands retain the
-whole-script `Run` preview. Unsupported compound commands retain the complete script rather
-than splitting control flow into independent operations. Dynamic commands are never labelled
-as simpler operations.
+whole-script `Run` preview. Unsupported compound commands retain their complete statement as a
+`Run` action rather than splitting control flow into independent operations. Literal searches with
+discarded stderr and pipelines of searches, bounded `head`/`tail` (`-n N` or `-N`), and output-only `sort`
+(with optional `-n`, `-r`, and `-u` flags) retain the complete pipeline under `Search`. `find` actions
+that execute commands, delete files, or write result files retain `Run`. Literal
+`command -v` lookups, including an `|| true` guard, use `Inspect`; `ls` keeps its flags and paths
+under `List`. Standalone Bash/POSIX `commentary` commands are omitted from tool previews;
+a commentary-only script produces no tool activity. Commands with executable substitutions or
+redirections retain their source. Heredoc scripts retain a whole-source preview, excluding
+standalone commentary commands, so bodies and delimiters are not lost at statement boundaries.
+Runtime progress delivery is unchanged. Dynamic commands are never labelled as simpler operations.
 Multiline source previews preserve line breaks and indentation in fenced code blocks, including
 language-tagged fences and literal backticks. Transformed displays retain every operation and its
 full detail without preview truncation. Unknown tools retain their qualified name and full input.

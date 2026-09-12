@@ -136,8 +136,13 @@ func splitShellCatWrites(body, directory string, variant syntax.LangVariant) ([]
 }
 
 func shellCatLiteral(word *syntax.Word) (string, bool) {
+	// Validate before expansion: process substitutions require an execution
+	// callback, and presentation/planning must never invoke one.
+	if word == nil || !shellCatLiteralParts(word.Parts, false) {
+		return "", false
+	}
 	value, err := expand.Literal(nil, word)
-	return value, err == nil && shellCatLiteralParts(word.Parts, false)
+	return value, err == nil
 }
 
 func shellCatLiteralParts(parts []syntax.WordPart, quoted bool) bool {
