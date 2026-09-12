@@ -42,6 +42,9 @@ command sessions, and patch diff UI. No fork, no config edits, no daemon.
     Costs use built-in reference list API prices, not subscription rates, and show
     `n/a` if any response's model has no known price. Model changes and long-context
     rates are handled per response. Intermediate tool calls do not produce notices.
+  - Subagent token tables also appear in the main conversation with the agent's path,
+    separately from the main agent's totals. As with other child activity, delivery
+    waits for the next main-agent response boundary when the conversation is idle.
   - Router notices are removed from later model requests, so the display does
     not add repeated context. See [inline commentary](doc/spec/commentary.md).
 - **Inspect a session in your browser.**

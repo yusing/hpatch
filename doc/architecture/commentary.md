@@ -113,6 +113,11 @@ incomplete responses do not trigger usage commentary. Final-answer phase identif
 unphased assistant answers support older clients. Counts from the shared terminal-payload parse
 accumulate by stable originating thread, independently of routing-session and compaction lifetimes.
 Root and child totals remain separate, and repeated terminal observations within a request count once.
+After successful response transformation and usage-message provenance retention, the transformer
+also feeds each child usage report into the existing activity collector. Its usage-message ID
+is the source identity; reports remain distinct notices rather than coalesced operations.
+The collector owns attributed, bounded root delivery and replay removal. The child's final
+answer and native completion notification remain unchanged.
 `thread_usage.go` owns bounded, non-evicting token and cost totals until router shutdown;
 ancestry and author metadata do not own attribution. Each observation retains its request model,
 and its cost is calculated before accumulation using that response's input tier.

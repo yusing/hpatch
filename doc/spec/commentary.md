@@ -261,6 +261,10 @@ all four billable cost cells `n/a`, without hiding token totals or presenting a 
 cost as complete. The report explains its thread scope, overlapping token categories,
 reference-price source, and any unavailable estimate. Root reports do not sum child threads.
 This is auxiliary commentary accounting, not a change to capture-owned metrics exports.
+Eligible child reports also enter the existing root activity collector as distinct notices,
+deduplicated by originating thread and usage-message identity. Root copies carry the child's
+canonical path and retain that child's totals, without adding them to root usage. They follow
+the same bounded, deferred delivery and exact replay filtering as other child activity.
 
 For root and subagent streams, final-answer item events are buffered until the terminal.
 A successful completion emits usage as `response.output_item.done`, then the unchanged buffered

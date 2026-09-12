@@ -1965,6 +1965,10 @@ func (t *mekugiResponseTransform) transformResponse(payload []byte, terminalStat
 		return nil, nil, err
 	}
 	transformed, err := marshalProtocolJSON(object)
+	if err == nil && usageMessage != nil {
+		// Codex forwards only the child's final answer, not its preceding usage.
+		t.proxy.activity.collect(t.threadID, jsonString(usageMessage, "id"), "usage", formatTokenUsageReport(counts))
+	}
 	return transformed, usageMessage, err
 }
 
