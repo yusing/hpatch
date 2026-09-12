@@ -236,7 +236,6 @@ type mekugiResponseTransform struct {
 	sessionActive          bool
 	threadID               string
 	activityStarted        time.Time
-	journalActivityBytes   int
 	activityBytes          int
 	activityMessages       []map[string]json.RawMessage
 	activityShellSessions  map[string]string
@@ -550,6 +549,10 @@ func (p *mekugiProxy) prepareRequest(ctx context.Context, request *parsedRespons
 			return nil, err
 		}
 	} else {
+		if err := p.journals.bindIdentity(ctx, p.replayStore, directory, threadID, metadata.ParentThreadID, author, activityThreadID != ""); err != nil {
+			transform.Close()
+			return nil, err
+		}
 		transform.finalAnswer.journal = true
 	}
 	transform.journalQuestion = journalQuestionFromInput(request.fields["input"])

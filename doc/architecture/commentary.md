@@ -84,7 +84,8 @@ request model and is priced using that response's input tier before accumulation
 or inconsistent raw usage make cumulative costs unavailable without suppressing token counts.
 Pricing does not fetch catalogs or change capture-owned metrics.
 
-The terminal transformer places eligible usage after journal flush and before the child summary.
+The terminal transformer places eligible usage after any main journal flush and before the child
+saved-summary. Child usage remains live activity; child journals flush only at main completion.
 After successful delivery, child usage reports enter the activity collector in that order.
 Their usage-message IDs are source identities; they remain distinct notices with attributed,
 bounded root delivery and exact replay removal. Child costs never enter root usage totals.

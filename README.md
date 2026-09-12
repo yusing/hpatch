@@ -21,7 +21,7 @@ command sessions, and patch diff UI. No fork, no config edits, no daemon.
 - **See subagent progress and replies inline.**
   - A start notice shows each subagent's observed model and reasoning effort once its
     first request reaches the router. Other lifecycle actions add no extra notices.
-  - Subagents' journal notices and flushes appear with their agent paths.
+  - Subagents' live journal notices appear immediately. Journals flush when main completes: main first, then subagents in agent-path order.
   - Received messages and final answers identify both parties and show plaintext
     replies in full when they fit the display budget. Encrypted collaboration messages are not exposed.
 - **Follow work as it runs.**

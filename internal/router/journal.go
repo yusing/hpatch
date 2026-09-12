@@ -67,15 +67,18 @@ type journalRetraction struct {
 }
 
 type threadJournal struct {
-	Version     int                       `json:"version"`
-	Workspace   string                    `json:"workspace"`
-	Thread      string                    `json:"thread"`
-	Author      string                    `json:"author"`
-	Sequence    uint64                    `json:"sequence"`
-	NextID      uint64                    `json:"next_id"`
-	Items       []journalItem             `json:"items"`
-	Retractions []journalRetraction       `json:"retractions,omitempty"`
-	Receipts    map[string]journalReceipt `json:"receipts"`
+	Parent             string                    `json:"parent,omitempty"`
+	IdentityKnown      bool                      `json:"identity_known,omitzero"`
+	IdentityConflicted bool                      `json:"identity_conflicted,omitzero"`
+	Version            int                       `json:"version"`
+	Workspace          string                    `json:"workspace"`
+	Thread             string                    `json:"thread"`
+	Author             string                    `json:"author"`
+	Sequence           uint64                    `json:"sequence"`
+	NextID             uint64                    `json:"next_id"`
+	Items              []journalItem             `json:"items"`
+	Retractions        []journalRetraction       `json:"retractions,omitempty"`
+	Receipts           map[string]journalReceipt `json:"receipts"`
 }
 
 func (j threadJournal) clone() threadJournal {
@@ -146,7 +149,14 @@ func journalFilename(workspace, thread string) string {
 }
 
 func readThreadJournal(store *mekugiReplayStore, workspace, thread string) (threadJournal, bool, error) {
-	path := filepath.Join(store.directory, journalFilename(workspace, thread))
+	journal, exists, err := readJournalRecord(filepath.Join(store.directory, journalFilename(workspace, thread)))
+	if err == nil && exists && (journal.Workspace != workspace || journal.Thread != thread) {
+		return threadJournal{}, false, errors.New("journal identity mismatch")
+	}
+	return journal, exists, err
+}
+
+func readJournalRecord(path string) (threadJournal, bool, error) {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return threadJournal{}, false, nil
@@ -168,9 +178,13 @@ func readThreadJournal(store *mekugiReplayStore, workspace, thread string) (thre
 	}
 	var journal threadJournal
 	if len(data) > maxReplayRecordBytes || json.Unmarshal(data, &journal) != nil ||
-		journal.Version != 1 || journal.Workspace != workspace || journal.Thread != thread ||
-		len(journal.Items) > maxJournalItems || journal.Receipts == nil || len(journal.Receipts) > maxJournalReceipts {
+		journal.Version != 1 || journal.Thread == "" || filepath.Base(path) != journalFilename(journal.Workspace, journal.Thread) {
 		return threadJournal{}, false, errors.New("corrupt journal record")
+	}
+	if len(journal.Items) > maxJournalItems || journal.Receipts == nil || len(journal.Receipts) > maxJournalReceipts {
+		// A fully decoded, filename-verified identity can establish whose
+		// content failed validation, without trusting partially decoded JSON.
+		return journal, true, errors.New("corrupt journal contents")
 	}
 	return journal, true, nil
 }
@@ -283,6 +297,89 @@ func (s *journalStore) initialize(ctx context.Context, store *mekugiReplayStore,
 		j.Sequence, j.NextID = source.Sequence, source.NextID
 		return nil
 	})
+}
+
+// Retain accepted ancestry with the journal, so main can flush children after a
+// router restart without depending on the live activity collector.
+func (s *journalStore) bindIdentity(ctx context.Context, store *mekugiReplayStore, workspace, thread, parent, author string, valid bool) error {
+	release, err := s.lockDelivery(ctx, store)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.transaction(ctx, store, workspace, thread, func(j *threadJournal, exists bool) error {
+		if !exists {
+			return errors.New("journal identity requires initialization")
+		}
+		if !valid || j.IdentityKnown && (j.Parent != parent || j.Author != author) {
+			j.IdentityConflicted = true
+		}
+		j.IdentityKnown = true
+		j.Parent = parent
+		return nil
+	})
+}
+
+// Called under the delivery lease, journal mutex, and replay lock. Only complete,
+// unambiguous parent chains in this workspace can join a main terminal flush.
+func (s *journalStore) descendants(store *mekugiReplayStore, workspace, root string) ([]threadJournal, error) {
+	recordErrors := make(map[string]error)
+	journals := make(map[string]threadJournal)
+	if store == nil {
+		for _, journal := range s.memory {
+			if journal.Workspace == workspace {
+				journals[journal.Thread] = journal.clone()
+			}
+		}
+	} else {
+		entries, err := os.ReadDir(store.directory)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			if !strings.HasPrefix(entry.Name(), "journal-") || !strings.HasSuffix(entry.Name(), ".json") {
+				continue
+			}
+			journal, exists, err := readJournalRecord(filepath.Join(store.directory, entry.Name()))
+			if exists && journal.Workspace == workspace {
+				journals[journal.Thread] = journal
+				recordErrors[journal.Thread] = err
+			}
+			// Unidentifiable records cannot prove ancestry and must not
+			// block an unrelated workspace or tree.
+		}
+	}
+	var result []threadJournal
+	for thread, journal := range journals {
+		if thread == root {
+			continue
+		}
+		var chainError error
+		for range len(journals) {
+			node, ok := journals[thread]
+			if !ok || !node.IdentityKnown || node.IdentityConflicted {
+				break
+			}
+			chainError = errors.Join(chainError, recordErrors[thread])
+			if thread == root {
+				if node.Parent == "" && chainError != nil {
+					return nil, chainError
+				}
+				if node.Parent == "" {
+					result = append(result, journal)
+				}
+				break
+			}
+			thread = node.Parent
+		}
+	}
+	slices.SortFunc(result, func(a, b threadJournal) int {
+		if order := strings.Compare(a.Author, b.Author); order != 0 {
+			return order
+		}
+		return strings.Compare(a.Thread, b.Thread)
+	})
+	return result, nil
 }
 
 // Pin inferred source without changing the model-authored receipt digest.

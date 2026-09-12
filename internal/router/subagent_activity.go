@@ -115,11 +115,7 @@ func (a *subagentActivity) collect(thread, source, kind, text string) {
 	if kind == "operation" || !strings.HasPrefix(text, "["+commentaryCode(node.name)+" -> ") && !strings.HasPrefix(text, "["+commentaryCode(node.name)+" <- ") {
 		text = attributedCommentary(node.name, text)
 	}
-	limit := maxCommentaryPublicationBytes
-	if kind == "journal_flush" {
-		limit = maxJournalFlushBytes + maxCommentaryPublicationBytes
-	}
-	if len(text) > limit {
+	if len(text) > maxCommentaryPublicationBytes {
 		return
 	}
 	now := time.Now()
@@ -147,7 +143,7 @@ func (a *subagentActivity) expireLocked(now time.Time) {
 	a.events = slices.DeleteFunc(a.events, func(e activityEvent) bool { return now.Sub(e.observed) >= commentaryRouteTTL })
 }
 
-func (a *subagentActivity) drain(root string, started time.Time, budget, journalBudget int) []map[string]json.RawMessage {
+func (a *subagentActivity) drain(root string, started time.Time, budget int) []map[string]json.RawMessage {
 	if a == nil {
 		return nil
 	}
@@ -160,10 +156,7 @@ func (a *subagentActivity) drain(root string, started time.Time, budget, journal
 	a.expireLocked(time.Now())
 	var messages []map[string]json.RawMessage
 	kept := a.events[:0]
-	blocked := make(map[struct {
-		thread   string
-		terminal bool
-	}]bool)
+	blocked := make(map[string]bool)
 	for index := 0; index < len(a.events); index++ {
 		event := a.events[index]
 		if a.rootLocked(event.thread) != root {
@@ -173,25 +166,11 @@ func (a *subagentActivity) drain(root string, started time.Time, budget, journal
 		text := event.text
 		author := "[" + commentaryCode(a.threads[event.thread].name) + "] "
 		// Omit oversized events rather than blocking later activity until expiry.
-		limit, available := maxCommentaryPublicationBytes, budget
-		if event.kind == "journal_flush" {
-			limit, available = maxJournalFlushBytes+maxCommentaryPublicationBytes, journalBudget
-		}
-		if len(text) > limit {
+		if len(text) > maxCommentaryPublicationBytes {
 			continue
 		}
-		key := struct {
-			thread   string
-			terminal bool
-		}{event.thread, event.kind == "journal_flush"}
-		terminalKey := key
-		terminalKey.terminal = true
-		if event.kind == "usage" && blocked[terminalKey] {
-			kept = append(kept, event)
-			continue
-		}
-		if blocked[key] || len(text) > available {
-			blocked[key] = true
+		if blocked[event.thread] || len(text) > budget {
+			blocked[event.thread] = true
 			kept = append(kept, event)
 			continue
 		}
@@ -220,11 +199,7 @@ func (a *subagentActivity) drain(root string, started time.Time, budget, journal
 		id := commentaryMessageID("root-copy\x00" + root + "\x00" + event.thread + "\x00" + event.source)
 		a.copies[id] = event.kind
 		messages = append(messages, assistantCommentaryMessage(id, text))
-		if event.kind == "journal_flush" {
-			journalBudget -= len(text)
-		} else {
-			budget -= len(text)
-		}
+		budget -= len(text)
 	}
 	clear(a.events[len(kept):])
 	a.events = kept
@@ -257,25 +232,15 @@ func (a *subagentActivity) stripInput(fields map[string]json.RawMessage) {
 	}
 }
 
-func (a *subagentActivity) copyKind(id string) string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.copies[id]
-}
-
 func (t *mekugiResponseTransform) drainActivity() []map[string]json.RawMessage {
-	messages := t.proxy.activity.drain(t.threadID, t.activityStarted, maxCommentaryPublicationBytes-t.activityBytes, maxJournalFlushBytes+maxCommentaryPublicationBytes-t.journalActivityBytes)
+	messages := t.proxy.activity.drain(t.threadID, t.activityStarted, maxCommentaryPublicationBytes-t.activityBytes)
 	for _, message := range messages {
 		t.featureTrace.record("commentary", "router_activity", "render", "prepared", "", jsonString(message, "id"))
 		var content []struct {
 			Text string `json:"text"`
 		}
 		if json.Unmarshal(message["content"], &content) == nil && len(content) == 1 {
-			if t.proxy.activity.copyKind(jsonString(message, "id")) == "journal_flush" {
-				t.journalActivityBytes += len(content[0].Text)
-			} else {
-				t.activityBytes += len(content[0].Text)
-			}
+			t.activityBytes += len(content[0].Text)
 		}
 	}
 	return messages

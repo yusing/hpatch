@@ -226,7 +226,7 @@ func TestChildThreadCommentaryPreservesSubstantiveStreamResult(t *testing.T) {
 	if err != nil || len(events) != 2 {
 		t.Fatalf("terminal emitted standalone commentary: %s, %v", events, err)
 	}
-	if !bytes.Contains(events[0], []byte(`"text":"Journal flushed: 0 new, 0 already flushed"`)) {
+	if !bytes.Contains(events[0], []byte(`"text":"Journal saved: 0 pending, 0 already flushed"`)) {
 		t.Fatalf("child journal summary missing: %s", events[0])
 	}
 
@@ -239,7 +239,7 @@ func TestChildThreadCommentaryPreservesSubstantiveStreamResult(t *testing.T) {
 	if err := json.Unmarshal(events[1], &terminal); err != nil {
 		t.Fatal(err)
 	}
-	if terminal.Type != "response.completed" || len(terminal.Response.Output) != 2 || !bytes.Contains(terminal.Response.Output[1]["content"], []byte("Journal flushed:")) || !bytes.Contains(terminal.Response.Output[0]["content"], []byte("child progress")) {
+	if terminal.Type != "response.completed" || len(terminal.Response.Output) != 2 || !bytes.Contains(terminal.Response.Output[1]["content"], []byte("Journal saved:")) || !bytes.Contains(terminal.Response.Output[0]["content"], []byte("child progress")) {
 		t.Fatalf("child terminal order = %s", events[1])
 	}
 }

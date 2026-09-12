@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestJournalRouterToolContinuesWithoutClientDispatch(t *testing.T) {
@@ -314,22 +313,6 @@ func TestJournalNamedResultRestoresAndRebasesCachedInput(t *testing.T) {
 	}
 }
 
-func TestJournalChildFlushHasIndependentRootCopyBudget(t *testing.T) {
-	activity := newSubagentActivity()
-	activity.observe("root", "", "/root", false)
-	activity.observe("child", "root", "/root/child", true)
-	body := "Journal `/root/child`\n- `j1` " + strings.Repeat("x", maxCommentaryPublicationBytes)
-	activity.collect("child", "live", "commentary", "Live update")
-	activity.collect("child", "flush", "journal_flush", body)
-	messages := activity.drain("root", time.Now(), 0, maxJournalFlushBytes)
-	if len(messages) != 1 || !strings.Contains(commentaryMessageText(messages[0]), body) {
-		t.Fatal("child terminal flush was lost to the live progress budget")
-	}
-	if len(activity.drain("root", time.Now(), 0, maxJournalFlushBytes)) != 0 {
-		t.Fatal("child flush repeated after root delivery")
-	}
-}
-
 func TestJournalCapacityDoesNotRejectUnrelatedRequest(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		t.Run(fmt.Sprint(stream), func(t *testing.T) {
@@ -500,28 +483,6 @@ func TestJournalLiveSnapshotCacheRefreshesOnMutationAndTerminal(t *testing.T) {
 		t.Fatalf("terminal failed to bypass live cache: %v %v", messages, err)
 	}
 	transform.ReleaseDelivery()
-}
-
-func TestJournalChildUsageWaitsForDeferredFlush(t *testing.T) {
-	activity := newSubagentActivity()
-	activity.observe("root", "", "/root", false)
-	activity.observe("first", "root", "/root/first", true)
-	activity.observe("second", "root", "/root/second", true)
-	activity.collect("first", "first-flush", "journal_flush", "First flush")
-	activity.collect("second", "second-flush", "journal_flush", "Second flush")
-	activity.collect("second", "second-usage", "usage", "Tokens: second")
-	// Leave enough terminal budget for only the first child, with live capacity
-	// still available. The second table must wait for its own flush.
-	firstSize := len("[`/root/first`] First flush")
-	messages := activity.drain("root", time.Now(), maxCommentaryPublicationBytes, firstSize)
-	if len(messages) != 1 || !strings.Contains(commentaryMessageText(messages[0]), "First flush") {
-		t.Fatalf("table overtook a deferred flush: %v", messages)
-	}
-	messages = activity.drain("root", time.Now(), maxCommentaryPublicationBytes, maxJournalFlushBytes)
-	if len(messages) != 2 || !strings.Contains(commentaryMessageText(messages[0]), "Second flush") ||
-		!strings.Contains(commentaryMessageText(messages[1]), "Tokens: second") {
-		t.Fatalf("deferred child ordering changed: %v", messages)
-	}
 }
 
 func TestJournalCatalogRejectsCollisions(t *testing.T) {

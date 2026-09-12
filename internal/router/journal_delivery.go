@@ -34,10 +34,14 @@ func (t *mekugiResponseTransform) prepareJournalDelivery(terminal bool) ([]map[s
 	if !t.journalActive {
 		return nil, nil
 	}
+	// Child completion remains a native terminal, but does not consume any
+	// revisions. Main owns the ordered tree flush.
+	childTerminal := terminal && t.subagentTurn
+	terminal = terminal && !t.subagentTurn
 	// Journal writes atomically replace the file. Avoid decoding an unchanged
 	// multi-megabyte journal for every provider delta when no live notices remain.
 	// A concurrent change is observed at the next event; terminals always refresh.
-	if !terminal && t.journalQuietFile != nil && t.proxy.replayStore != nil {
+	if !terminal && !childTerminal && t.journalQuietFile != nil && t.proxy.replayStore != nil {
 		info, err := os.Lstat(filepath.Join(t.proxy.replayStore.directory, journalFilename(t.directory, t.shellThreadID)))
 		if err == nil && os.SameFile(info, t.journalQuietFile) &&
 			info.Size() == t.journalQuietFile.Size() && info.ModTime() == t.journalQuietFile.ModTime() {
@@ -50,6 +54,7 @@ func (t *mekugiResponseTransform) prepareJournalDelivery(terminal bool) ([]map[s
 		return nil, err
 	}
 	t.journalDeliveryRelease = release
+	var descendants []threadJournal
 	var journal threadJournal
 	t.proxy.journals.mu.Lock()
 	read := func() error {
@@ -65,6 +70,12 @@ func (t *mekugiResponseTransform) prepareJournalDelivery(terminal bool) ([]map[s
 		}
 		if err != nil {
 			return err
+		}
+		if terminal && t.threadID != "" {
+			descendants, err = t.proxy.journals.descendants(t.proxy.replayStore, t.directory, t.shellThreadID)
+			if err != nil {
+				return err
+			}
 		}
 		if !exists {
 			journal = threadJournal{Author: "/root"}
@@ -84,6 +95,16 @@ func (t *mekugiResponseTransform) prepareJournalDelivery(terminal bool) ([]map[s
 		t.ReleaseDelivery()
 		return nil, err
 	}
+	if childTerminal {
+		t.journalNewCount, t.journalFlushedCount = 0, 0
+		for _, item := range journal.Items {
+			if item.Flushed {
+				t.journalFlushedCount++
+			} else {
+				t.journalNewCount++
+			}
+		}
+	}
 	for _, item := range journal.Items {
 		if item.ReportNow && !item.Reported && len(journalUpdateText(journal.Author, item.ID, journalItemText(item))) <= maxCommentaryPublicationBytes-t.journalLiveBytes {
 			t.journalQuietFile = nil
@@ -98,8 +119,9 @@ func (t *mekugiResponseTransform) prepareJournalDelivery(terminal bool) ([]map[s
 	}
 	var messages []map[string]json.RawMessage
 	var retentionErr error
+	deliveryThread := t.shellThreadID
 	emit := func(text string, revisions map[string]uint64, source string) {
-		id := commentaryMessageID("journal\x00" + t.directory + "\x00" + t.shellThreadID + "\x00" + source)
+		id := commentaryMessageID("journal\x00" + t.directory + "\x00" + deliveryThread + "\x00" + source)
 		message := assistantCommentaryMessage(id, text)
 		if len(t.retainCommentary(message)) == 0 {
 			if terminal {
@@ -110,7 +132,7 @@ func (t *mekugiResponseTransform) prepareJournalDelivery(terminal bool) ([]map[s
 		if t.journalDeliveries == nil {
 			t.journalDeliveries = make(map[string]journalDelivery)
 		}
-		t.journalDeliveries[id] = journalDelivery{thread: t.shellThreadID, revisions: revisions, terminal: terminal}
+		t.journalDeliveries[id] = journalDelivery{thread: deliveryThread, revisions: revisions, terminal: terminal}
 		traceSource := "report_now"
 		if terminal {
 			traceSource = "terminal_flush"
@@ -119,45 +141,59 @@ func (t *mekugiResponseTransform) prepareJournalDelivery(terminal bool) ([]map[s
 
 		messages = append(messages, message)
 	}
-	for _, retraction := range journal.Retractions {
-		text := journalUpdateText(journal.Author, retraction.ID, "Retracted.")
-		if !terminal && len(text) > maxCommentaryPublicationBytes-t.journalLiveBytes {
-			continue
-		}
-		emit(text, map[string]uint64{retraction.ID: retraction.Sequence}, fmt.Sprintf("retract:%d", retraction.Sequence))
-		if !terminal {
-			t.journalLiveBytes += len(text)
-		}
-	}
-	if terminal {
-		var text strings.Builder
-		text.WriteString("Journal flush")
-		if journal.Author != "" {
-			text.WriteString(" " + commentaryCode(journal.Author))
-		}
-		revisions := make(map[string]uint64)
-		flushed := 0
-		for _, item := range journal.Items {
-			if item.Flushed {
-				flushed++
+	emitRetractions := func(journal threadJournal) {
+		for _, retraction := range journal.Retractions {
+			text := journalUpdateText(journal.Author, retraction.ID, "Retracted.")
+			if !terminal && len(text) > maxCommentaryPublicationBytes-t.journalLiveBytes {
 				continue
 			}
-			// Markdown treats CRLF and bare CR as line breaks too. Normalize only
-			// the rendering copy so every logical line remains inside this item.
-			body := strings.ReplaceAll(journalItemText(item), "\r\n", "\n")
-			body = strings.ReplaceAll(body, "\r", "\n")
-			text.WriteString("\n- " + commentaryCode(item.ID) + "\n\n  " + strings.ReplaceAll(body, "\n", "\n  "))
-
-			text.WriteByte('\n')
-			revisions[item.ID] = item.Updated
-		}
-		t.journalNewCount, t.journalFlushedCount = len(revisions), flushed
-		if len(revisions) != 0 {
-			if text.Len() > maxJournalFlushBytes {
-				t.ReleaseDelivery()
-				return nil, fmt.Errorf("journal flush exceeds terminal capacity")
+			emit(text, map[string]uint64{retraction.ID: retraction.Sequence}, fmt.Sprintf("retract:%d", retraction.Sequence))
+			if !terminal {
+				t.journalLiveBytes += len(text)
 			}
-			emit(text.String(), revisions, fmt.Sprintf("flush:%d", journal.Sequence))
+		}
+	}
+	if !terminal {
+		emitRetractions(journal)
+	}
+	if terminal {
+		t.journalNewCount, t.journalFlushedCount = 0, 0
+		for _, journal := range append([]threadJournal{journal}, descendants...) {
+			deliveryThread = journal.Thread
+			if deliveryThread == "" {
+				deliveryThread = t.shellThreadID
+			}
+			emitRetractions(journal)
+			var text strings.Builder
+			text.WriteString("Journal flush")
+			if journal.Author != "" {
+				text.WriteString(" " + commentaryCode(journal.Author))
+			}
+			revisions := make(map[string]uint64)
+			flushed := 0
+			for _, item := range journal.Items {
+				if item.Flushed {
+					flushed++
+					continue
+				}
+				// Markdown treats CRLF and bare CR as line breaks too. Normalize only
+				// the rendering copy so every logical line remains inside this item.
+				body := strings.ReplaceAll(journalItemText(item), "\r\n", "\n")
+				body = strings.ReplaceAll(body, "\r", "\n")
+				text.WriteString("\n- " + commentaryCode(item.ID) + "\n\n  " + strings.ReplaceAll(body, "\n", "\n  "))
+
+				text.WriteByte('\n')
+				revisions[item.ID] = item.Updated
+			}
+			t.journalNewCount += len(revisions)
+			t.journalFlushedCount += flushed
+			if len(revisions) != 0 {
+				if text.Len() > maxJournalFlushBytes {
+					t.ReleaseDelivery()
+					return nil, fmt.Errorf("journal flush exceeds terminal capacity")
+				}
+				emit(text.String(), revisions, fmt.Sprintf("flush:%d", journal.Sequence))
+			}
 		}
 	} else {
 		for _, item := range journal.Items {
@@ -221,11 +257,9 @@ func (t *mekugiResponseTransform) Delivered(payload []byte) {
 			continue
 		}
 		delete(t.journalDeliveries, id)
-		kind := "journal"
-		if delivery.terminal {
-			kind = "journal_flush"
+		if !delivery.terminal {
+			t.proxy.activity.collect(t.threadID, id, "journal", commentaryMessageText(item))
 		}
-		t.proxy.activity.collect(t.threadID, id, kind, commentaryMessageText(item))
 	}
 }
 
@@ -306,7 +340,7 @@ func (t *mekugiResponseTransform) journalTerminalMessages(response []byte) ([]ma
 	}
 	if t.subagentTurn {
 		id := commentaryMessageID("journal-summary\x00" + jsonResponseID(response))
-		message := assistantCommentaryMessage(id, fmt.Sprintf("Journal flushed: %d new, %d already flushed", t.journalNewCount, t.journalFlushedCount))
+		message := assistantCommentaryMessage(id, fmt.Sprintf("Journal saved: %d pending, %d already flushed", t.journalNewCount, t.journalFlushedCount))
 		message["phase"] = mustMarshalJSON("final_answer")
 		retained := t.retainCommentary(message)
 		if len(retained) == 0 {

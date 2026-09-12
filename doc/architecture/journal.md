@@ -22,15 +22,18 @@ client prefix differs from the restored provider prefix.
 and acknowledges only the rendered revision after a successful downstream write. Live delivery
 sets `reported`; terminal delivery also sets the independent `flushed` flag. Edits reset both
 for the new revision. Delivery metadata, not message text, identifies terminal acknowledgements
-and child flush copies. A separate
+and descendant flush acknowledgements. A separate
 filesystem delivery lock excludes concurrent mutations and deliveries across router processes;
 replay transactions remain independently lockable while the delivery lease is held. The existing
-commentary broker and child activity collector carry user-only delivery and canonical child
-prefixes. A failed render releases the lease without marking an item reported.
+commentary broker and child activity collector carry live user-only delivery and canonical child
+prefixes; terminal journal delivery reads the durable journals directly. A failed render releases the lease without marking an item reported.
 
 `server.go` performs the terminal continuation and ordering; token arithmetic and capture metrics
 remain unchanged. Provider final-answer text is dropped only for an eligible successful terminal.
-Child terminals retain a router-owned summary. Replay strips router-owned message IDs.
+Child terminals retain a router-owned saved-summary without flushing. Main terminal delivery snapshots
+its journal followed by descendant journals sorted by canonical path, under one delivery lease.
+Accepted parent identities persist with journals; conflicting or incomplete chains cannot join the
+flush. Acknowledgements target each original child journal, not an auxiliary activity copy. Replay strips router-owned message IDs.
 
 `journal_catalog.go`, `wrap.go`, and model-instruction rewriting disable the stock Tasks surface
 only in Mekugi mode. Passthrough does not use the store, catalog rewrite, or journal tool.

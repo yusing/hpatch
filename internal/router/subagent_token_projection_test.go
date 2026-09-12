@@ -82,8 +82,8 @@ func TestChildTokenUsageProjectsToRoot(t *testing.T) {
 					t.Fatalf("child usage eligibility: %s", childOutput)
 				}
 				if wantUsage && (bytes.Contains(childOutput, []byte("Child result.")) ||
-					!bytes.Contains(childOutput, []byte("Journal flushed:")) ||
-					bytes.Index(childOutput, []byte("Tokens:")) >= bytes.Index(childOutput, []byte("Journal flushed:"))) {
+					!bytes.Contains(childOutput, []byte("Journal saved:")) ||
+					bytes.Index(childOutput, []byte("Tokens:")) >= bytes.Index(childOutput, []byte("Journal saved:"))) {
 					t.Fatalf("usage did not precede the synthetic child result: %s", childOutput)
 				}
 				child.Close()
@@ -107,10 +107,16 @@ func TestChildTokenUsageProjectsToRoot(t *testing.T) {
 				if got := bytes.Count(output, []byte("Tokens:")); got != map[bool]int{false: 0, true: 1}[wantUsage] {
 					t.Fatalf("root usage report count = %d: %s", got, output)
 				}
-				if wantUsage && (bytes.Index(output, []byte("Child milestone")) < 0 ||
-					bytes.Index(output, []byte("Child milestone")) >= bytes.Index(output, []byte("Tokens:"))) {
-					t.Fatalf("root usage overtook the child flush: %s", output)
+				if bytes.Contains(childOutput, []byte("Journal flush")) {
+					t.Fatalf("child completed with a premature flush: %s", childOutput)
 				}
+				if stream && bytes.Contains(output, []byte("Child milestone")) {
+					t.Fatalf("child journal appeared before main completion: %s", output)
+				}
+				if !stream && wantUsage && !bytes.Contains(output, []byte("Child milestone")) {
+					t.Fatalf("main completion lost child journal: %s", output)
+				}
+				root.ReleaseDelivery()
 				if wantUsage {
 					counts, _ := child.threadUsageCounts()
 					want := "[`/root/worker`] " + formatTokenUsageReport(counts)

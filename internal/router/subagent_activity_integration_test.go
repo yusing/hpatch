@@ -179,7 +179,7 @@ func TestActivityCapacityDoesNotRejectToolsAndOpaqueReceipt(t *testing.T) {
 	if err != nil || !bytes.Contains(visible, []byte(`"call_id":"capacity-call"`)) {
 		t.Fatal(string(visible), err)
 	}
-	if len(p.activity.drain("r", root.activityStarted, maxCommentaryPublicationBytes, 0)) != 0 {
+	if len(p.activity.drain("r", root.activityStarted, maxCommentaryPublicationBytes)) != 0 {
 		t.Fatal("capacity did not suppress projection")
 	}
 }

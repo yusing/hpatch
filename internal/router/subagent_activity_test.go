@@ -15,24 +15,24 @@ func TestSubagentActivityAncestryReplayAndOrder(t *testing.T) {
 	a.observe("root-b", "", "/root", false)
 	a.observe("nested", "child", "/root/alpha/nested", true)
 	a.collect("nested", "one", "operation", "Reading.")
-	if got := a.drain("root-a", time.Now(), maxCommentaryPublicationBytes, 0); len(got) != 0 {
+	if got := a.drain("root-a", time.Now(), maxCommentaryPublicationBytes); len(got) != 0 {
 		t.Fatal("unknown ancestry delivered", got)
 	}
 	a.observe("child", "root-a", "/root/alpha", true)
 	a.collect("nested", "two", "reply", "Reply received: evidence.")
 	a.collect("nested", "three", "operation", "Checking.")
 	a.collect("nested", "three", "operation", "duplicate")
-	if len(a.drain("root-b", time.Now(), maxCommentaryPublicationBytes, 0)) != 0 {
+	if len(a.drain("root-b", time.Now(), maxCommentaryPublicationBytes)) != 0 {
 		t.Fatal("cross-root delivery")
 	}
-	messages := a.drain("root-a", time.Now(), maxCommentaryPublicationBytes, 0)
+	messages := a.drain("root-a", time.Now(), maxCommentaryPublicationBytes)
 	if len(messages) != 2 || !strings.Contains(commentaryText(t, messages[0]), "Reply received") || !strings.Contains(commentaryText(t, messages[1]), "Checking.") {
 		t.Fatal(messages)
 	}
 	if commentaryText(t, messages[1]) != "[`/root/alpha/nested`] Checking." {
 		t.Fatal(messages)
 	}
-	if len(a.drain("root-a", time.Now(), maxCommentaryPublicationBytes, 0)) != 0 {
+	if len(a.drain("root-a", time.Now(), maxCommentaryPublicationBytes)) != 0 {
 		t.Fatal("duplicate delivery")
 	}
 	original := assistantCommentaryMessage("original-child-message", "result")
@@ -56,7 +56,7 @@ func TestSubagentActivityCapacityExpiryConflictAndConcurrentRoots(t *testing.T) 
 			for j := range 100 {
 				a.collect(child, fmt.Sprint(j), "reply", fmt.Sprint(i))
 			}
-			messages := a.drain(root, time.Time{}, maxCommentaryPublicationBytes, 0)
+			messages := a.drain(root, time.Time{}, maxCommentaryPublicationBytes)
 			if len(messages) != maxCommentaryEventsPerRoute {
 				t.Errorf("root %d: %d notices", i, len(messages))
 			}
@@ -71,7 +71,7 @@ func TestSubagentActivityCapacityExpiryConflictAndConcurrentRoots(t *testing.T) 
 	a.observe("conflict", "root0", "/root/c", true)
 	a.collect("conflict", "one", "operation", "queued")
 	a.observe("conflict", "root1", "/root/c", true)
-	if len(a.drain("root0", time.Time{}, maxCommentaryPublicationBytes, 0)) != 0 || len(a.drain("root1", time.Time{}, maxCommentaryPublicationBytes, 0)) != 0 {
+	if len(a.drain("root0", time.Time{}, maxCommentaryPublicationBytes)) != 0 || len(a.drain("root1", time.Time{}, maxCommentaryPublicationBytes)) != 0 {
 		t.Fatal("reparented thread delivered")
 	}
 	a.mu.Lock()
@@ -79,7 +79,7 @@ func TestSubagentActivityCapacityExpiryConflictAndConcurrentRoots(t *testing.T) 
 		a.events[i].observed = time.Now().Add(-2 * commentaryRouteTTL)
 	}
 	a.mu.Unlock()
-	a.drain("root0", time.Time{}, maxCommentaryPublicationBytes, 0)
+	a.drain("root0", time.Time{}, maxCommentaryPublicationBytes)
 	if len(a.events) != 0 {
 		t.Fatal("expired queue retained")
 	}
@@ -96,10 +96,10 @@ func TestActivityBudgetPreservesNoticeOrderAndReplayAfterExpiry(t *testing.T) {
 	a.observe("c", "r", "/root/c", true)
 	a.collect("c", "1", "reply", "first notice")
 	a.collect("c", "2", "reply", "x")
-	if len(a.drain("r", time.Time{}, len("[`/root/c`] x"), 0)) != 0 {
+	if len(a.drain("r", time.Time{}, len("[`/root/c`] x"))) != 0 {
 		t.Fatal("later notice overtook blocked earlier notice")
 	}
-	delivered := a.drain("r", time.Time{}, maxCommentaryPublicationBytes, 0)
+	delivered := a.drain("r", time.Time{}, maxCommentaryPublicationBytes)
 	if len(delivered) != 2 {
 		t.Fatal(delivered)
 	}
@@ -128,11 +128,11 @@ func TestDeferredBoundarySizedActivityPreservesLaterNotice(t *testing.T) {
 	if len(a.events) != 2 {
 		t.Fatal("boundary-sized notice was not admitted")
 	}
-	messages := a.drain("r", time.Now(), maxCommentaryPublicationBytes, 0)
+	messages := a.drain("r", time.Now(), maxCommentaryPublicationBytes)
 	if len(messages) != 1 || len(commentaryText(t, messages[0])) != maxCommentaryPublicationBytes {
 		t.Fatal("boundary-sized deferred notice was not delivered")
 	}
-	messages = a.drain("r", time.Now(), maxCommentaryPublicationBytes, 0)
+	messages = a.drain("r", time.Now(), maxCommentaryPublicationBytes)
 	if len(messages) != 1 || commentaryText(t, messages[0]) != "[`/root/c`] later notice" {
 		t.Fatal("later notice was not preserved")
 	}
@@ -156,15 +156,15 @@ func TestCriticalErrorProjectionUsesOriginDespiteSharedSession(t *testing.T) {
 	}
 	record("child-a", requestOutcomeFailed)
 	record("child-b", requestOutcomeCompleted)
-	if len(a.drain("root-b", time.Time{}, maxCommentaryPublicationBytes, 0)) != 0 {
+	if len(a.drain("root-b", time.Time{}, maxCommentaryPublicationBytes)) != 0 {
 		t.Fatal("successful sibling inherited another thread's failure")
 	}
-	projected := a.drain("root-a", time.Time{}, maxCommentaryPublicationBytes, 0)
+	projected := a.drain("root-a", time.Time{}, maxCommentaryPublicationBytes)
 	if len(projected) != 1 || !strings.Contains(commentaryText(t, projected[0]), "[`/root/a`] Mekugi") {
 		t.Fatal(projected)
 	}
 	record("child-b", requestOutcomeFailed)
-	if len(a.drain("root-b", time.Time{}, maxCommentaryPublicationBytes, 0)) != 1 {
+	if len(a.drain("root-b", time.Time{}, maxCommentaryPublicationBytes)) != 1 {
 		t.Fatal("new sibling failure was suppressed by another thread's session notice")
 	}
 	if len(issues.Pending()) != 1 || len(issues.transform("shared-session", true).messages) != 1 {
@@ -179,7 +179,7 @@ func TestToolActivityGroupsSamePathWithoutWaiting(t *testing.T) {
 	for index := range 5 {
 		a.collect("c", fmt.Sprint(index), "tool", "Read "+commentaryCode(fmt.Sprint(index)))
 	}
-	messages := a.drain("r", time.Time{}, maxCommentaryPublicationBytes, 0)
+	messages := a.drain("r", time.Time{}, maxCommentaryPublicationBytes)
 	if len(messages) != 1 {
 		t.Fatalf("group count: %d", len(messages))
 	}
@@ -193,7 +193,7 @@ func TestToolActivityGroupsSamePathWithoutWaiting(t *testing.T) {
 	for index := range 5 {
 		a.collect("c", fmt.Sprint(index), "tool", "Read `duplicate`")
 	}
-	if got := a.drain("r", time.Time{}, maxCommentaryPublicationBytes, 0); len(got) != 0 {
+	if got := a.drain("r", time.Time{}, maxCommentaryPublicationBytes); len(got) != 0 {
 		t.Fatal("grouped sources repeated")
 	}
 	fields := map[string]json.RawMessage{"input": mustMarshalJSON(messages)}
@@ -202,7 +202,7 @@ func TestToolActivityGroupsSamePathWithoutWaiting(t *testing.T) {
 		t.Fatal("grouped messages entered replay")
 	}
 	a.collect("c", "single", "tool", "Read `single`")
-	if got := a.drain("r", time.Time{}, maxCommentaryPublicationBytes, 0); len(got) != 1 || commentaryText(t, got[0]) != "[`/root/c`] Read `single`" {
+	if got := a.drain("r", time.Time{}, maxCommentaryPublicationBytes); len(got) != 1 || commentaryText(t, got[0]) != "[`/root/c`] Read `single`" {
 		t.Fatal("single call wrapped or held waiting for a group")
 	}
 }
@@ -222,17 +222,17 @@ func TestToolActivityGroupingBoundariesAndBudget(t *testing.T) {
 	} {
 		a.collect(item.thread, fmt.Sprint(index), item.kind, item.text)
 	}
-	if got := a.drain("r", time.Time{}, maxCommentaryPublicationBytes, 0); len(got) != 5 {
+	if got := a.drain("r", time.Time{}, maxCommentaryPublicationBytes); len(got) != 5 {
 		t.Fatalf("group crossed a boundary: %d", len(got))
 	}
 	for _, name := range []string{"first", "second"} {
 		a.collect("c", name, "tool", "Read "+commentaryCode(name))
 	}
-	if got := a.drain("r", time.Time{}, len("[`/root/c`] Read `first`"), 0); len(got) != 1 ||
+	if got := a.drain("r", time.Time{}, len("[`/root/c`] Read `first`")); len(got) != 1 ||
 		commentaryText(t, got[0]) != "[`/root/c`] Read `first`" {
 		t.Fatal("grouping blocked a deliverable first item")
 	}
-	if got := a.drain("r", time.Time{}, maxCommentaryPublicationBytes, 0); len(got) != 1 ||
+	if got := a.drain("r", time.Time{}, maxCommentaryPublicationBytes); len(got) != 1 ||
 		commentaryText(t, got[0]) != "[`/root/c`] Read `second`" {
 		t.Fatal("budget lost the remaining item")
 	}
@@ -244,7 +244,7 @@ func TestToolActivityGroupingPreservesMultilineSource(t *testing.T) {
 	a.observe("c", "r", "/root/c", true)
 	a.collect("c", "one", "tool", "Run\n```\necho a\n  echo b\n```")
 	a.collect("c", "two", "tool", "Run\n```\necho c\n  echo d\n```")
-	messages := a.drain("r", time.Time{}, maxCommentaryPublicationBytes, 0)
+	messages := a.drain("r", time.Time{}, maxCommentaryPublicationBytes)
 	want := "[`/root/c`] Run\n```\necho a\n  echo b\n```\n```\necho c\n  echo d\n```"
 	if len(messages) != 1 || commentaryText(t, messages[0]) != want {
 		t.Fatalf("multiline grouping: %v", messages)
@@ -285,7 +285,7 @@ func TestToolActivityCollapsesActionsWithinAndAcrossCalls(t *testing.T) {
 			for index, call := range tc.calls {
 				a.collect("c", fmt.Sprint(index), "tool", call)
 			}
-			messages := a.drain("r", time.Time{}, maxCommentaryPublicationBytes, 0)
+			messages := a.drain("r", time.Time{}, maxCommentaryPublicationBytes)
 			if len(messages) != 1 || commentaryText(t, messages[0]) != tc.want {
 				t.Fatalf("collapsed display: %v", messages)
 			}
@@ -304,7 +304,7 @@ func TestToolActivityGroupingKeepsDeferredKindsDistinct(t *testing.T) {
 	a.collect("c", "web", "tool", "Search web\n`query`")
 	a.collect("c", "files", "tool", "Search files\n`query`")
 	a.collect("c", "search", "tool", "Search `query`")
-	messages := a.drain("r", started, maxCommentaryPublicationBytes, 0)
+	messages := a.drain("r", started, maxCommentaryPublicationBytes)
 	if len(messages) != 2 {
 		t.Fatalf("action/deferred boundary lost: %d", len(messages))
 	}
@@ -320,7 +320,7 @@ func TestToolActivityGroupingPreservesMixedFencedOperations(t *testing.T) {
 	mixed := toolActivityShell("hgrep -F 'alpha\nbeta' a\ncat b")
 	a.collect("c", "mixed", "tool", mixed)
 	a.collect("c", "search", "tool", toolActivityShell("hgrep gamma c"))
-	messages := a.drain("r", time.Time{}, maxCommentaryPublicationBytes, 0)
+	messages := a.drain("r", time.Time{}, maxCommentaryPublicationBytes)
 	if len(messages) != 1 || commentaryText(t, messages[0]) != "In `/root/c`\n\n- Search\n  ```\n  -F 'alpha\n  beta' a\n  ```\n\n- Read `b`\n\n- Search `gamma c`" {
 		t.Fatalf("mixed operation rendering: %v", messages)
 	}

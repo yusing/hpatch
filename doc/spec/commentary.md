@@ -180,7 +180,7 @@ tool outputs, and inter-agent messages. A response already accompanied by its de
 commentary is not projected again.
 
 A completed root or child response with eligible provider usage includes one token notice
-after the journal flush and before the child summary and terminal event. It uses a `Tokens:`
+after any main journal flush and before the child saved-summary and terminal event. It uses a `Tokens:`
 heading and one compact
 Markdown table with `Category`, `Tokens`, and `API USD` columns. Rows use full labels:
 `Input`, `Cached input`, `Uncached input`, `Output`, `Reasoning`, and `Total`.
@@ -294,7 +294,7 @@ Acceptance:
    Costs use per-response models and context tiers, do not double-charge cached input or reasoning,
    remain cumulative across compaction, and show `n/a` for a thread containing unpriced usage.
    Intermediate client calls, failures, and incomplete responses do not emit token notices.
-   Child tables follow their journal flush in root activity, without adding child totals to root usage.
+   Child tables remain live root activity, without adding child totals to root usage; child journals wait for main completion.
 7. Journal authoring, admission, replay, runtime publishing, and terminal acceptance belong to
    [REQ-JOURNAL-001](journal.md). Automatic notices remain distinguishable from authored journal
    mutations in [feature evidence](router.md#feature-usage-debug-evidence).

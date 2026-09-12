@@ -218,7 +218,7 @@ func TestSubagentToolActivityRejectsPartialCalls(t *testing.T) {
 		call := map[string]json.RawMessage{"type": mustTestJSON(t, "function_call"), "id": mustTestJSON(t, status), "status": mustTestJSON(t, status)}
 		child.collectSubagentToolCall(call)
 	}
-	if got := proxy.activity.drain("r", root.activityStarted, maxCommentaryPublicationBytes, 0); len(got) != 1 || !strings.Contains(commentaryText(t, got[0]), "Started.") {
+	if got := proxy.activity.drain("r", root.activityStarted, maxCommentaryPublicationBytes); len(got) != 1 || !strings.Contains(commentaryText(t, got[0]), "Started.") {
 		t.Fatal("partial calls projected")
 	}
 }

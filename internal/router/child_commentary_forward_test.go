@@ -127,12 +127,12 @@ func TestChildProviderCommentaryForwardsWithoutChangingHistory(t *testing.T) {
 				if err != nil || len(events) != 2 {
 					t.Fatalf("child terminal changed: %s, %v", events, err)
 				}
-				if !bytes.Contains(events[0], []byte(`"text":"Journal flushed: 0 new, 0 already flushed"`)) || bytes.Contains(bytes.Join(events, nil), []byte("Substantive child answer")) {
+				if !bytes.Contains(events[0], []byte(`"text":"Journal saved: 0 pending, 0 already flushed"`)) || bytes.Contains(bytes.Join(events, nil), []byte("Substantive child answer")) {
 					t.Fatalf("child journal terminal: %s", events)
 				}
 			} else {
 				output, err := child.TransformJSON(payload)
-				if err != nil || !bytes.Contains(output, []byte("Journal flushed: 0 new, 0 already flushed")) || bytes.Contains(output, []byte("Substantive child answer")) {
+				if err != nil || !bytes.Contains(output, []byte("Journal saved: 0 pending, 0 already flushed")) || bytes.Contains(output, []byte("Substantive child answer")) {
 					t.Fatalf("child JSON changed: %s, %v", output, err)
 				}
 			}
@@ -153,7 +153,7 @@ func TestChildProviderCommentaryForwardsWithoutChangingHistory(t *testing.T) {
 				t.Fatalf("unrelated root received progress: %s, %v", output, err)
 			}
 			child.collectProviderCommentary(progress)
-			if messages := proxy.activity.drain("r", root.activityStarted, maxCommentaryPublicationBytes, 0); len(messages) != 0 {
+			if messages := proxy.activity.drain("r", root.activityStarted, maxCommentaryPublicationBytes); len(messages) != 0 {
 				t.Fatal("completed/terminal/replay source duplicated")
 			}
 			_, replay := prepareActivityTest(t, proxy, "child-next", "c", "p", "/root/worker/nested",
