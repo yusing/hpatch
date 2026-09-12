@@ -8,7 +8,8 @@ router sequence creation/update values, `report_now`, `reported`, and `flushed` 
 256 items and 256 threads are retained. Item text and the per-response live progress budget
 are 16 KiB. Terminal flushes have a separate bound sized for all 256 items, including labels
 and the author heading; child root copies have an independent terminal budget of the same size
-plus the bounded child prefix. Capacity exhaustion rejects new journal state, not unrelated calls.
+plus the bounded child prefix. Capacity exhaustion rejects new journal state, not unrelated calls. When initialization hits
+capacity, ordinary provider answers remain visible and journal finish returns an error.
 
 An ordinary fork copies the source's latest journal at its first accepted normal Responses
 request in the selected workspace, then evolves independently. It does not reconstruct the
@@ -28,7 +29,9 @@ an already-reported ID.
 Mekugi mode also exposes `functions.journal` with one operation: `list`, `add`, `edit`, or
 `delete`, or `finish`. List is read-only and may address only a proven ancestor or descendant journal. Unknown
 or conflicted ancestry fails closed. Mutations return router-assigned IDs. The dedicated tool includes `journal_ids` for any batched field mutations, independently of its main operation result. Journal calls are
-router state operations and do not invoke an executor.
+router state operations and do not invoke an executor. The dedicated schema exposes the optional
+batched `journal` field. Existing journal declarations anywhere in the tool catalog, including
+nested additional-tool namespaces, reject built-in tool exposure.
 
 Direct `functions.journal({"op":"finish","journal":[...]})` requests turn completion,
 optionally applying the last atomic mutation array in the same call. Finish takes final mutations

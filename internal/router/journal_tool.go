@@ -39,9 +39,32 @@ func journalMutationsSchema() json.RawMessage {
 }
 
 func exposeJournalTool(fields map[string]json.RawMessage, catalog *responsesToolCatalog) error {
-	for _, tool := range catalog.top.tools {
-		if tool.Name == journalToolName {
-			return errors.New("request already defines journal")
+	var check func(*responsesToolSection) error
+	check = func(section *responsesToolSection) error {
+		if section.err != nil {
+			return section.err
+		}
+		for _, node := range section.nodes {
+			if node == nil {
+				continue
+			}
+			if node.definition.Name == journalToolName || node.definition.Name == "functions.journal" {
+				return errors.New("request already defines journal")
+			}
+			if node.nested != nil {
+				if err := check(node.nested); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := check(catalog.top); err != nil {
+		return err
+	}
+	for _, group := range catalog.additional {
+		if err := check(group.tools); err != nil {
+			return err
 		}
 	}
 	catalog.appendTop([]*responsesToolDefinition{newResponsesToolDefinition(map[string]json.RawMessage{
@@ -55,6 +78,7 @@ func exposeJournalTool(fields map[string]json.RawMessage, catalog *responsesTool
 				"op":         map[string]any{"type": "string", "enum": []string{"list", "add", "edit", "delete", "finish"}},
 				"id":         map[string]any{"type": "string", "description": "Router-assigned item ID; required for edit and delete."},
 				"text":       map[string]any{"type": "string", "description": "Required nonblank milestone text for add and edit."},
+				"journal":    journalMutationsSchema(),
 				"agent":      map[string]any{"type": "string", "description": "Canonical path of a proven ancestor or descendant, for list only. Defaults to the caller."},
 				"report_now": map[string]any{"type": "boolean"},
 			},
@@ -154,7 +178,11 @@ func (t *mekugiResponseTransform) executeJournalCall(item map[string]json.RawMes
 		}
 		var err error
 		if args.Op == "finish" {
-			result = map[string]any{"ok": true, "finish_requested": true}
+			if !t.finalAnswer.journal {
+				err = errJournalThreadCapacity
+			} else {
+				result = map[string]any{"ok": true, "finish_requested": true}
+			}
 		} else if args.Op == "list" {
 			if args.ID != "" || args.Text != nil || args.ReportNow {
 				err = errors.New("journal list accepts only agent and batched journal mutations")
@@ -214,6 +242,10 @@ func (t *mekugiResponseTransform) executeJournalCall(item map[string]json.RawMes
 // Completion is invocation-local. Replaying a retained finish result must never
 // finish a later turn, and client-dispatched work still belongs to the host.
 func (t *mekugiResponseTransform) journalTerminalReady() bool {
+	// Keep router calls local at capacity, but never replace an answer without state.
+	if !t.finalAnswer.journal {
+		return false
+	}
 	if !t.journalFinishRequested {
 		return len(t.journalResults) == 0 && journalTerminalEligible(t.journalProviderOutput)
 	}

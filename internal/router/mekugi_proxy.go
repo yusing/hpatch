@@ -543,11 +543,14 @@ func (p *mekugiProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if metadata.SubagentKind != "" {
 		fork = ""
 	}
-	if err := p.journals.initialize(ctx, p.replayStore, directory, threadID, author, fork); err != nil && !errors.Is(err, errJournalThreadCapacity) {
-		transform.Close()
-		return nil, err
+	if err := p.journals.initialize(ctx, p.replayStore, directory, threadID, author, fork); err != nil {
+		if !errors.Is(err, errJournalThreadCapacity) {
+			transform.Close()
+			return nil, err
+		}
+	} else {
+		transform.finalAnswer.journal = true
 	}
-	transform.finalAnswer.journal = true
 	transform.journalActive = true
 	transform.journalPending = make(map[string]bool)
 	transform.journalCalls = make(map[string]map[string]json.RawMessage)

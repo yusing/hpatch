@@ -331,19 +331,48 @@ func TestJournalChildFlushHasIndependentRootCopyBudget(t *testing.T) {
 }
 
 func TestJournalCapacityDoesNotRejectUnrelatedRequest(t *testing.T) {
-	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
-	for i := range maxJournalThreads {
-		if err := proxy.journals.initialize(t.Context(), nil, "workspace", fmt.Sprint(i), "/root", ""); err != nil {
-			t.Fatal(err)
-		}
-	}
-	workspace := t.TempDir()
-	request := serverRequest(t, nil)
-	headers := serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil})
-	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(`{"id":"answer","status":"completed","output":[]}`)}}}
-	var output bytes.Buffer
-	if err := executeRequest(t.Context(), t.Context(), request, headers, "new", provider, &output, nil, proxy, nil, nil); err != nil {
-		t.Fatalf("journal capacity blocked unrelated request: %v", err)
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprint(stream), func(t *testing.T) {
+			proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+			for i := range maxJournalThreads {
+				if err := proxy.journals.initialize(t.Context(), nil, "workspace", fmt.Sprint(i), "/root", ""); err != nil {
+					t.Fatal(err)
+				}
+			}
+			workspace := t.TempDir()
+			request := serverRequest(t, func(fields map[string]any) { fields["stream"] = stream })
+			headers := serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil})
+			answer := map[string]any{"type": "message", "id": "answer", "role": "assistant", "phase": "final_answer", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": "Answer survives capacity"}}}
+			response := mustTestJSON(t, map[string]any{"id": "response", "status": "completed", "output": []any{answer}})
+			httpResponse := serverHTTPResponse(string(response))
+			if stream {
+				httpResponse = serverHTTPResponse(finalAnswerTestWire([][]byte{
+					mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": answer}),
+					mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": answer}),
+					mustTestJSON(t, map[string]any{"type": "response.completed", "response": json.RawMessage(response)}),
+				}))
+				httpResponse.Header.Set("Content-Type", "text/event-stream")
+			}
+			provider := &serverFakeProvider{results: []serverForwardResult{{response: httpResponse}}}
+			var output bytes.Buffer
+			if err := executeRequest(t.Context(), t.Context(), request, headers, "new", provider, &output, nil, proxy, nil, nil); err != nil {
+				t.Fatalf("journal capacity blocked unrelated request: %v", err)
+			}
+			transform, _, _, _ := newMekugiTestTransformWithProxy(t, proxy)
+			result, err := transform.executeJournalCall(map[string]json.RawMessage{
+				"type": mustTestJSON(t, "function_call"), "name": mustTestJSON(t, "journal"),
+				"call_id": mustTestJSON(t, "finish-at-capacity"), "arguments": mustTestJSON(t, `{"op":"finish"}`),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(jsonString(result, "output"), errJournalThreadCapacity.Error()) || transform.journalTerminalReady() {
+				t.Fatalf("finish succeeded without journal state: %s", mustTestJSON(t, result))
+			}
+			if !strings.Contains(output.String(), "Answer survives capacity") {
+				t.Fatalf("capacity discarded provider answer: %s", output.String())
+			}
+		})
 	}
 }
 
@@ -492,5 +521,47 @@ func TestJournalChildUsageWaitsForDeferredFlush(t *testing.T) {
 	if len(messages) != 2 || !strings.Contains(commentaryMessageText(messages[0]), "Second flush") ||
 		!strings.Contains(commentaryMessageText(messages[1]), "Tokens: second") {
 		t.Fatalf("deferred child ordering changed: %v", messages)
+	}
+}
+
+func TestJournalCatalogRejectsCollisions(t *testing.T) {
+	for _, tools := range []string{
+		`[{"type":"function","name":"journal"}]`,
+		`[{"type":"function","name":"functions.journal"}]`,
+		`[{"type":"namespace","name":"functions","tools":[{"type":"function","name":"journal"}]}]`,
+		`[{"type":"namespace","name":"outer","tools":[{"type":"namespace","name":"functions","tools":[{"type":"function","name":"journal"}]}]}]`,
+	} {
+		for _, additional := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/additional=%t", tools, additional), func(t *testing.T) {
+				fields := map[string]json.RawMessage{"tools": json.RawMessage(tools)}
+				if additional {
+					fields = map[string]json.RawMessage{"input": mustTestJSON(t, []any{map[string]any{"type": "additional_tools", "tools": json.RawMessage(tools)}})}
+				}
+				before := mustTestJSON(t, fields)
+				if err := exposeJournalTool(fields, decodeResponsesToolCatalog(fields)); err == nil {
+					t.Fatal("accepted journal collision")
+				}
+				if !bytes.Equal(before, mustTestJSON(t, fields)) {
+					t.Fatal("rejected exposure changed catalog")
+				}
+			})
+		}
+	}
+}
+
+func TestJournalToolSchemaIncludesBatchedMutations(t *testing.T) {
+	fields := map[string]json.RawMessage{}
+	catalog := decodeResponsesToolCatalog(fields)
+	if err := exposeJournalTool(fields, catalog); err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(catalog.top.tools[0].rawField("parameters"), &schema); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(schema.Properties["journal"], journalMutationsSchema()) {
+		t.Fatalf("missing or incorrect journal schema: %s", schema.Properties["journal"])
 	}
 }
