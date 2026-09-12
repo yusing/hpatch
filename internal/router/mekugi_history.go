@@ -398,6 +398,7 @@ func appendToolOutputWarning(raw json.RawMessage, warning string) (json.RawMessa
 }
 
 func (t *mekugiResponseTransform) recordLocal(callID string, history *mekugiHistory) {
+	t.featureTrace.toolCall(callID, history.toolName)
 	if t.nativeTools && history.carrierKind == "" {
 		history.carrierKind = codeModeCarrierFunction
 		history.carrierName = nativeExecCommandToolName

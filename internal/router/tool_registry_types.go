@@ -40,6 +40,7 @@ type (
 	}
 
 	toolWorkerManifest struct {
+		AXReadOutput   string             `json:"ax_read_output,omitempty"`
 		Version        int                `json:"version"`
 		RegistryID     string             `json:"registry_id"`
 		NodeExecutable string             `json:"node_executable,omitempty"`

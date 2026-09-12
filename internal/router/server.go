@@ -101,6 +101,9 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 	if err != nil {
 		return err
 	}
+	if debug != nil {
+		ctx = context.WithValue(ctx, debugContextKey{}, debug)
+	}
 	defer func() {
 		if debug != nil {
 			debug.event(map[string]any{"event": "router_stop", "failed": runErr != nil})
@@ -369,13 +372,13 @@ func responsesHandler(
 }
 
 func requestContexts(requestCtx, serverCtx context.Context, responseStartTimeout time.Duration) (context.Context, context.Context, func()) {
-	executionCtx, cancelExecution := context.WithCancel(requestCtx)
-	stopServerCancellation := context.AfterFunc(serverCtx, cancelExecution)
-	startCtx, cancelStart := context.WithTimeout(executionCtx, responseStartTimeout)
+	executionCtx, cancelExecution := context.WithCancelCause(requestCtx)
+	stopServerCancellation := context.AfterFunc(serverCtx, func() { cancelExecution(errRouterShutdown) })
+	startCtx, cancelStart := context.WithTimeoutCause(executionCtx, responseStartTimeout, errResponseStartTimeout)
 	return startCtx, executionCtx, func() {
 		stopServerCancellation()
 		cancelStart()
-		cancelExecution()
+		cancelExecution(nil)
 	}
 }
 
@@ -511,6 +514,12 @@ func executeRequest(
 ) (requestErr error) {
 	finalization := requestFinalization{failurePhase: requestFailurePrepare}
 	debug, debugID := debugRequest(ctx)
+	started := time.Now()
+	trace := featureUsageTrace{debug: debug, requestID: debugID, threadID: codexThreadID(headers), sessionID: sessionID}
+	if debug != nil {
+		trace.summary = &featureUsageSummary{counts: make(map[string]uint64)}
+	}
+	commentaryObserved := false
 	if sessionID != "" {
 		finalization.sessionID = sessionID
 	}
@@ -522,7 +531,18 @@ func executeRequest(
 			"client_request_id": headers.Get("x-client-request-id"), "thread_id": codexThreadID(headers),
 			"session_id": sessionID, "outcome": finalization.observation.outcome.String(),
 			"phase": finalization.failurePhase, "upstream_status": finalization.upstreamStatusCode,
+			"duration_ms": time.Since(started).Milliseconds(),
 		}
+		if captureID, sequence := capturer.RequestCorrelation(ctx); captureID != "" {
+			fields["capture_id"], fields["request_sequence"] = captureID, sequence
+		}
+		if cause := requestCancellationCause(executionCtx, requestErr); cause != "" {
+			fields["cancellation_cause"] = cause
+		}
+		if errors.Is(requestErr, errUpstreamStreamIdleTimeout) {
+			fields["idle_timeout_observed"] = true
+		}
+		trace.finish(commentaryObserved, requestErr == nil && finalization.upstreamStatusCode >= 200 && finalization.upstreamStatusCode < 300)
 		if finalization.diagnosticReference != "" {
 			fields["diagnostic_reference"] = finalization.diagnosticReference
 			fields["diagnostic_code"] = finalization.diagnosticCode
@@ -532,7 +552,7 @@ func executeRequest(
 	}()
 
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("prepare request: %w", err)
+		return fmt.Errorf("prepare request: %w", withRequestStartCause(ctx, err))
 	}
 	metadata, metadataValid := decodeCodexTurnMetadata(headers)
 	threadID := codexThreadID(headers)
@@ -600,10 +620,8 @@ func executeRequest(
 		}
 	}
 	if mekugiTransform != nil {
-		mekugiTransform.featureTrace = featureUsageTrace{
-			debug: debug, requestID: debugID,
-			threadID: codexThreadID(headers), sessionID: sessionID,
-		}
+		mekugiTransform.featureTrace = trace
+		commentaryObserved = true
 		defer mekugiTransform.Close()
 	}
 
@@ -662,6 +680,7 @@ func executeRequest(
 	debug.instructions(projectedBody, debugWire, headers, sessionID, debugID, parsedRequest.cachedInput)
 	response, err := provider.forwardExecution(ctx, executionCtx, forwardBody, headers, cacheKey)
 	if err != nil {
+		err = withRequestStartCause(ctx, err)
 		return fmt.Errorf("execute request: %w", forwardCriticalDiagnostic(err))
 	}
 	finalization.upstreamStatusCode = response.StatusCode

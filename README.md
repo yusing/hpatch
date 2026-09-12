@@ -596,8 +596,11 @@ setting; an existing journal must be a regular file with mode `0600`:
 MEKUGI_AX_OUTPUT=/path/to/private/reads.jsonl mekugi codex
 ```
 
-The journal records reader name, thread, start/finish, duration, and success, never
-source paths, arguments, or output. It counts actual `hcat`, `hgrep`, `hsymbol`, and
+The v2 journal records reader name, thread, start/finish, duration, success, an
+allowlisted failure class, and an exit status when observed. Opaque `call_id` and
+`shell_id` values join failures to a logical shell call and actual worker invocation;
+source paths, arguments, stderr, and output are never retained. Legacy v1 failures
+remain `unknown`, not retrospectively guessed. It counts actual `hcat`, `hgrep`, `hsymbol`, and
 `inspect_file` invocations, including loops and failures, not commands in skipped
 branches or quoted examples. It does not count external programs' file accesses.
 Evidence-write failures leave command behavior intact and produce an auxiliary
@@ -615,6 +618,35 @@ pagination. They include matched edit retries, emitted bytes, exact line bytes r
 from the preceding edit payload, observed turn-completion intervals, and runtime reader
 counts for the rollout's thread. Missing journal/thread evidence is unavailable.
 Repeated bytes are not automatically wasted, and read counts do not say a read was unnecessary.
+
+Failed-read details include their journal IDs and classes such as `invalid_arguments`,
+`not_found`, `retained_file`, `dependency_unavailable`, and `output_limit`. Unknown
+reasons remain explicit. Detail samples are bounded to 256 failures per thread;
+class totals and `dropped_failure_details` expose any omitted detail. Other-thread
+and unattributed start counts are reported rather than silently filtered. The automatic
+report separates `journal_only_threads` and `unattributed_reads` from known router
+threads; an unmatched identity is not automatically classified as a child or a test.
+Debug workers retain the selected journal in their authenticated manifest, so a child
+losing the ambient output variable still records reads under its own `CODEX_THREAD_ID`.
+Mekugi's router test process clears inherited AX output; instrumentation tests opt in
+to their own temporary journal.
+
+`ax.commands` reports observed `CommandExecution` item identities, start/finish times,
+exit statuses, durations, and gaps before non-overlapping commands. A missing start has
+no invented duration or gap. Gaps include all intervening work, not proven batching
+overhead. Recognized diagnostic carriers also expose their original logical call ID.
+
+With `--debug`, `router.jsonl` adds a `tool_observation` mapping from request to call ID.
+Its request ID equals the capturer's `capture_id` when a capture context exists;
+`request_complete` also includes explicit `capture_id` and `request_sequence`. That
+joins read failures and rollout calls to transport outcomes and existing HPATCH evidence.
+Commentary events distinguish `provider_message`, `tool_field`, authenticated runtime
+publication, and `router_activity`. Per-request `feature_coverage` distinguishes an
+observed empty set from unavailable or incomplete observation; rendering is not proof
+that the UI received a message. Cancellation records identify router shutdown, response
+start timeout, upstream idle timeout, downstream context cancellation/deadline, or an
+unknown cause. A canceled downstream context alone does not prove a user pressed abort.
+
 
 Defects require explicit assessment, not inference from a rejection or successful
 application. Pass `--defects /path/to/assessments.json` with an array such as:

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/yusing/mekugi/capturer"
 	"github.com/yusing/mekugi/internal/shellruntime"
 )
 
@@ -70,6 +71,10 @@ func newProxyWithSharedTestRegistry(t *testing.T, translator mekugiTranslator, r
 }
 
 func TestMain(m *testing.M) {
+	if err := os.Unsetenv(capturer.AXReadOutputEnvironment); err != nil {
+		fmt.Fprintln(os.Stderr, "isolate AX test instrumentation:", err)
+		os.Exit(1)
+	}
 	code := m.Run()
 	var err error
 	for _, fixture := range []*proxyRegistryFixture{&proxyTestFixture, &pluginProxyTestFixture} {

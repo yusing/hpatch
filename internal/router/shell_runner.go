@@ -3,6 +3,7 @@ package router
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -76,6 +77,7 @@ func executeShellTool(
 		return toolplugin.ExecutionOutput{Stderr: fmt.Sprintf("shell: %v\n", err), ExitCode: 2}, nil
 	}
 
+	shellID := rand.Text()
 	privateTools := make(map[string]toolContribution)
 	for _, contribution := range manifest.Tools {
 		if contribution.PluginID == builtinToolsPluginID && !contribution.ModelVisible {
@@ -93,14 +95,29 @@ func executeShellTool(
 				return next(handlerCtx, command)
 			}
 			handler := interp.HandlerCtx(handlerCtx)
-			observation, observationErr := capturer.StartAXRead(
-				handler.Env.Get(capturer.AXReadOutputEnvironment).String(),
-				handler.Env.Get(shellruntime.ThreadIDEnvironment).String(), contribution.Name)
+			journal := manifest.AXReadOutput
+			if journal == "" {
+				journal = handler.Env.Get(capturer.AXReadOutputEnvironment).String()
+			}
+			callID := handler.Env.Get(capturer.AXCallIDEnvironment).String()
+			if !capturer.ValidAXIdentity(callID) {
+				callID = ""
+			}
+			observation, observationErr := capturer.StartAXReadWithContext(journal,
+				handler.Env.Get(shellruntime.ThreadIDEnvironment).String(), contribution.Name,
+				capturer.AXReadContext{CallID: callID, ShellID: shellID})
+			failureClass := ""
+			var exitCode *int
 			if observationErr != nil {
 				_, _ = io.WriteString(handler.Stderr, "shell: AX read evidence unavailable\n")
 			}
 			defer func() {
-				if err := observation.Finish(runErr == nil); err != nil {
+				if errors.Is(handlerCtx.Err(), context.DeadlineExceeded) && runErr != nil {
+					failureClass = "deadline_exceeded"
+				} else if handlerCtx.Err() != nil && runErr != nil {
+					failureClass = "canceled"
+				}
+				if err := observation.FinishResult(runErr == nil, failureClass, exitCode); err != nil {
 					_, _ = io.WriteString(handler.Stderr, "shell: AX read evidence incomplete\n")
 				}
 			}()
@@ -127,6 +144,7 @@ func executeShellTool(
 					arguments[pathIndex],
 				)
 				if openErr != nil {
+					failureClass, exitCode = "retained_file", new(1)
 					_, _ = fmt.Fprintf(handler.Stderr, "hcat: %v\n", openErr)
 					return interp.ExitStatus(1)
 				}
@@ -147,16 +165,21 @@ func executeShellTool(
 				shellEnvironment(handler.Env),
 			)
 			if executeErr != nil {
+				failureClass = "execution_error"
 				_, _ = fmt.Fprintf(handler.Stderr, "%s: %v\n", command[0], executeErr)
 				return interp.ExitStatus(1)
 			}
+			exitCode = new(execution.ExitCode)
 			if _, writeErr := io.WriteString(handler.Stdout, execution.Stdout); writeErr != nil {
+				failureClass = "output_write"
 				return fmt.Errorf("write %s stdout: %w", command[0], writeErr)
 			}
 			if _, writeErr := io.WriteString(handler.Stderr, execution.Stderr); writeErr != nil {
+				failureClass = "output_write"
 				return fmt.Errorf("write %s stderr: %w", command[0], writeErr)
 			}
 			if execution.ExitCode != 0 {
+				failureClass = execution.FailureClass
 				return interp.ExitStatus(execution.ExitCode)
 			}
 			return nil

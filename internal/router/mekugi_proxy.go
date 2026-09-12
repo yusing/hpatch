@@ -20,6 +20,7 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
 	"github.com/yusing/mekugi"
+	"github.com/yusing/mekugi/capturer"
 	codexinstructions "github.com/yusing/mekugi/contrib/codex"
 	"github.com/yusing/mekugi/internal/router/toolplugin"
 	"github.com/yusing/mekugi/internal/shellsyntax"
@@ -1197,6 +1198,10 @@ func (t *mekugiResponseTransform) translateRegisteredTool(contribution toolContr
 		}
 		return history, nil
 	}
+	axCallID := ""
+	if t.featureTrace.debug != nil || os.Getenv(capturer.AXReadOutputEnvironment) != "" {
+		axCallID = callID
+	}
 	pathPrefix := t.shellDirectory + string(os.PathSeparator)
 	recovered := !t.nativeTools && shellCodeModeRecovery(contribution, input)
 	var stopBatchOnNonzero bool
@@ -1211,7 +1216,7 @@ func (t *mekugiResponseTransform) translateRegisteredTool(contribution toolContr
 			_, stopBatchOnNonzero, _ = shellsyntax.BatchHeader(effectiveInput)
 			programs, err = shellsyntax.Split(effectiveInput)
 			if err == nil && len(programs) > 1 {
-				batch, translation, err = t.prepareShellBatch(contribution, programs, pathPrefix)
+				batch, translation, err = t.prepareShellBatch(contribution, programs, pathPrefix, axCallID)
 			}
 		}
 		if err != nil {
@@ -1308,7 +1313,7 @@ func (t *mekugiResponseTransform) translateRegisteredTool(contribution toolContr
 				break
 			}
 			arguments := translation.Arguments
-			if splitPayload, ok := t.shellCatCarrier(contribution, kind, arguments, translation.Carrier.Template, translation.Carrier.Params, resultMetadata); ok {
+			if splitPayload, ok := t.shellCatCarrier(contribution, kind, arguments, translation.Carrier.Template, translation.Carrier.Params, resultMetadata, axCallID); ok {
 				payload = splitPayload
 				splitShellCarrier = true
 				break
@@ -1321,6 +1326,7 @@ func (t *mekugiResponseTransform) translateRegisteredTool(contribution toolContr
 				translation.Carrier.Template,
 				translation.Carrier.Params,
 				resultMetadata,
+				axCallID,
 			)
 			if err != nil {
 				return mekugiHistory{}, fmt.Errorf("%s exec carrier: %w", contribution.Name, err)

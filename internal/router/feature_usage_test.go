@@ -287,20 +287,21 @@ func TestFeatureUsageDoesNotInferRuntimeExecution(t *testing.T) {
 			t.Fatalf("non-call was instrumented: %q, %v", input, err)
 		}
 	}
-	// A generated ID or a provider's commentary phase is not explicit feature use.
+	// A provider message is authored evidence, even with a generated-looking ID,
+	// but never proves runtime publication or router origin.
 	if _, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 		"status": "completed", "output": []any{assistantCommentaryMessage(commentaryMessageID("automatic"), "progress")},
 	})); err != nil {
 		t.Fatal(err)
 	}
-	if len(readFeatureUsage(t, d)) != 0 {
-		t.Fatal("non-execution was counted as feature use")
+	if events := readFeatureUsage(t, d); len(events) != 1 || events[0]["source"] != "provider_message" || events[0]["stage"] != "authored" {
+		t.Fatalf("provider origin was not distinguished from runtime execution: %v", events)
 	}
 	if _, changed, err := transform.lowerCodeModeCommentary("call-syntax", `await commentary("one"); await commentary("two");`); err != nil || !changed {
 		t.Fatalf("lowering failed: %v", err)
 	}
 	got := readFeatureUsage(t, d)
-	if len(got) != 1 || got[0]["stage"] != "lowering" || got[0]["outcome"] != "prepared" {
+	if len(got) != 2 || got[1]["stage"] != "lowering" || got[1]["outcome"] != "prepared" {
 		t.Fatalf("lowering inferred runtime execution or counted expressions: %v", got)
 	}
 }

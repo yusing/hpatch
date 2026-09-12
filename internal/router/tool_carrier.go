@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/yusing/mekugi/capturer"
 	"github.com/yusing/mekugi/internal/shellsyntax"
 
 	"mvdan.cc/sh/v3/expand"
@@ -262,8 +263,9 @@ func (registry *toolRegistry) execCarrierPayload(
 	template string,
 	params map[string]json.RawMessage,
 	resultMetadata map[string]json.RawMessage,
+	callIDs ...string,
 ) (string, error) {
-	command, err := registry.execCarrierCommand(contribution, sourceInput, arguments, template)
+	command, err := registry.execCarrierCommand(contribution, sourceInput, arguments, template, callIDs...)
 	if err != nil {
 		return "", err
 	}
@@ -290,6 +292,7 @@ func (registry *toolRegistry) execCarrierCommand(
 	sourceInput string,
 	arguments []string,
 	template string,
+	callIDs ...string,
 ) (string, error) {
 	if registry == nil {
 		return "", errors.New("tool registry is unavailable")
@@ -312,11 +315,25 @@ func (registry *toolRegistry) execCarrierCommand(
 			}
 		}
 	}
+	callID := ""
+	if builtinShell && len(callIDs) != 0 && capturer.ValidAXIdentity(callIDs[0]) {
+		callID = callIDs[0]
+		command = capturer.AXCallIDEnvironment + "=" + shellQuoteArgument(callID) + " " + command
+		if template != "" {
+			// A template may put the worker after "command", "env", or a
+			// pipeline. Keep the assignment on the worker, but make the
+			// substituted fragment an executable rather than an assignment.
+			command = "env " + command
+		}
+	}
 	if template != "" {
 		if strings.Count(template, "{.}") != 1 {
 			return "", errors.New("exec command template must contain exactly one {.} placeholder")
 		}
 		command = strings.Replace(template, "{.}", command, 1)
+	}
+	if callID != "" {
+		command = axCarrierCallIDPrefix + callID + "\n" + command
 	}
 	return command, nil
 }

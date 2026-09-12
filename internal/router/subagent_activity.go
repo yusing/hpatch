@@ -235,6 +235,7 @@ func (a *subagentActivity) stripInput(fields map[string]json.RawMessage) {
 func (t *mekugiResponseTransform) drainActivity() []map[string]json.RawMessage {
 	messages := t.proxy.activity.drain(t.threadID, t.activityStarted, maxCommentaryPublicationBytes-t.activityBytes)
 	for _, message := range messages {
+		t.featureTrace.record("commentary", "router_activity", "render", "prepared", "", jsonString(message, "id"))
 		var content []struct {
 			Text string `json:"text"`
 		}

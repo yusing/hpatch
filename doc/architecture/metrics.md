@@ -34,7 +34,9 @@ view of that snapshot on the same listener and owns no metric state or calculati
 
 The client and provider transport observers share a request-scoped, process-private correlation value through
 Go context. No correlation header crosses either HTTP boundary. Provider retries receive consecutive
-attempt numbers under the same logical request. The wrappers preserve request bytes, response bytes,
+attempt numbers under the same logical request. The capturer exposes only its immutable local capture ID and request sequence through
+`RequestCorrelation`; debug reuses that identity without creating metric callbacks or
+wire headers. The wrappers preserve request bytes, response bytes,
 stream flushing, cancellation, status, headers, and response-body ownership.
 
 Raw request and response bodies exist only while one boundary is being measured. Durable schema-6
@@ -107,10 +109,16 @@ zero and keep provider request IDs out of public summaries.
 
 `capturer/ax.go` owns opt-in runtime-reader journal serialization and offline AX
 calculations under `REQ-AX-001`. The shell dispatch boundary supplies actual private-reader
-start/finish observations; this explicit execution-observation seam is separate from
+start/finish observations and allowlisted failure classification. The authenticated
+worker manifest pins opt-in debug output; carrier-only opaque call IDs and worker-local
+shell IDs join executed reads without retaining scripts or changing uninstrumented
+carriers. The journal parser validates all threads once before attribution and exposes
+excluded/anonymous evidence. The same owner aggregates recorded CommandExecution item
+intervals, never reconstructed execution counts or presumed causes of gaps. This explicit execution-observation seam is separate from
 transport measurement and adds no synthetic stock counters. It records no source content.
 `internal/router/debug_ax.go` owns automatic discovery of known-thread rollout paths
-and debug report orchestration, reusing the inspector and capturer rather than another
+and debug report orchestration, labeling journal-only identities separately and reusing
+the inspector and capturer rather than another
 calculation path. `cmd/mekugi/wrap.go` passes the selected debug journal environment to
 the executor; debug shutdown retains the report and prints its artifact path.
 The offline session inspector supplies original replay payloads transiently for byte

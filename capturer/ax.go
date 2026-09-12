@@ -22,17 +22,29 @@ import (
 // AXReadOutputEnvironment opts executor-side private readers into a local journal.
 const AXReadOutputEnvironment = "MEKUGI_AX_OUTPUT"
 
+// AXCallIDEnvironment joins an executor observation to its logical tool call.
+const AXCallIDEnvironment = "MEKUGI_AX_CALL_ID"
+
 const maxAXEvidenceBytes = 64 << 20
 
+// AXReadContext contains identities only, never command text or paths.
+type AXReadContext struct {
+	CallID  string `json:"call_id,omitempty"`
+	ShellID string `json:"shell_id,omitempty"`
+}
+
 type axReadEvent struct {
-	Schema     string    `json:"schema"`
-	ID         string    `json:"id"`
-	ThreadID   string    `json:"thread_id"`
-	Tool       string    `json:"tool"`
-	Phase      string    `json:"phase"`
-	At         time.Time `json:"at"`
-	DurationNS *int64    `json:"duration_ns,omitempty"`
-	Succeeded  *bool     `json:"succeeded,omitempty"`
+	AXReadContext
+	FailureClass string    `json:"failure_class,omitempty"`
+	ExitCode     *int      `json:"exit_code,omitempty"`
+	Schema       string    `json:"schema"`
+	ID           string    `json:"id"`
+	ThreadID     string    `json:"thread_id"`
+	Tool         string    `json:"tool"`
+	Phase        string    `json:"phase"`
+	At           time.Time `json:"at"`
+	DurationNS   *int64    `json:"duration_ns,omitempty"`
+	Succeeded    *bool     `json:"succeeded,omitempty"`
 }
 
 // AXReadObservation records one actual invocation, not a parsed source command.
@@ -50,11 +62,15 @@ func validAXReader(tool string) bool {
 // StartAXRead is auxiliary to execution. Callers report failures separately and
 // keep the original command outcome. Each event is one O_APPEND write.
 func StartAXRead(path, threadID, tool string) (*AXReadObservation, error) {
+	return StartAXReadWithContext(path, threadID, tool, AXReadContext{})
+}
+
+func StartAXReadWithContext(path, threadID, tool string, identity AXReadContext) (*AXReadObservation, error) {
 	if path == "" {
 		return nil, nil
 	}
 	if !filepath.IsAbs(path) || !validAXReader(tool) || len(threadID) > 128 ||
-		strings.ContainsAny(threadID, "\r\n\x00") {
+		strings.ContainsAny(threadID, "\r\n\x00") || !validAXReadContext(identity) {
 		return nil, errors.New("invalid AX journal configuration")
 	}
 	file, err := openAXJournal(path)
@@ -69,7 +85,7 @@ func StartAXRead(path, threadID, tool string) (*AXReadObservation, error) {
 	now := time.Now()
 	observation := &AXReadObservation{
 		file: file, started: now,
-		event: axReadEvent{Schema: "mekugi.ax.read.v1", ID: hex.EncodeToString(id),
+		event: axReadEvent{AXReadContext: identity, Schema: "mekugi.ax.read.v2", ID: hex.EncodeToString(id),
 			ThreadID: threadID, Tool: tool, Phase: "start", At: now.UTC()},
 	}
 	if err := observation.write(); err != nil {
@@ -148,45 +164,133 @@ func (observation *AXReadObservation) write() (writeErr error) {
 	return err
 }
 
-// Finish closes this observation even when recording fails.
+// Finish preserves the boolean API. Older callers cannot supply a failure reason.
 func (observation *AXReadObservation) Finish(succeeded bool) error {
+	return observation.FinishResult(succeeded, "", nil)
+}
+
+// FinishResult closes the observation even if classification or writing fails.
+// Only an allowlisted class and a process exit status may enter the journal.
+func (observation *AXReadObservation) FinishResult(succeeded bool, failureClass string, exitCode *int) error {
 	if observation == nil {
 		return nil
+	}
+	if !succeeded && failureClass == "" {
+		failureClass = "unknown"
+	}
+	if (succeeded && failureClass != "") || (!succeeded && !validAXFailureClass(failureClass)) ||
+		(exitCode != nil && (*exitCode < 0 || *exitCode > 255 || succeeded && *exitCode != 0)) {
+		return errors.Join(errors.New("invalid AX read result"), observation.file.Close())
 	}
 	observation.event.Phase = "finish"
 	observation.event.At = time.Now().UTC()
 	observation.event.DurationNS = new(time.Since(observation.started).Nanoseconds())
 	observation.event.Succeeded = new(succeeded)
+	observation.event.FailureClass = failureClass
+	observation.event.ExitCode = exitCode
 	return errors.Join(observation.write(), observation.file.Close())
 }
 
-// AXReadMetrics counts only journal-observed private reader invocations. Incomplete
-// observations and missing instrumentation are not zero successful reads.
-type AXReadMetrics struct {
-	State      string            `json:"state"`
-	Started    uint64            `json:"started"`
-	Completed  uint64            `json:"completed"`
-	Succeeded  uint64            `json:"succeeded"`
-	Failed     uint64            `json:"failed"`
-	Incomplete uint64            `json:"incomplete"`
-	DurationNS uint64            `json:"duration_ns"`
-	ByTool     map[string]uint64 `json:"by_tool"`
-	Coverage   string            `json:"coverage"`
+func validAXFailureClass(value string) bool {
+	switch value {
+	case "unknown", "invalid_arguments", "not_found", "permission_denied", "not_regular",
+		"invalid_source", "reader_error", "search_error", "resolver_error", "dependency_unavailable",
+		"no_editable_location", "output_limit", "retained_file", "execution_error",
+		"output_write", "canceled", "deadline_exceeded":
+		return true
+	}
+	return false
 }
 
-// ReadAXReads computes counts from explicit runtime evidence for one thread.
-// Other threads are ignored; event identity and pairing remain validated.
-func ReadAXReads(ctx context.Context, path, threadID string) (AXReadMetrics, error) {
-	result := AXReadMetrics{
-		State: "unavailable", ByTool: map[string]uint64{},
-		Coverage: "instrumented private-reader invocations only; external reads and necessity are not measured",
+// ValidAXIdentity accepts opaque identifiers, not arbitrary attributes or paths.
+func ValidAXIdentity(value string) bool {
+	return value != "" && len(value) <= 256 && strings.IndexFunc(value, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
+			r == '-' || r == '_' || r == '.' || r == ':')
+	}) == -1
+}
+
+func validAXReadContext(identity AXReadContext) bool {
+	return (identity.CallID == "" || ValidAXIdentity(identity.CallID)) &&
+		(identity.ShellID == "" || ValidAXIdentity(identity.ShellID))
+}
+
+// AXReadFailure joins a bounded failure sample back to the journal and rollout.
+type AXReadFailure struct {
+	AXReadContext
+	ID         string    `json:"id"`
+	Tool       string    `json:"tool"`
+	At         time.Time `json:"at"`
+	DurationNS int64     `json:"duration_ns"`
+	Class      string    `json:"class"`
+	ExitCode   *int      `json:"exit_code,omitempty"`
+}
+
+// AXReadMetrics counts only journal-observed invocations, not external reads.
+type AXReadMetrics struct {
+	State               string            `json:"state"`
+	Started             uint64            `json:"started"`
+	Completed           uint64            `json:"completed"`
+	Succeeded           uint64            `json:"succeeded"`
+	Failed              uint64            `json:"failed"`
+	Incomplete          uint64            `json:"incomplete"`
+	DurationNS          uint64            `json:"duration_ns"`
+	ByTool              map[string]uint64 `json:"by_tool"`
+	FailuresByClass     map[string]uint64 `json:"failures_by_class"`
+	Failures            []AXReadFailure   `json:"failures"`
+	DroppedFailures     uint64            `json:"dropped_failure_details"`
+	OtherThreadStarted  uint64            `json:"other_thread_started"`
+	UnattributedStarted uint64            `json:"unattributed_started"`
+	Coverage            string            `json:"coverage"`
+}
+
+func unavailableAXReads() AXReadMetrics {
+	return AXReadMetrics{State: "unavailable", ByTool: map[string]uint64{},
+		FailuresByClass: map[string]uint64{}, Failures: []AXReadFailure{},
+		Coverage: "instrumented private-reader invocations only; external reads and necessity are not measured"}
+}
+
+// AXReadJournal validates the complete journal before exposing any attribution.
+// An empty thread key represents explicitly unattributed runtime evidence.
+type AXReadJournal struct {
+	Threads map[string]AXReadMetrics
+}
+
+func (journal AXReadJournal) ForThread(threadID string) AXReadMetrics {
+	result := unavailableAXReads()
+	if threadID != "" {
+		if observed, ok := journal.Threads[threadID]; ok {
+			result = observed
+		}
 	}
+	for id, reads := range journal.Threads {
+		if id == "" {
+			result.UnattributedStarted += reads.Started
+		} else if id != threadID {
+			result.OtherThreadStarted += reads.Started
+		}
+	}
+	return result
+}
+
+// ReadAXReads retains the one-thread API, but no longer silently hides exclusions.
+func ReadAXReads(ctx context.Context, path, threadID string) (AXReadMetrics, error) {
+	journal, err := ReadAXReadJournal(ctx, path)
+	if err != nil {
+		return unavailableAXReads(), err
+	}
+	return journal.ForThread(threadID), nil
+}
+
+func ReadAXReadJournal(ctx context.Context, path string) (AXReadJournal, error) {
+	result := AXReadJournal{Threads: map[string]AXReadMetrics{}}
+	invalid := func(err error) (AXReadJournal, error) { return AXReadJournal{}, err }
 	if path == "" {
 		return result, nil
 	}
 	file, err := openAXEvidence(path, maxAXEvidenceBytes)
 	if err != nil {
-		return result, err
+		return invalid(err)
 	}
 	defer file.Close()
 	reader := &io.LimitedReader{R: file, N: maxAXEvidenceBytes + 1}
@@ -196,67 +300,101 @@ func ReadAXReads(ctx context.Context, path, threadID string) (AXReadMetrics, err
 	finished := make(map[string]bool)
 	for scanner.Scan() {
 		if err := ctx.Err(); err != nil {
-			return result, err
+			return invalid(err)
 		}
 		var event axReadEvent
 		decoder := json.NewDecoder(bytes.NewReader(scanner.Bytes()))
 		decoder.DisallowUnknownFields()
-		if decoder.Decode(&event) != nil || event.Schema != "mekugi.ax.read.v1" ||
-			event.ID == "" || !validAXReader(event.Tool) || event.At.IsZero() ||
-			(event.Phase != "start" && event.Phase != "finish") ||
-			(event.Phase == "start" && (event.DurationNS != nil || event.Succeeded != nil)) ||
-			(event.Phase == "finish" && (event.DurationNS == nil || event.Succeeded == nil || *event.DurationNS < 0)) {
-			return result, errors.New("invalid AX read event")
+		if decoder.Decode(&event) != nil || !validAXReadEvent(event) {
+			return invalid(errors.New("invalid AX read event"))
 		}
 		if decoder.Decode(new(any)) != io.EOF {
-			return result, errors.New("trailing AX read event data")
+			return invalid(errors.New("trailing AX read event data"))
 		}
-		matched := threadID != "" && event.ThreadID == threadID
-		if event.Phase == "start" && len(starts) >= 100000 {
-			return result, errors.New("AX read evidence exceeds invocation limit")
+		reads, ok := result.Threads[event.ThreadID]
+		if !ok {
+			reads = unavailableAXReads()
+			reads.State = "observed"
 		}
 		if event.Phase == "start" {
+			if len(starts) >= 100000 {
+				return invalid(errors.New("AX read evidence exceeds invocation limit"))
+			}
 			if _, exists := starts[event.ID]; exists {
-				return result, errors.New("duplicate AX read start")
+				return invalid(errors.New("duplicate AX read start"))
 			}
 			starts[event.ID] = event
-			if matched {
-				result.Started++
-				result.ByTool[event.Tool]++
-			}
+			reads.Started++
+			reads.ByTool[event.Tool]++
+			result.Threads[event.ThreadID] = reads
 			continue
 		}
 		start, exists := starts[event.ID]
 		// Wall timestamps may move backward; elapsed time is recorded monotonically.
-		if !exists || finished[event.ID] || start.ThreadID != event.ThreadID || start.Tool != event.Tool {
-			return result, errors.New("unpaired AX read finish")
+		if !exists || finished[event.ID] || start.ThreadID != event.ThreadID || start.Tool != event.Tool ||
+			start.Schema != event.Schema || start.AXReadContext != event.AXReadContext {
+			return invalid(errors.New("unpaired AX read finish"))
 		}
 		finished[event.ID] = true
-		if !matched {
-			continue
+		reads.Completed++
+		if uint64(*event.DurationNS) > ^uint64(0)-reads.DurationNS {
+			return invalid(errors.New("AX read durations overflow"))
 		}
-		result.Completed++
-		if uint64(*event.DurationNS) > ^uint64(0)-result.DurationNS {
-			return result, errors.New("AX read durations overflow")
-		}
-		result.DurationNS += uint64(*event.DurationNS)
+		reads.DurationNS += uint64(*event.DurationNS)
 		if *event.Succeeded {
-			result.Succeeded++
+			reads.Succeeded++
 		} else {
-			result.Failed++
+			reads.Failed++
+			class := event.FailureClass
+			if class == "" {
+				class = "unknown"
+			} // Legacy v1 evidence is not reclassified.
+			reads.FailuresByClass[class]++
+			if len(reads.Failures) < 256 {
+				reads.Failures = append(reads.Failures, AXReadFailure{AXReadContext: event.AXReadContext,
+					ID: event.ID, Tool: event.Tool, At: event.At, DurationNS: *event.DurationNS,
+					Class: class, ExitCode: event.ExitCode})
+			} else {
+				reads.DroppedFailures++
+			}
 		}
+		result.Threads[event.ThreadID] = reads
 	}
 	if err := scanner.Err(); err != nil {
-		return result, errors.New("AX read journal is unreadable or contains oversized events")
+		return invalid(errors.New("AX read journal is unreadable or contains oversized events"))
 	}
 	if reader.N == 0 {
-		return result, errors.New("AX read journal exceeds 64 MiB")
+		return invalid(errors.New("AX read journal exceeds 64 MiB"))
 	}
-	result.Incomplete = result.Started - result.Completed
-	if result.Started > 0 {
-		result.State = "observed"
+	for id, reads := range result.Threads {
+		reads.Incomplete = reads.Started - reads.Completed
+		result.Threads[id] = reads
 	}
 	return result, nil
+}
+
+func validAXReadEvent(event axReadEvent) bool {
+	if (event.Schema != "mekugi.ax.read.v1" && event.Schema != "mekugi.ax.read.v2") || event.ID == "" ||
+		!validAXReader(event.Tool) || event.At.IsZero() || !validAXReadContext(event.AXReadContext) ||
+		len(event.ThreadID) > 128 || strings.ContainsAny(event.ThreadID, "\r\n\x00") {
+		return false
+	}
+	if event.Schema == "mekugi.ax.read.v1" && (event.FailureClass != "" || event.ExitCode != nil || event.AXReadContext != (AXReadContext{})) {
+		return false
+	}
+	if event.Phase == "start" {
+		return event.DurationNS == nil && event.Succeeded == nil && event.FailureClass == "" && event.ExitCode == nil
+	}
+	if event.Phase != "finish" || event.DurationNS == nil || *event.DurationNS < 0 || event.Succeeded == nil {
+		return false
+	}
+	if event.ExitCode != nil && (*event.ExitCode < 0 || *event.ExitCode > 255 || *event.Succeeded && *event.ExitCode != 0) {
+		return false
+	}
+	if event.Schema == "mekugi.ax.read.v1" {
+		return true
+	}
+	return *event.Succeeded && event.FailureClass == "" || !*event.Succeeded && validAXFailureClass(event.FailureClass)
 }
 
 func openAXEvidence(path string, limit int64) (*os.File, error) {
