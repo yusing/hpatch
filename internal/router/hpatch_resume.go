@@ -30,13 +30,16 @@ type hpatchResumeSegment struct {
 }
 
 type hpatchResumeState struct {
-	Handle    string                     `json:"handle"`
-	Root      string                     `json:"root"`
-	Source    string                     `json:"source"`
-	Segments  []hpatchResumeSegment      `json:"segments"`
-	ExpiresAt time.Time                  `json:"expires_at"`
-	Revision  uint64                     `json:"revision"`
-	Progress  map[string]json.RawMessage `json:"progress"`
+	ChangeID        string                     `json:"change_id,omitempty"`
+	CorrelationID   string                     `json:"correlation_id,omitempty"`
+	ReplayDirectory string                     `json:"replay_directory,omitempty"`
+	Handle          string                     `json:"handle"`
+	Root            string                     `json:"root"`
+	Source          string                     `json:"source"`
+	Segments        []hpatchResumeSegment      `json:"segments"`
+	ExpiresAt       time.Time                  `json:"expires_at"`
+	Revision        uint64                     `json:"revision"`
+	Progress        map[string]json.RawMessage `json:"progress"`
 }
 
 func mixedArtifactName(handle string) (string, error) {
@@ -49,18 +52,22 @@ func mixedArtifactName(handle string) (string, error) {
 	return "mixed-" + handle, nil
 }
 
-func (t *mekugiResponseTransform) retainMixedScript(source string, segments []hpatchResumeSegment) (hpatchResumeState, error) {
+func (t *mekugiResponseTransform) retainMixedScript(changeID, correlationID, source string, segments []hpatchResumeSegment) (hpatchResumeState, error) {
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return hpatchResumeState{}, err
 	}
 	state := hpatchResumeState{
+		ChangeID: changeID, CorrelationID: correlationID,
 		Handle: "M" + hex.EncodeToString(nonce[:]), Root: t.directory, ExpiresAt: time.Now().Add(shellArtifactTTL),
 		Source: source, Segments: segments,
 		Progress: map[string]json.RawMessage{
 			"index": mustMarshalJSON(0), "results": mustMarshalJSON([]any{}),
 			"operations": mustMarshalJSON([]any{}),
 		},
+	}
+	if t.proxy.replayStore != nil {
+		state.ReplayDirectory = t.proxy.replayStore.directory
 	}
 	name, _ := mixedArtifactName(state.Handle)
 	if _, _, ok := t.proxy.retainShell(t.shellDirectory, name, string(mustMarshalJSON(state))); !ok {
@@ -73,7 +80,7 @@ func (t *mekugiResponseTransform) translateMixedResume(callID, input string, ups
 	history := mekugiHistory{toolName: mekugiToolName, script: input, root: t.directory,
 		carrierName: t.codeModeToolName, upstreamItem: maps.Clone(upstream)}
 	reject := func(err error) (mekugiHistory, error) {
-		history.translationError = "hpatch resume: " + err.Error()
+		history.translationError = changeNotice(history.changeID) + "hpatch resume: " + err.Error()
 		t.recordLocal(callID, &history)
 		return history, nil
 	}
@@ -88,9 +95,6 @@ func (t *mekugiResponseTransform) translateMixedResume(callID, input string, ups
 	action := ""
 	if len(fields) == 3 {
 		action = fields[2]
-		if action != "retry" && action != "accept" && action != "repair" {
-			return reject(errors.New("resume action must be retry, accept, or repair"))
-		}
 	}
 	name, err := mixedArtifactName(fields[1])
 	if err != nil {
@@ -110,6 +114,11 @@ func (t *mekugiResponseTransform) translateMixedResume(callID, input string, ups
 	if err := json.NewDecoder(io.LimitReader(file, maxHpatchCheckpointBytes+1)).Decode(&state); err != nil ||
 		state.Handle != fields[1] || state.Root != t.directory || !time.Now().Before(state.ExpiresAt) {
 		return reject(errors.New("resume handle does not identify valid work in this workspace"))
+	}
+	history.changeID, history.correlationID = state.ChangeID, state.CorrelationID
+	history.attempt = 1
+	if action != "" && action != "retry" && action != "accept" && action != "repair" {
+		return reject(errors.New("resume action must be retry, accept, or repair"))
 	}
 	var changed *hpatchResumeSegment
 	if replacement != "" {

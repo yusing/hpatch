@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"maps"
 	"strings"
 
@@ -12,37 +11,38 @@ import (
 	"github.com/yusing/mekugi/internal/hpatchsyntax"
 )
 
-// This private worker only translates. Codex still authorizes and applies the
-// returned patch, after every preceding host execution has finished.
-func runHpatchTranslation(ctx context.Context, directory, source string, stdout io.Writer) error {
+type hpatchTranslation struct {
+	Patch      string `json:"patch"`
+	Report     string `json:"report"`
+	Diagnostic string `json:"diagnostic"`
+	AttemptID  string `json:"attempt_id,omitempty"`
+}
+
+func translateHpatchSegment(ctx context.Context, directory, source string) (hpatchTranslation, []mekugi.ReviewFile, error) {
+	result := hpatchTranslation{}
 	if err := ctx.Err(); err != nil {
-		return err
+		return result, nil, err
 	}
 	if len(source) > maxMekugiScriptBytes {
-		return fmt.Errorf("HPATCH segment exceeds %d bytes", maxMekugiScriptBytes)
+		return result, nil, fmt.Errorf("HPATCH segment exceeds %d bytes", maxMekugiScriptBytes)
 	}
 	translated, err := mekugi.TranslateForHostAt(ctx, directory, source, "")
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return result, nil, ctx.Err()
 	}
-	result := struct {
-		Patch      string `json:"patch"`
-		Report     string `json:"report"`
-		Diagnostic string `json:"diagnostic"`
-	}{}
 	if err != nil {
 		result.Diagnostic = translated.Diagnostic
 		if result.Diagnostic == "" {
 			result.Diagnostic = err.Error()
 		}
-	} else {
-		if len(translated.Patch) > maxMekugiPatchBytes {
-			return fmt.Errorf("HPATCH translation exceeds %d bytes", maxMekugiPatchBytes)
-		}
-		result.Patch = string(translated.Patch)
-		result.Report = mekugiReport(translated.Report, translated.Diagnostic)
+		return result, nil, nil
 	}
-	return json.NewEncoder(stdout).Encode(result)
+	if len(translated.Patch) > maxMekugiPatchBytes {
+		return result, nil, fmt.Errorf("HPATCH translation exceeds %d bytes", maxMekugiPatchBytes)
+	}
+	result.Patch = string(translated.Patch)
+	result.Report = mekugiReport(translated.Report, translated.Diagnostic)
+	return result, translated.ReviewFiles, nil
 }
 
 func (t *mekugiResponseTransform) translateMixedScript(callID, input string, parts []hpatchsyntax.ScriptSegment, splitErr error, upstreamItem map[string]json.RawMessage) (mekugiHistory, error) {
@@ -50,21 +50,27 @@ func (t *mekugiResponseTransform) translateMixedScript(callID, input string, par
 		toolName: mekugiToolName, script: input, root: t.directory,
 		carrierName: t.codeModeToolName, upstreamItem: maps.Clone(upstreamItem),
 	}
+	changeID, err := t.proxy.replayStore.reserveChange(t.ctx, t.directory, t.shellThreadID, callID)
+	if err != nil {
+		return mekugiHistory{}, err
+	}
+	history.changeID = changeID
+	history.correlationID, history.attempt = callID, 1
 	var segments []hpatchResumeSegment
-	err := splitErr
+	err = splitErr
 	if err == nil {
 		segments, err = t.prepareMixedSegments(parts)
 	}
 	if err == nil {
 		var state hpatchResumeState
-		state, err = t.retainMixedScript(input, segments)
+		state, err = t.retainMixedScript(history.changeID, callID, input, segments)
 		if err == nil {
 			history.carrierKind = codeModeCarrierCustom
 			history.carrierPayload = t.mixedCarrier(state, "", nil)
 		}
 	}
 	if err != nil {
-		history.translationError = "hpatch: " + err.Error()
+		history.translationError = changeNotice(changeID) + "hpatch: " + err.Error()
 	}
 	t.recordLocal(callID, &history)
 	return history, nil
@@ -106,6 +112,7 @@ if (edit.diagnostic) { current.status = 'rejected'; current.diagnostic = edit.di
 output = ''; last = {output: '', exit_code: 0};
 if (edit.patch) await tools.apply_patch(edit.patch);
 current.report = edit.report;
+if (edit.attempt_id) await controlRequest({operation: 'confirm', attempt_id: edit.attempt_id});
 `)
 		}
 		segment.Program = program.String()

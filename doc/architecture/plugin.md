@@ -252,6 +252,11 @@ native output truncation. The worker bounds source bytes and expires abandoned c
 It reuses `TranslateForHostAt` against the current filesystem and
 returns structured patch/report or rejection data; it never applies a workspace
 patch. The carrier validates that complete result, then calls Codex's patch tool.
+`hpatch_changes.go` publishes each runtime evaluation through the shared replay/change
+store before returning its patch. The retained control state pins the original change
+identity and store directory. The carrier reports successful application back through
+that bound channel; receipts use the existing change-confirmation owner. Plan and
+continuation inputs remain distinct from immutable segment evaluations.
 Shell segments reuse existing shell translation, quoting, execution, and native
 continuation handling. The original mixed call and exact carrier remain ordinary
 replay history, but runtime segment failures never enter edit-only recovery.

@@ -165,7 +165,7 @@ func recoveryHistoryOf(histories iter.Seq[mekugiHistory]) (mekugiHistory, error)
 		return mekugiHistory{}, errors.New("no rejected HPATCH script to recover; send a complete script")
 	}
 	if _, mixed, _ := hpatchsyntax.SplitShell(latest.script); mixed || strings.HasPrefix(strings.TrimSpace(latest.script), "resume ") {
-		return mekugiHistory{}, errors.New("mixed HPATCH/shell work uses retained continuation, not edit-only recovery; inspect its checkpoints, current files, and known sessions, then use hpatch with resume HANDLE; successful preflight does not confirm execution; never resend the complete original script")
+		return latest, errors.New("mixed HPATCH/shell work uses retained continuation, not edit-only recovery; inspect its checkpoints, current files, and known sessions, then use hpatch with resume HANDLE; successful preflight does not confirm execution; never resend the complete original script")
 	}
 	if latest.translationError == "" {
 		return latest, errors.New("the most recent mekugi call succeeded; recovery edits require a rejected script, so send a complete script")

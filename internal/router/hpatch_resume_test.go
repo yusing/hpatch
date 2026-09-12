@@ -11,7 +11,7 @@ import (
 
 func TestHpatchCheckpointRevisionAndExpiry(t *testing.T) {
 	transform, _ := mixedTestTransform(t)
-	state, err := transform.retainMixedScript("shell true", []hpatchResumeSegment{
+	state, err := transform.retainMixedScript("", "", "shell true", []hpatchResumeSegment{
 		{Source: "true", Program: "", Line: 1, Kind: "shell"},
 	})
 	if err != nil {
@@ -81,7 +81,7 @@ func TestHpatchCheckpointRevisionAndExpiry(t *testing.T) {
 
 func TestHpatchResumeThreadAndWorkspaceIsolation(t *testing.T) {
 	transform, _ := mixedTestTransform(t)
-	state, err := transform.retainMixedScript("shell true", []hpatchResumeSegment{
+	state, err := transform.retainMixedScript("", "", "shell true", []hpatchResumeSegment{
 		{Source: "true", Program: "", Line: 1, Kind: "shell"},
 	})
 	if err != nil {

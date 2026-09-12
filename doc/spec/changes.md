@@ -16,6 +16,16 @@ A fork continuing an inherited recovery retains its original ID. Separate new ca
 in the fork use its own thread stream. Concurrent branches under one ID retain every
 outcome rather than overwriting an earlier successful diff.
 
+Mixed HPATCH/shell results expose the same identity as a structured `change_id`;
+edit reports and diagnostics retain the compact `change` line. The original plan,
+valid-handle continuation inputs, and every runtime edit evaluation share that ID.
+Plans are labeled `execution plan (see segment attempts)`, not applied changes.
+Each edit evaluation publishes immutable evidence before returning its patch, and
+the carrier confirms only after the host reports successful application. An interrupted
+or failed application remains unconfirmed; explicit `accept` does not invent a receipt.
+Repairs and retries retain each evaluation separately, without including shell effects.
+Durable review evidence survives expiration of the temporary continuation handle.
+
 The shell-private command is:
 
 ```text

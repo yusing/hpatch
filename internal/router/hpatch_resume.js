@@ -293,7 +293,7 @@ try {
     }
   }
   const results = current ? [...progress.results, current] : progress.results;
-  text(JSON.stringify({results, resume_handle: state.handle, expires_at: state.expires_at, sequence: {
+  text(JSON.stringify({change_id: state.change_id, results, resume_handle: state.handle, expires_at: state.expires_at, sequence: {
     segment_count: segments.length, started_segments: results.length,
     not_started_segments: segments.length - results.length, stopped_reason: stoppedReason
   }}));

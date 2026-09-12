@@ -24,7 +24,7 @@ func TestHpatchTranslationRawStdin(t *testing.T) {
 	// A large line and control/Unicode bytes exercise PTY line limits, echo,
 	// byte counts, and input transformation, not merely a pipe substitute.
 	transform, _ := mixedTestTransform(t)
-	state, err := transform.retainMixedScript("shell true", nil)
+	state, err := transform.retainMixedScript("", "", "shell true", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestHpatchTranslationCancelledRawStdin(t *testing.T) {
 		t.Fatal(err)
 	}
 	transform, _ := mixedTestTransform(t)
-	if _, err := transform.retainMixedScript("shell true", nil); err != nil {
+	if _, err := transform.retainMixedScript("", "", "shell true", nil); err != nil {
 		t.Fatal(err)
 	}
 	command := exec.CommandContext(ctx, executable, "-test.run=^TestHpatchMixedProcess$", "--")

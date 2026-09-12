@@ -82,12 +82,12 @@ func readHpatchControlReply(t *testing.T, encoder *json.Encoder, decoder *json.D
 
 func TestHpatchControlThreadBindingAndIsolation(t *testing.T) {
 	transform, _ := mixedTestTransform(t)
-	first, err := transform.retainMixedScript("shell true", nil)
+	first, err := transform.retainMixedScript("", "", "shell true", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	transform.directory = t.TempDir()
-	second, err := transform.retainMixedScript("shell true", nil)
+	second, err := transform.retainMixedScript("", "", "shell true", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestHpatchControlThreadBindingAndIsolation(t *testing.T) {
 
 func TestHpatchControlCheckpointAndStaleRevision(t *testing.T) {
 	transform, _ := mixedTestTransform(t)
-	state, err := transform.retainMixedScript("shell true", nil)
+	state, err := transform.retainMixedScript("", "", "shell true", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ tools.exec_command = async args => {
 
 func TestHpatchControlCloseDuringChunkedReply(t *testing.T) {
 	transform, _ := mixedTestTransform(t)
-	state, err := transform.retainMixedScript("shell true", nil)
+	state, err := transform.retainMixedScript("", "", "shell true", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -328,6 +328,8 @@ and shell execution.
 The result shows completed, failed, and unstarted segments. Execution stops on
 failure without rolling back earlier effects. Checkpoints preserve progress and
 known native session handles even when a Code Mode cell is terminated.
+The result's `change_id` groups workspace edit diffs and resumed repairs for
+`hchanges read ID`. Shell effects are not included in those diffs.
 
 Mixed execution opens one argument-free `shell` control channel. Actual shell commands
 keep their normal display; private checkpoint and translation data travel through stdin,

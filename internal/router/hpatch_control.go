@@ -2,7 +2,6 @@ package router
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,6 +19,7 @@ import (
 const hpatchTranslationReady = "HPATCH-READY\n"
 
 type hpatchControlRequest struct {
+	AttemptID string          `json:"attempt_id"`
 	Operation string          `json:"operation"`
 	Handle    string          `json:"handle"`
 	Revision  uint64          `json:"revision"`
@@ -135,11 +135,16 @@ func runHpatchControl(ctx context.Context, stdin *os.File, stdout io.Writer) err
 				}
 				response = map[string]any{"revision": request.Revision + 1}
 			case "translate":
-				var output bytes.Buffer
-				if err := runHpatchTranslation(ctx, bound.Root, request.Source, &output); err != nil {
+				translated, err := bound.translateTracked(ctx, request.Source)
+				if err != nil {
 					return err
 				}
-				response = json.RawMessage(bytes.TrimSpace(output.Bytes()))
+				response = translated
+			case "confirm":
+				if err := bound.confirmTracked(ctx, request.AttemptID); err != nil {
+					return err
+				}
+				response = map[string]any{"confirmed": true}
 			default:
 				return fmt.Errorf("invalid control operation")
 			}

@@ -17,7 +17,18 @@ import (
 	"github.com/yusing/mekugi/internal/patchtest"
 )
 
+// This private worker only translates. Codex still authorizes and applies the
+// returned patch, after every preceding host execution has finished.
+func runHpatchTranslation(ctx context.Context, directory, source string, stdout io.Writer) error {
+	result, _, err := translateHpatchSegment(ctx, directory, source)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(stdout).Encode(result)
+}
+
 type mixedScriptResult struct {
+	ChangeID     string `json:"change_id"`
 	ResumeHandle string `json:"resume_handle"`
 	Results      []struct {
 		Repair     bool   `json:"repair"`
@@ -647,7 +658,7 @@ func TestHpatchRepairPreservesReplacement(t *testing.T) {
 
 func TestHpatchRepairPreflight(t *testing.T) {
 	transform, _ := mixedTestTransform(t)
-	state, err := transform.retainMixedScript("shell false", []hpatchResumeSegment{{Kind: "shell", Source: "false", Line: 1}})
+	state, err := transform.retainMixedScript("", "", "shell false", []hpatchResumeSegment{{Kind: "shell", Source: "false", Line: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
