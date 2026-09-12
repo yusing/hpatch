@@ -12,6 +12,9 @@ type tokenCounts struct {
 	UncachedInputTokens uint64
 	OutputTokens        uint64
 	ReasoningTokens     uint64
+
+	// Preserve inconsistent raw categories before normalizing input for existing consumers.
+	Inconsistent bool
 }
 
 type requestOutcome uint8
@@ -93,6 +96,7 @@ func usageFromResponsePayload(body []byte, streamEvent bool) (tokenCounts, bool)
 		InputTokens:         usage.InputTokens,
 		UncachedInputTokens: usage.InputTokens - min(usage.InputTokens, usage.InputDetails.CachedTokens),
 		OutputTokens:        usage.OutputTokens,
+		Inconsistent:        usage.InputDetails.CachedTokens > usage.InputTokens || usage.OutputDetails.ReasoningTokens > usage.OutputTokens,
 		ReasoningTokens:     usage.OutputDetails.ReasoningTokens,
 	}, true
 }

@@ -131,7 +131,7 @@ func subagentResponse(item map[string]json.RawMessage) (text, sender string, ok 
 }
 
 // tokenUsageCommentary reports usage only alongside a completed substantive answer.
-func tokenUsageCommentary(response []byte, counts tokenCounts, observed bool, terminalStatus string) map[string]json.RawMessage {
+func tokenUsageCommentary(response []byte, counts tokenUsageReport, observed bool, terminalStatus string) map[string]json.RawMessage {
 	var body struct {
 		Output []map[string]json.RawMessage `json:"output"`
 	}
@@ -210,7 +210,7 @@ func blocksTokenUsage(item map[string]json.RawMessage) bool {
 	return false
 }
 
-func formatTokenUsageCommentary(response []byte, counts tokenCounts, observed bool, terminalStatus string, substantive bool) map[string]json.RawMessage {
+func formatTokenUsageCommentary(response []byte, counts tokenUsageReport, observed bool, terminalStatus string, substantive bool) map[string]json.RawMessage {
 
 	if !observed {
 		return nil
@@ -234,20 +234,13 @@ func formatTokenUsageCommentary(response []byte, counts tokenCounts, observed bo
 		return nil
 	}
 
-	cachedInput := counts.InputTokens - counts.UncachedInputTokens
-	text := fmt.Sprintf(
-		"Tokens:\nInput: `%d`\nCached input: `%d`\nOutput: `%d`\nReasoning: `%d`",
-		counts.InputTokens,
-		cachedInput,
-		counts.OutputTokens,
-		counts.ReasoningTokens,
-	)
+	text := formatTokenUsageReport(counts)
 	id := subagentCommentaryMessageID("usage\x00" + identity.ID)
 	return assistantCommentaryMessage(id, text)
 }
 
 // responseWithTokenUsageCommentary extracts a response object and token usage commentary.
-func responseWithTokenUsageCommentary(response []byte, counts tokenCounts, usageObserved bool, terminalStatus string) (
+func responseWithTokenUsageCommentary(response []byte, counts tokenUsageReport, usageObserved bool, terminalStatus string) (
 	map[string]json.RawMessage,
 	map[string]json.RawMessage,
 	error,

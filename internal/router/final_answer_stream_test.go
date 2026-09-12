@@ -85,7 +85,7 @@ func TestFinalAnswerStreamCodexCompletion(t *testing.T) {
 				if len(events) != len(answer)+2 {
 					t.Fatalf("events = %s", output.String())
 				}
-				if text := commentaryEventText(t, events[0]); text != "Tokens:\nInput: `20`\nCached input: `12`\nOutput: `5`\nReasoning: `3`" {
+				if text := commentaryEventText(t, events[0]); !strings.HasPrefix(text, testTokenUsageTable) {
 					t.Fatalf("usage = %q", text)
 				}
 				for i, original := range answer {
@@ -340,7 +340,7 @@ func TestFinalAnswerStreamExecuteRequest(t *testing.T) {
 				t.Fatal("terminal changed")
 			}
 			counts, available := proxy.usage.snapshot("thread-1")
-			if !available || counts != (tokenCounts{InputTokens: 20, UncachedInputTokens: 8, OutputTokens: 5, ReasoningTokens: 3}) {
+			if !available || counts.tokenCounts != (tokenCounts{InputTokens: 20, UncachedInputTokens: 8, OutputTokens: 5, ReasoningTokens: 3}) {
 				t.Fatalf("provider usage changed: %+v, available=%v", counts, available)
 			}
 		})

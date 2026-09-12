@@ -232,9 +232,14 @@ tool outputs, and inter-agent messages. A response already accompanied by its de
 commentary is not projected again.
 
 A completed root-agent or subagent final answer with provider usage includes one commentary
-message before the provider-authored final answer. It uses a `Tokens:` heading followed by separate
-`Input:`, `Cached input:`, `Output:`, and `Reasoning:` lines, with each numeric value formatted
-as inline code. Labels are written in full, not abbreviated. Intermediate tool-call responses, commentary-only responses,
+message before the provider-authored final answer. It uses a `Tokens:` heading and one compact
+Markdown table with `Category`, `Tokens`, and `API USD` columns. Rows use full labels:
+`Input`, `Cached input`, `Uncached input`, `Output`, `Reasoning`, and `Total`.
+Counts use decimal thousands separators. Costs use four decimal places for cached input,
+uncached input, output, and total; input and reasoning have `—` cost cells because they overlap
+other rows. The total token cell is `—`. One short footer explains thread scope, overlapping
+categories, and reference API rather than subscription pricing.
+Intermediate tool-call responses, commentary-only responses,
 and failed or incomplete responses do not report tokens. A final answer uses the `final_answer`
 phase, or an unphased assistant answer for older clients, without accompanying client-dispatched
 tool calls. Completed provider-executed tools may accompany the final answer.
@@ -245,6 +250,18 @@ routing-session changes do not reset totals. Repeated terminal observations with
 count once. Totals remain in memory until router shutdown, with at most 256 tracked threads;
 capacity exhaustion preserves existing totals and suppresses new-thread reports. Arithmetic
 overflow suppresses reporting for the affected thread rather than showing a partial total.
+
+Cost estimates use the built-in session-usage reference list API prices, not subscription
+rates or live billing quotes. No pricing fetch or terminal renderer is required: Codex renders
+the Markdown tables. Each response is priced using its request model and input size before
+accumulation, so model switches and the 272,000-input-token long-context tier do not reprice
+earlier responses. Cached input is subtracted from ordinary input; reasoning is included in
+output and MUST NOT be charged again. Unknown model pricing or inconsistent usage makes
+all four billable cost cells `n/a`, without hiding token totals or presenting a partial
+cost as complete. The report explains its thread scope, overlapping token categories,
+reference-price source, and any unavailable estimate. Root reports do not sum child threads.
+This is auxiliary commentary accounting, not a change to capture-owned metrics exports.
+
 For root and subagent streams, final-answer item events are buffered until the terminal.
 A successful completion emits usage as `response.output_item.done`, then the unchanged buffered
 answer events, then the terminal event. Eligibility comes from streamed completed items, even
@@ -323,8 +340,11 @@ Acceptance:
 5. Router-authored messages are removed from every later provider request and are not repeated when
    the matching message is already present in Codex history.
 6. A completed root-agent or subagent final answer with provider usage reports input, cached input,
-   output, and reasoning tokens exactly once before provider-authored final-answer output, using full labels
-   on separate lines and inline-code numeric values. Intermediate tool calls and commentary,
+   uncached input, output, and reasoning tokens exactly once before provider-authored final-answer
+   output, using full labels in one compact table combining tokens and estimated API costs.
+   Costs use per-response models and context tiers, do not double-charge cached input or reasoning,
+   remain cumulative across compaction, and show `n/a` for a thread containing unpriced usage.
+   Intermediate tool calls and commentary,
    failed responses, and incomplete responses remain silent. The terminal substantive result,
    provider usage object, and captured metrics remain unchanged.
 7. Extensible ordinary function tools accept optional authored commentary, while strict,

@@ -105,16 +105,22 @@ turn earlier, previously undisplayed replies into fresh activity. Deterministic 
 local commentary on replay.
 
 The terminal response transformer also owns one user-only commentary projection of the provider's
-input, cached-input, output, and reasoning usage when a completed root or subagent response
-contains a final assistant answer and no client-dispatched tool calls. Rendering uses full metadata-style labels
-on separate lines with inline-code numeric values. Intermediate commentary and failed or
+input, cached-input, uncached-input, output, and reasoning usage when a completed root or subagent response
+contains a final assistant answer and no client-dispatched tool calls. `token_cost.go` owns the
+built-in reference prices, per-response estimates, and the compact Markdown token/cost table.
+Intermediate commentary and failed or
 incomplete responses do not trigger usage commentary. Final-answer phase identifies the answer;
 unphased assistant answers support older clients. Counts from the shared terminal-payload parse
 accumulate by stable originating thread, independently of routing-session and compaction lifetimes.
 Root and child totals remain separate, and repeated terminal observations within a request count once.
-`thread_usage.go` owns bounded, non-evicting totals until router shutdown; ancestry and author
-metadata do not own token attribution. The
-projection precedes the provider-authored final answer so it cannot replace a collaboration result. The
+`thread_usage.go` owns bounded, non-evicting token and cost totals until router shutdown;
+ancestry and author metadata do not own attribution. Each observation retains its request model,
+and its cost is calculated before accumulation using that response's input tier.
+Unknown prices or inconsistent raw usage categories make the cumulative cost unavailable
+without suppressing token counts. The shared usage parse preserves an inconsistency flag
+before normalizing counts, leaving capture-owned counters unchanged.
+Pricing does not read rollouts, fetch a catalog, or change capture-owned metric calculations.
+The projection precedes the provider-authored final answer so it cannot replace a collaboration result. The
 streaming path buffers final-answer events in `final_answer_stream.go`, while tools and progress
 continue streaming. Completed streamed items determine eligibility independently of the terminal
 output snapshot. At successful completion, standalone usage precedes the unchanged buffered answer

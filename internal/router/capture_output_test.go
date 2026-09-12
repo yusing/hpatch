@@ -97,7 +97,7 @@ func TestCaptureModelOutputThroughRouterCommentary(t *testing.T) {
 			}))
 			front := httptest.NewRecorder()
 			handler.ServeHTTP(front, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"model"}`)))
-			if strings.Contains(front.Body.String(), "Input: `20`") || !strings.Contains(front.Body.String(), "Tokens: this text was authored") {
+			if strings.Contains(front.Body.String(), "| Input | 20 |") || !strings.Contains(front.Body.String(), "Tokens: this text was authored") {
 				t.Fatalf("commentary delivery changed: %s", front.Body.String())
 			}
 			metrics := httptest.NewRecorder()

@@ -12,6 +12,7 @@ type threadUsage struct {
 }
 
 type threadUsageTotal struct {
+	cost     tokenCost
 	counts   tokenCounts
 	complete bool
 }
@@ -20,6 +21,7 @@ type threadUsageObservation struct {
 	once       sync.Once
 	totals     *threadUsage
 	conflicted bool
+	model      string
 	thread     string
 }
 
@@ -29,18 +31,18 @@ func newThreadUsage() *threadUsage {
 
 // Transport identity owns usage accounting, not auxiliary author or ancestry
 // metadata. A contradictory explicit thread ID makes lifetime totals incomplete.
-func (u *threadUsage) observation(thread, metadataThread string) *threadUsageObservation {
-	return &threadUsageObservation{totals: u, thread: thread, conflicted: metadataThread != "" && metadataThread != thread}
+func (u *threadUsage) observation(thread, metadataThread, model string) *threadUsageObservation {
+	return &threadUsageObservation{totals: u, thread: thread, model: model, conflicted: metadataThread != "" && metadataThread != thread}
 }
 
 func (o *threadUsageObservation) observe(counts tokenCounts) {
 	if o == nil {
 		return
 	}
-	o.once.Do(func() { o.totals.add(o.thread, counts, o.conflicted) })
+	o.once.Do(func() { o.totals.add(o.thread, o.model, counts, o.conflicted) })
 }
 
-func (u *threadUsage) add(thread string, counts tokenCounts, conflicted bool) {
+func (u *threadUsage) add(thread, model string, counts tokenCounts, conflicted bool) {
 	if u == nil || thread == "" || len(thread) > maxCommentaryPublicationBytes {
 		return
 	}
@@ -54,7 +56,7 @@ func (u *threadUsage) add(thread string, counts tokenCounts, conflicted bool) {
 		if len(u.threads) >= maxCommentaryRoutes {
 			return
 		}
-		total = &threadUsageTotal{complete: true}
+		total = &threadUsageTotal{complete: true, cost: tokenCost{known: true}}
 		u.threads[thread] = total
 	}
 	if conflicted {
@@ -79,19 +81,21 @@ func (u *threadUsage) add(thread string, counts tokenCounts, conflicted bool) {
 		}
 		*pair.dst += pair.add
 	}
+	sum.Inconsistent = sum.Inconsistent || counts.Inconsistent
+	total.cost.add(estimateTokenCost(model, counts))
 	total.counts = sum
 }
 
-func (u *threadUsage) snapshot(thread string) (tokenCounts, bool) {
+func (u *threadUsage) snapshot(thread string) (tokenUsageReport, bool) {
 	if u == nil {
-		return tokenCounts{}, false
+		return tokenUsageReport{}, false
 	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if total := u.threads[thread]; !u.closed && total != nil && total.complete {
-		return total.counts, true
+		return tokenUsageReport{tokenCounts: total.counts, cost: total.cost}, true
 	}
-	return tokenCounts{}, false
+	return tokenUsageReport{}, false
 }
 
 func (u *threadUsage) close() {
@@ -104,9 +108,9 @@ func (u *threadUsage) close() {
 	clear(u.threads)
 }
 
-func (t *mekugiResponseTransform) threadUsageCounts() (tokenCounts, bool) {
+func (t *mekugiResponseTransform) threadUsageCounts() (tokenUsageReport, bool) {
 	if t.usageTracker == nil {
-		return tokenCounts{}, false
+		return tokenUsageReport{}, false
 	}
 	return t.usageTracker.totals.snapshot(t.usageTracker.thread)
 }

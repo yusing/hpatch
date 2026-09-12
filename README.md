@@ -36,9 +36,12 @@ command sessions, and patch diff UI. No fork, no config edits, no daemon.
     labelled as activity since the last update. This is not a continuous live
     feed during native waits, and requires no Codex panel or client patch.
 - **See token usage for the main agent and subagents.**
-  - Final answers with provider usage show input, cached-input, output, and reasoning
-    token totals accumulated for that agent's thread during the router's lifetime, including across compaction.
-    Intermediate tool calls do not produce token notices.
+  - Final answers with provider usage show one compact token and estimated API-cost table,
+    accumulated for that agent's thread during the router's lifetime, including across compaction.
+    Input, cached input, uncached input, output, and reasoning are shown separately.
+    Costs use built-in reference list API prices, not subscription rates, and show
+    `n/a` if any response's model has no known price. Model changes and long-context
+    rates are handled per response. Intermediate tool calls do not produce notices.
   - Router notices are removed from later model requests, so the display does
     not add repeated context. See [inline commentary](doc/spec/commentary.md).
 - **Inspect a session in your browser.**

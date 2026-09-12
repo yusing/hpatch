@@ -51,7 +51,7 @@ func TestThreadUsageIgnoresMalformedAuxiliaryIdentity(t *testing.T) {
 						t.Fatal(err)
 					}
 					got, valid := proxy.usage.snapshot("stable-thread")
-					if !valid || got != (tokenCounts{InputTokens: 12, UncachedInputTokens: 7, OutputTokens: 7, ReasoningTokens: 3}) {
+					if !valid || got.tokenCounts != (tokenCounts{InputTokens: 12, UncachedInputTokens: 7, OutputTokens: 7, ReasoningTokens: 3}) {
 						t.Fatal("auxiliary identity lost authoritative thread usage", got, valid)
 					}
 				})
@@ -61,10 +61,10 @@ func TestThreadUsageIgnoresMalformedAuxiliaryIdentity(t *testing.T) {
 }
 func TestThreadUsageConflictDoesNotResumeWithPartialTotals(t *testing.T) {
 	totals := newThreadUsage()
-	totals.observation("transport", "").observe(tokenCounts{InputTokens: 10})
-	totals.observation("other", "").observe(tokenCounts{InputTokens: 20})
-	totals.observation("transport", "other").observe(tokenCounts{InputTokens: 30})
-	totals.observation("transport", "transport").observe(tokenCounts{InputTokens: 40})
+	totals.observation("transport", "", "gpt-5.5").observe(tokenCounts{InputTokens: 10})
+	totals.observation("other", "", "gpt-5.5").observe(tokenCounts{InputTokens: 20})
+	totals.observation("transport", "other", "gpt-5.5").observe(tokenCounts{InputTokens: 30})
+	totals.observation("transport", "transport", "gpt-5.5").observe(tokenCounts{InputTokens: 40})
 	if _, valid := totals.snapshot("transport"); valid {
 		t.Fatal("conflicting identity later reported a partial lifetime total")
 	}

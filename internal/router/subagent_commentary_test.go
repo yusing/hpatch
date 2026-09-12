@@ -93,9 +93,9 @@ func TestTokenUsageCommentaryUsesSharedObservationWithoutReplacingTerminalMessag
 			"output_tokens_details": map[string]any{"reasoning_tokens": 3},
 		},
 	})
-	response, _, err := responseWithTokenUsageCommentary(payload, tokenCounts{
+	response, _, err := responseWithTokenUsageCommentary(payload, tokenUsageReport{tokenCounts: tokenCounts{
 		InputTokens: 20, UncachedInputTokens: 8, OutputTokens: 5, ReasoningTokens: 3,
-	}, true, "")
+	}}, true, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestTokenUsageCommentaryUsesSharedObservationWithoutReplacingTerminalMessag
 	if err := json.Unmarshal(response["output"], &output); err != nil || len(output) != 2 {
 		t.Fatalf("output = %s, error = %v", response["output"], err)
 	}
-	if text := commentaryText(t, output[0]); text != "Tokens:\nInput: `20`\nCached input: `12`\nOutput: `5`\nReasoning: `3`" {
+	if text := commentaryText(t, output[0]); !strings.HasPrefix(text, testTokenUsageTable) {
 		t.Fatalf("usage commentary = %q", text)
 	}
 	if jsonString(output[1], "id") != "msg-final" {

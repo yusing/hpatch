@@ -717,7 +717,7 @@ func executeRequest(
 	}
 	var untransformedUsage *threadUsageObservation
 	if mekugiCalls != nil && metadataValid {
-		untransformedUsage = mekugiCalls.usage.observation(threadID, metadata.ThreadID)
+		untransformedUsage = mekugiCalls.usage.observation(threadID, metadata.ThreadID, parsedRequest.model())
 	}
 	observeUsage := func(counts tokenCounts) {
 		finalization.observation.usageCounts = counts

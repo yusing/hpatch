@@ -471,7 +471,7 @@ func (p *mekugiProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		historySessionID: historySessionID,
 		visible:          visible,
 		sessionActive:    true,
-		usageTracker:     p.usage.observation(threadID, metadata.ThreadID),
+		usageTracker:     p.usage.observation(threadID, metadata.ThreadID, request.model()),
 		threadID:         activityThreadID,
 		activityStarted:  time.Now(),
 
