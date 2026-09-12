@@ -74,7 +74,7 @@ RangeStream correctness or of a CTP performance effect.
 
 ## Recorded comparison runs
 
-All runs below used benchmark commit
+The Astra-only and Sol-only runs below used benchmark commit
 `0aa58c4a8d680f3e1a94f85e88ca9353e827fcef`, the same task contract, one
 repetition, issue reporting disabled, and Codex 0.153.4. They are comparison
 observations, not replacements for the Astra B1 baseline. The linked configuration
@@ -139,3 +139,90 @@ requested revision 21.
 | Provider requests | 22 | 16 | 22 |
 | HPATCH calls | 6 | 5 | 4 |
 | HPATCH rejections / corrections | 2 / 2 | 3 / 2 | 1 / 1 |
+
+### Main mentor handoff, CTP off
+
+This historical run used Astra medium → main Sol high, native protocol, main
+handoff enabled, subagent handoff disabled, one repetition, issue reporting
+disabled, and Codex 0.153.4. It used the same task contract as the runs above.
+It is another provisional observation, not a replacement baseline; the known
+grader and benchmark defects above also apply.
+
+- [Summary](results/04f7641037b336d6db345148b39eadb806c62e27-etcd-range-stream-5qUnOg/summary.md)
+- [Configuration](results/04f7641037b336d6db345148b39eadb806c62e27-etcd-range-stream-5qUnOg/benchmark-config.json)
+- [Metrics](results/04f7641037b336d6db345148b39eadb806c62e27-etcd-range-stream-5qUnOg/mekugi-metrics.json)
+- [Implementation patch](results/04f7641037b336d6db345148b39eadb806c62e27-etcd-range-stream-5qUnOg/artifacts/etcd-range-stream/etcd-range-stream-mekugi-r001/changes.patch)
+
+The measured archive included uncommitted main-toggle, Sol-mapping, and benchmark
+support changes on top of `04f7641037b336d6db345148b39eadb806c62e27`.
+Build archive SHA-256:
+`a2c3bc34c2a60616b01cac710a331fdef397ffcab7c4fc2872e76bb39f5d9941`.
+
+| Measure | Main mentor → Sol |
+| --- | ---: |
+| Required grader | Passed |
+| Capture validation | Passed |
+| Agent wall time | 271.310 s |
+| Input tokens | 303,090 |
+| Cached input | 228,608 |
+| Uncached input | 74,482 |
+| Output tokens | 3,431 |
+| Reasoning tokens | 828 |
+| Provider requests | 11 |
+| HPATCH calls | 1 |
+| HPATCH rejections / corrections | 0 / 0 |
+
+Capture recorded five Astra requests, including setup, followed by six Sol requests.
+The third Astra shell call completed about 32 seconds after launch. Astra stayed
+for the result-consuming response and produced the implementation patch at about
+89 seconds. Sol's first request started at about 94 seconds; it handled verification
+and the final response. The handoff was triggered by tool count, not the input limit:
+Astra's last request had 29,496 input tokens.
+
+This run predates the review fix excluding main prewarm and compaction requests from
+handoff. Its 7,887-token setup request was routed to Astra; current behavior leaves
+that request on the configured model and does not consume the main schedule.
+The figures are preserved historical evidence, not a rerun of the corrected code.
+Sanitized capture records actual models, but not the transmitted reasoning-effort
+field; Astra medium follows the tested mapping from configured Sol high.
+
+## Estimated token costs
+
+The following estimates use OpenRouter list prices retrieved on 2026-09-12, not
+subscription charges or invoices. They follow the session-usage accounting approach:
+price each provider request using its actual model, separate cached and uncached
+input, and do not charge reasoning again because it is included in output.
+
+| Model | Uncached input / million | Cached input / million | Output / million |
+| --- | ---: | ---: | ---: |
+| gpt-6-astra | $10.00 | $1.00 | $50.00 |
+| gpt-5.6-sol | $2.00 | $0.20 | $10.00 |
+
+Source: [OpenRouter model catalog](https://openrouter.ai/api/v1/models).
+The live Sol prices differ from the session-usage fallback table. No request in
+these runs reached the 272,000-token long-context pricing threshold. Separate
+cache-write usage was not reported; no extra cache-write charge was inferred.
+Aggregate token totals, including setup requests, are used consistently.
+
+| Run | Protocol | Required grader | Agent wall time | Estimated token cost |
+| --- | --- | --- | ---: | ---: |
+| Astra B1 | CTP/2 | Passed | 230.758 s | $1.0943 |
+| Astra B2 | CTP/2 | Passed | 366.806 s | $1.5783 |
+| Astra B3 | Native | Passed | 265.791 s | $1.1509 |
+| Sol/high B1 | CTP/2 | Failed | 355.535 s | $0.3862 |
+| Sol/high B2 | CTP/2 | Failed | 300.404 s | $0.2654 |
+| Sol/high B3 | Native | Failed | 352.710 s | $0.3365 |
+| Main mentor → Sol | Native | Passed | 271.310 s | $0.6708 |
+
+The mentor run's estimate splits into $0.5523 for Astra and $0.1185 for Sol.
+Compared descriptively with:
+
+- **Sol/high native:** 23.1% shorter elapsed time, 65.3% less total input, 19.3%
+  more uncached input, and 99.4% greater estimated cost. Sol's grading failure
+  prevents treating this as a comparison of equally successful implementations.
+- **Astra native:** 2.1% longer elapsed time and 41.7% lower estimated cost.
+- **Provisional Astra B1 with CTP/2:** 17.6% longer elapsed time and 38.7% lower
+  estimated cost; both model scheduling and protocol differ.
+
+These comparisons do not establish a causal performance effect, success rate, or
+cost per correct task. They remain subject to the known benchmark defects above.
