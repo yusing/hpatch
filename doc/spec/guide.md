@@ -36,9 +36,9 @@ pinned transport-independent shell-safety line after the search line; that safet
 The search and execution anchors must be unique, and an old file-editing section must be absent.
 For stock, marked, and configured custom prompts, the router also rewrites pinned conflicting
 progress-channel, initial-update, skill-announcement, approval-rejection delivery, 60-second commentary/wait, Code Mode batching,
-and unrestricted parallelization fragments outside the owned section. Progress uses supported
+unrestricted parallelization, Plan mode's repeated-question prompts, and Default mode's `request_user_input` prompts when that request's tool contract makes it Plan-only outside the owned section. Progress uses supported
 tool commentary, known reads and searches batch in a shell script, and parallelism respects tool
-contracts with hpatch running alone. Unrelated instructions, including authorization, validation,
+contracts with hpatch running alone. Plan mode asks only the questions needed for a decision-complete plan, while Default mode does not call `request_user_input` when the request's tool description restricts it to Plan mode; Default-enabled host guidance is preserved. The rewrite applies to every developer-message instruction, including collaboration-mode instructions delivered separately from the main model instructions. Unrelated instructions, including authorization, validation,
 and shell-safety rules, are preserved. These rewrites cover the GPT-6 Astra and shared GPT-5.6
 Sol/Terra/Luna templates and the active Codex prompt, including its “To reduce round trips”
 batching prefix and line-wrapped status-reply instruction. At startup,

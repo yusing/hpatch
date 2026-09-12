@@ -43,6 +43,20 @@ var stockToolConflictReplacer = strings.NewReplacer(
 	"- Parallelize independent calls only when their tool contracts allow it. Run hpatch alone; sequence dependent operations, approvals, and mutations.",
 	"- Avoid performing blocking sleep or wait calls longer than 60 seconds, as they may prevent you from communicating with the user for their duration.",
 	"- Use completion notifications or interruptible waits; do not shorten waits solely to emit commentary.",
+	"* Keep asking until you can clearly state: goal + success criteria, audience, in/out of scope, constraints, current state, and the key preferences/tradeoffs.",
+	"* Resolve enough intent to clearly state: goal + success criteria, audience, in/out of scope, constraints, current state, and the key preferences/tradeoffs.",
+	"* Once intent is stable, keep asking until the spec is decision complete: approach, interfaces (APIs/schemas/I/O), data flow, edge cases/failure modes, testing + acceptance criteria, rollout/monitoring, and any migrations/compat constraints.",
+	"* Once intent is stable, resolve the spec until it is decision complete: approach, interfaces (APIs/schemas/I/O), data flow, edge cases/failure modes, testing + acceptance criteria, rollout/monitoring, and any migrations/compat constraints.",
+	"You SHOULD ask many questions, but each question must:",
+	"Ask only the questions needed to make the plan decision complete. Each question must:",
+)
+var planOnlyDefaultModeConflictReplacer = strings.NewReplacer(
+	"Use the `request_user_input` tool only when it is listed in the available tools for this turn.",
+	"Do not call the `request_user_input` tool in Default mode, even if it is listed in the available tools for this turn.",
+	"Use the `request_user_input` tool only for optional questions where the answer would materially improve the quality of the work.",
+	"For optional questions, make a reasonable assumption and continue unless explicit user input is required.",
+	"If `request_user_input` returns no answers, continue with best judgment instead of asking again or treating the turn as blocked.",
+	"",
 )
 
 func rewriteStockToolConflicts(input string) string {

@@ -88,12 +88,12 @@ func rewriteReceivedModelInstructions(ctx context.Context, request *parsedRespon
 			return err
 		}
 		if found {
-			request.fields["input"] = rewritten
-			return nil
+			request.setInput(rewritten)
+			return rewriteDeveloperToolConflicts(request)
 		}
 	}
 	if !present || received == nil {
-		return nil
+		return rewriteDeveloperToolConflicts(request)
 	}
 	evidence.Carrier = "instructions"
 	rendered, strategy, err := renderModelInstructions(*received, customized, modelInstructions)
@@ -102,6 +102,66 @@ func rewriteReceivedModelInstructions(ctx context.Context, request *parsedRespon
 		return err
 	}
 	request.fields["instructions"] = mustMarshalJSON(rendered)
+	return rewriteDeveloperToolConflicts(request)
+}
+
+func requestUserInputIsPlanOnly(request *parsedResponsesRequest) bool {
+	catalog := request.responseTools()
+	if catalog.top == nil || catalog.top.err != nil {
+		return false
+	}
+	for _, tool := range catalog.top.tools {
+		if tool != nil && tool.Name == "request_user_input" &&
+			strings.Contains(tool.Description, "This tool is only available in Plan mode.") {
+			return true
+		}
+	}
+	return false
+}
+
+func rewriteDeveloperToolConflicts(request *parsedResponsesRequest) error {
+	raw := request.fields["input"]
+	if len(raw) == 0 {
+		return nil
+	}
+	input, err := decodeResponsesInput(raw)
+	if err != nil {
+		return fmt.Errorf("decode responses input instruction conflicts: %w", err)
+	}
+	if !input.array {
+		return nil
+	}
+	rewriteConflicts := rewriteStockToolConflicts
+	if requestUserInputIsPlanOnly(request) {
+		rewriteConflicts = func(input string) string {
+			return planOnlyDefaultModeConflictReplacer.Replace(rewriteStockToolConflicts(input))
+		}
+	}
+	changed := false
+	for index, rawItem := range input.items {
+		item, ok := decodeResponsesItem(rawItem)
+		if !ok || item.Type != "message" || item.Role != "developer" {
+			continue
+		}
+		content, found, err := transformCTP2Content(item.Content, rewriteConflicts, isCTP2InputTextPart)
+		if err != nil {
+			return fmt.Errorf("rewrite developer instruction conflicts: %w", err)
+		}
+		if !found || string(content) == string(item.Content) {
+			continue
+		}
+		item.setContent(content)
+		input.items[index] = mustMarshalJSON(item)
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	rewritten, err := input.encode()
+	if err != nil {
+		return fmt.Errorf("encode responses input instruction conflicts: %w", err)
+	}
+	request.setInput(rewritten)
 	return nil
 }
 
