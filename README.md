@@ -182,6 +182,9 @@ make install
 This regenerates the embedded plugins and installs both binaries. Installation
 and uninstallation leave Codex configuration and instruction files untouched.
 `make uninstall` removes only the installed `mekugi` and `shell` binaries.
+Running sessions retain their own worker executable; start a new session to use
+an installed update. For sessions started by older versions, follow
+[the older-installation guidance](#older-installations) before replacing binaries.
 
 ## Usage
 
@@ -560,7 +563,8 @@ recover an earlier request that was not dumped.
 - **Executor environment:** the router and executor must see the same workspace
   paths and shell runtime directory. `MEKUGI_RUNTIME_DIR` overrides the default
   operating-system temporary directory; both must resolve it to the same
-  absolute path. The shared `shell` helper follows the session's
+  absolute path. This directory must permit executable files because it retains
+  the session's worker binary. The shared `shell` helper follows the session's
   `mekugi-runtime-<thread>` locator.
 - **Failures:** startup errors appear before Codex launches. Session failures
   appear as user-only commentary; undelivered notices appear on stderr after

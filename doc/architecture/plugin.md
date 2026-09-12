@@ -123,7 +123,11 @@ instruction files.
 
 For every configured executor-backed contribution, the router wrapper owner creates a symlink
 inside the authenticated snapshot directory. The snapshot symlink has the tool-name basename and targets
-the running router executable. After complete-registry validation, the owner creates or verifies
+a pinned router executable inside that same snapshot. The executable owner opens the
+running image (`/proc/self/exe` on Linux), then retains a verified hard link or a private
+copy when linking is unavailable or the installation pathname has changed. Worker
+authentication compares file identity, not the installation pathname. The snapshot's
+existing lifecycle owns the pinned executable's cleanup. After complete-registry validation, the owner creates or verifies
 a session-private same-basename frontend in the snapshot's `bin` directory. The frontend targets the snapshot
 wrapper. Configured child dispatch resolves the frontend once, validates the snapshot wrapper and
 registry identity, and gives the implementation the remaining argv without inventing a cwd or
