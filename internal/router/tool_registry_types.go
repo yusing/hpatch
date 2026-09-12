@@ -40,11 +40,12 @@ type (
 	}
 
 	toolWorkerManifest struct {
-		AXReadOutput   string             `json:"ax_read_output,omitempty"`
-		Version        int                `json:"version"`
-		RegistryID     string             `json:"registry_id"`
-		NodeExecutable string             `json:"node_executable,omitempty"`
-		RuntimeRoot    string             `json:"runtime_root"`
-		Tools          []toolContribution `json:"tools"`
+		ReplayDirectory string             `json:"replay_directory,omitempty"`
+		AXReadOutput    string             `json:"ax_read_output,omitempty"`
+		Version         int                `json:"version"`
+		RegistryID      string             `json:"registry_id"`
+		NodeExecutable  string             `json:"node_executable,omitempty"`
+		RuntimeRoot     string             `json:"runtime_root"`
+		Tools           []toolContribution `json:"tools"`
 	}
 )

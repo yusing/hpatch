@@ -15,7 +15,8 @@ external filesystem commit or translated patch is returned. Basic `Apply` return
 All apply and host entry points reject a nil context with `context is nil`, before evaluation
 or finalization; host variants return a zero result without running hooks or publishing output.
 `ApplyForHost`, `ApplyForHostRoot`, and `TranslateForHostAt` return `HostTranslation`, which carries
-the rendered report, final state, diagnostics, patch summary, and target aliases. Before
+the rendered report, final state, diagnostics, patch summary, target aliases, and per-file
+review diffs under `REQ-CHANGES-001`. Before
 finalization, every changed file whose final path ends in `.go`
 is parsed and formatted with Go's standard-library `go/format`; parse failures are collected
 from every changed Go file before the complete transaction rejects. Source correspondence
@@ -244,7 +245,7 @@ row, remain one visible location. Independently parseable syntax failures may be
 together before evaluation. A heredoc failure is owned by its header and may additionally
 report its attributable source span. Control bytes are escaped and embedded newlines are
 folded so one command failure remains one logical line.
-Failures return no completed patch, patch summary, final-state report, or target aliases.
+Failures return no completed patch, patch summary, final-state report, target aliases, or review diffs.
 The prepared success projection is published only after finalization succeeds, including
 its final cancellation check. A late cancellation after application retains honest
 `Outcome` and `Change.Applied` metadata without publishing reusable success references.

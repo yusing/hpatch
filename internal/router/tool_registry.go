@@ -74,7 +74,12 @@ func buildToolRegistry(ctx context.Context, dataDirectory, mekugiDescription str
 	if err != nil {
 		return fail(err)
 	}
+	replayDirectory, err := defaultMekugiReplayDirectory()
+	if err != nil {
+		return fail(err)
+	}
 	contributions := []toolContribution{
+		{PluginID: "builtin.mekugi", Name: "hchanges", Builtin: true},
 		{
 			PluginID:      "builtin.mekugi",
 			Name:          mekugiToolName,
@@ -159,10 +164,11 @@ func buildToolRegistry(ctx context.Context, dataDirectory, mekugiDescription str
 	}
 
 	manifest := toolWorkerManifest{
-		Version:        1,
-		NodeExecutable: pluginSnapshot.NodeExecutable,
-		RuntimeRoot:    "runtime",
-		Tools:          slices.Clone(contributions),
+		ReplayDirectory: replayDirectory,
+		Version:         1,
+		NodeExecutable:  pluginSnapshot.NodeExecutable,
+		RuntimeRoot:     "runtime",
+		Tools:           slices.Clone(contributions),
 	}
 	if debug, _ := ctx.Value(debugContextKey{}).(*debugOutput); debug != nil {
 		manifest.AXReadOutput = debug.paths[4]

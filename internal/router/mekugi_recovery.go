@@ -165,10 +165,10 @@ func recoveryHistoryOf(histories iter.Seq[mekugiHistory]) (mekugiHistory, error)
 		return mekugiHistory{}, errors.New("no rejected HPATCH script to recover; send a complete script")
 	}
 	if latest.translationError == "" {
-		return mekugiHistory{}, errors.New("the most recent mekugi call succeeded; recovery edits require a rejected script, so send a complete script")
+		return latest, errors.New("the most recent mekugi call succeeded; recovery edits require a rejected script, so send a complete script")
 	}
 	if !latest.evaluatorRejected {
-		return mekugiHistory{}, errors.New("the most recent mekugi call did not produce an evaluator rejection; send a complete script")
+		return latest, errors.New("the most recent mekugi call did not produce an evaluator rejection; send a complete script")
 	}
 	return latest, nil
 }
@@ -220,14 +220,13 @@ func (t *mekugiResponseTransform) translateRecovery(
 		ToolName:       mekugiRecoveryToolName,
 		EmittedPayload: input,
 	}
+	if base.correlationID != "" {
+		attemptMetadata.CorrelationID = base.correlationID
+		attemptMetadata.Attempt = t.nextRecoveryAttempt(base.correlationID, base.attempt)
+	}
 	if baseErr != nil {
 		return t.rejectUnevaluated(mekugiRecoveryToolName, callID, input, baseErr, attemptMetadata, "", nil, upstreamItem)
 	}
-	attemptMetadata.CorrelationID = base.correlationID
-	if attemptMetadata.CorrelationID == "" {
-		attemptMetadata.CorrelationID = callID
-	}
-	attemptMetadata.Attempt = t.nextRecoveryAttempt(attemptMetadata.CorrelationID, base.attempt)
 	if base.root != t.directory {
 		return t.rejectUnevaluated(
 			mekugiRecoveryToolName,
@@ -267,7 +266,11 @@ func (t *mekugiResponseTransform) rejectUnevaluated(
 	rejections []mekugi.HostRejection,
 	upstreamItem map[string]json.RawMessage,
 ) (mekugiHistory, error) {
-	diagnostic := rejection.Error()
+	changeID, err := t.changeIDForAttempt(attempt)
+	if err != nil {
+		return mekugiHistory{}, err
+	}
+	diagnostic := changeNotice(changeID) + rejection.Error()
 	if referenceScript != "" {
 		diagnostic += mekugiRecoveryGuidance(referenceScript, rejections, false)
 	}
@@ -281,6 +284,8 @@ func (t *mekugiResponseTransform) rejectUnevaluated(
 		toolName: toolName,
 		script:   input,
 
+		root:             t.directory,
+		changeID:         changeID,
 		carrierName:      t.codeModeToolName,
 		translationError: diagnostic,
 		correlationID:    attempt.CorrelationID,

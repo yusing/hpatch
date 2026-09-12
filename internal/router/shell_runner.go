@@ -100,6 +100,9 @@ func executeShellTool(
 				}
 			}()
 
+			if command[0] == "hchanges" {
+				return executeHChanges(handlerCtx, manifest, runtimeRoot, shellContribution, command[1:])
+			}
 			if command[0] == "hrun" {
 				return executeHRun(handlerCtx, manifest, runtimeRoot, shellContribution, command[1:], terminalShell)
 			}

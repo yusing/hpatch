@@ -183,7 +183,7 @@ func mekugiNativeCommand(history mekugiHistory) string {
 			"mekugi_status=$?; printf x; exit \"$mekugi_status\")\n" +
 			"mekugi_status=$?\n" +
 			"mekugi_apply_output=${mekugi_apply_output%x}\n" +
-			"if [ \"$mekugi_status\" -ne 0 ]; then printf %s \"$mekugi_apply_output\"; exit \"$mekugi_status\"; fi\n" +
+			"if [ \"$mekugi_status\" -ne 0 ]; then printf %s " + shellQuoteArgument(changeNotice(history.changeID)) + " \"$mekugi_apply_output\"; exit \"$mekugi_status\"; fi\n" +
 			"printf %s " + shellQuoteArgument(history.report)
 	}
 }
@@ -231,7 +231,7 @@ func (registry *toolRegistry) directBashExecCommand(arguments []string) (string,
 		}
 	})
 	commandName, err := expand.Literal(nil, call.Args[0])
-	if err != nil || !staticCommand || commandName == "" || commandName == commentaryArgumentName || commandName == "hrun" || interp.IsBuiltin(commandName) {
+	if err != nil || !staticCommand || commandName == "" || commandName == commentaryArgumentName || commandName == "hrun" || commandName == "hchanges" || interp.IsBuiltin(commandName) {
 		return "", false
 	}
 	if contribution, exists := registry.contribution(commandName); exists &&
@@ -414,9 +414,11 @@ func (h mekugiHistory) carrierInput() string {
 	if h.applied || h.alreadySatisfied {
 		return "text(" + strconv.Quote(h.report) + ");"
 	}
-	return mekugiApplyExecMarker +
-		"await tools.apply_patch(" + strconv.Quote(h.patch) + ");\n" +
-		"text(" + strconv.Quote(h.report) + ");"
+	apply := "await tools.apply_patch(" + strconv.Quote(h.patch) + ");\n"
+	if h.changeID != "" {
+		apply = "try {\n" + apply + "} catch (error) { text(" + strconv.Quote(changeNotice(h.changeID)) + "); throw error; }\n"
+	}
+	return mekugiApplyExecMarker + apply + "text(" + strconv.Quote(h.report) + ");"
 }
 
 func (h mekugiHistory) effectiveCarrierKind() codeModeCarrierKind {

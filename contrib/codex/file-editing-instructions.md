@@ -346,6 +346,17 @@ Both forms preserve untargeted script text and reevaluate the complete script at
 A re-rejection becomes the next baseline: use its script rows and refreshed command handles.
 Invalid corrections leave the workspace and retained baseline unchanged.
 
+## Change handoffs
+
+Hpatch results include `change hp_a1`; recovery keeps that ID. Hand off IDs or inclusive
+same-agent ranges instead of a full Git diff. Inside shell, use
+`hchanges read hp_a1..hp_a3` for captured diffs and outcomes; add `--summary` for paths
+or `--history` for the full recovery chain. Reads default to 4,000 tokens.
+Optional `--max-tokens N`, `--path PATH`, and `--workspace DIR` narrow a read.
+An incomplete read supplies `--cursor HASH:BYTE`; repeat the same selection with that
+cursor to continue. These are historical evaluated diffs, not current editable row
+references or a record of shell edits. Unconfirmed results are not proof of application.
+
 ## Reading and inspection reference
 
 For ordinary file reads, use `cat` or bounded `sed`. Prefer `hcat` when its verified row

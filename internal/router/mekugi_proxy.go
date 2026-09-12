@@ -44,13 +44,14 @@ var (
 )
 
 type mekugiTranslationResult struct {
-	patch      []byte
-	report     string
-	diagnostic string
-	rejections []mekugi.HostRejection
-	failures   []mekugi.HostFailure
-	change     mekugi.HostChange
-	aliases    []mekugi.TargetAlias
+	reviewFiles []mekugi.ReviewFile
+	patch       []byte
+	report      string
+	diagnostic  string
+	rejections  []mekugi.HostRejection
+	failures    []mekugi.HostFailure
+	change      mekugi.HostChange
+	aliases     []mekugi.TargetAlias
 }
 
 type mekugiTranslator interface {
@@ -107,13 +108,14 @@ func (t inProcessMekugiTranslator) ReportOutcome(ctx context.Context, stage, out
 
 func mekugiTranslationResultOf(translated mekugi.HostTranslation) mekugiTranslationResult {
 	return mekugiTranslationResult{
-		patch:      translated.Patch,
-		report:     translated.Report,
-		diagnostic: translated.Diagnostic,
-		rejections: slices.Clone(translated.Rejections),
-		failures:   slices.Clone(translated.Failures),
-		change:     translated.Change,
-		aliases:    slices.Clone(translated.TargetAliases),
+		reviewFiles: translated.ReviewFiles,
+		patch:       translated.Patch,
+		report:      translated.Report,
+		diagnostic:  translated.Diagnostic,
+		rejections:  slices.Clone(translated.Rejections),
+		failures:    slices.Clone(translated.Failures),
+		change:      translated.Change,
+		aliases:     slices.Clone(translated.TargetAliases),
 	}
 }
 
@@ -1041,7 +1043,10 @@ func (t *mekugiResponseTransform) evaluateScript(
 	attemptMetadata mekugi.AttemptMetadata,
 	upstreamItem map[string]json.RawMessage,
 ) (mekugiHistory, error) {
-	var err error
+	changeID, err := t.changeIDForAttempt(attemptMetadata)
+	if err != nil {
+		return mekugiHistory{}, err
+	}
 	applied := false
 	var translated mekugiTranslationResult
 	retainedStart := len(evaluated) - len(strings.TrimLeft(evaluated, "\r\n"))
@@ -1095,7 +1100,8 @@ func (t *mekugiResponseTransform) evaluateScript(
 			root:              t.directory,
 			evaluated:         retainedEvaluated(input, evaluated),
 			carrierName:       t.codeModeToolName,
-			translationError:  diagnostic,
+			translationError:  changeNotice(changeID) + diagnostic,
+			changeID:          changeID,
 			evaluatorRejected: evaluatorRejected,
 			rejections:        slices.Clone(translated.rejections),
 
@@ -1124,7 +1130,9 @@ func (t *mekugiResponseTransform) evaluateScript(
 		confirmed:        applied,
 		aliases:          slices.Clone(translated.aliases),
 		carrierName:      t.codeModeToolName,
-		report:           mekugiReport(translated.report, translated.diagnostic),
+		report:           changeNotice(changeID) + mekugiReport(translated.report, translated.diagnostic),
+		changeID:         changeID,
+		reviewFiles:      translated.reviewFiles,
 		upstreamItem:     maps.Clone(upstreamItem),
 		correlationID:    attemptMetadata.CorrelationID,
 		attempt:          attemptMetadata.Attempt,

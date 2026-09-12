@@ -49,6 +49,7 @@ Update this file when your work makes its paths, ownership, or commands stale.
 | Bash/POSIX execution and bounded external-command output | `internal/router/shell_runner.go`, `internal/router/shell_hrun.go` |
 | AX runtime evidence and offline measurements | `capturer/ax.go`; actual private-reader dispatch in `internal/router/shell_runner.go` |
 | Offline logical session inspection | `internal/router/session_inspect.go`, dispatched by `cmd/mekugi/main.go` |
+| Hpatch review diffs, shared change IDs, and bounded change reads | `review.go`, `internal/router/mekugi_changes.go`, `internal/router/shell_changes.go` |
 | Durable replay records, request-visible history, and rejected-script recovery | `internal/router/mekugi_store.go`, `internal/router/mekugi_history.go`, `internal/router/mekugi_recovery.go` |
 | Carrier catalog and model-visible projection | `internal/router/tool_carrier.go`, `internal/router/tool_registry.go` |
 | Built-in tool sources, shared GPT-5 output tokenization, and private execution runtime | `plugins` (tokenization in `plugins/tokens.ts`), `internal/router/toolplugin` |
