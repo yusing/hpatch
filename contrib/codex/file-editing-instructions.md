@@ -184,6 +184,9 @@ is unavailable; use native session facilities for interactive input or terminati
 Edit-only HPATCH/2 applies one complete target-bearing edit script atomically. Do not call this
 tool in parallel with other tools. Rejection before application changes nothing.
 
+Choose mixed scripts for dependent edit/command chains. Use the shell tool for command-only
+work and ordinary edit-only hpatch for edits alone; these avoid mixed-control overhead.
+
 ### Shell-in-script
 
 With Code Mode available, use `shell go test ./...` for one physical command line.
@@ -221,6 +224,9 @@ After the previous Code Mode cell ends, choose:
 - `resume HANDLE retry`: retry only the current segment after resolving live work and inspecting
   uncertain effects. Optionally put one replacement segment of the same kind on the next line,
   with its own file selection or `shell` command.
+- `resume HANDLE repair`: supply one workspace edit segment after the header to fix the cause,
+  retry the failed segment, and continue its suffix in one call. Apply the same live-work and
+  uncertain-effect checks as retry. The repair is retained under the same handle if it fails.
 - `resume HANDLE accept`: continue after establishing the segment's intended state externally
   and resolving its native work. This records reconciliation, not application success.
 

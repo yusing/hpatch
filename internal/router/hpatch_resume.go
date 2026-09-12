@@ -83,13 +83,13 @@ func (t *mekugiResponseTransform) translateMixedResume(callID, input string, ups
 	header, replacement, _ := strings.Cut(strings.TrimSpace(input), "\n")
 	fields := strings.Fields(header)
 	if len(fields) < 2 || len(fields) > 3 || fields[0] != "resume" {
-		return reject(errors.New("expected resume HANDLE [retry|accept], optionally followed by one replacement segment for retry"))
+		return reject(errors.New("expected resume HANDLE [retry|accept|repair], with one edit segment for repair or an optional replacement for retry"))
 	}
 	action := ""
 	if len(fields) == 3 {
 		action = fields[2]
-		if action != "retry" && action != "accept" {
-			return reject(errors.New("resume action must be retry or accept"))
+		if action != "retry" && action != "accept" && action != "repair" {
+			return reject(errors.New("resume action must be retry, accept, or repair"))
 		}
 	}
 	name, err := mixedArtifactName(fields[1])
@@ -113,21 +113,27 @@ func (t *mekugiResponseTransform) translateMixedResume(callID, input string, ups
 	}
 	var changed *hpatchResumeSegment
 	if replacement != "" {
-		if action != "retry" {
-			return reject(errors.New("a replacement segment requires retry"))
+		if action != "retry" && action != "repair" {
+			return reject(errors.New("a segment requires retry or repair"))
 		}
 		parts, _, err := hpatchsyntax.SplitShell(replacement)
 		if err != nil {
 			return reject(err)
 		}
 		if len(parts) != 1 {
-			return reject(errors.New("replace only the failed segment, not the unchanged suffix"))
+			return reject(errors.New("supply one replacement or repair segment, not the unchanged suffix"))
 		}
 		segments, err := t.prepareMixedSegments(parts)
 		if err != nil {
 			return reject(err)
 		}
+		if action == "repair" && segments[0].Kind != "edit" {
+			return reject(errors.New("repair requires one workspace edit segment"))
+		}
 		changed = &segments[0]
+	}
+	if action == "repair" && changed == nil {
+		return reject(errors.New("repair requires one workspace edit segment"))
 	}
 	history.carrierKind = codeModeCarrierCustom
 	history.carrierPayload = t.mixedCarrier(state, action, changed)

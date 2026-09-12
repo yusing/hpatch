@@ -4,6 +4,13 @@ const nativeTools = tools;
 {
 const state = mixedConfig.state;
 const progress = state.progress;
+// Retain only inserted repairs, rather than copying the original plan into every
+// checkpoint. Insertion indices refer to the plan after earlier insertions.
+const segments = [...state.segments];
+for (const insertion of progress.insertions ?? []) {
+  if (insertion.following) segments[insertion.index] = insertion.following;
+  segments.splice(insertion.index, 0, insertion.segment);
+}
 let current = progress.current ?? null;
 let output = '';
 let last = {output: '', exit_code: 0};
@@ -20,6 +27,7 @@ function announce(phase) {
       resume: `resume ${state.handle}`, expires_at: state.expires_at, segment: current?.segment,
       line: current?.line, kind: current?.kind, phase,
       status: current?.status, session_id: current?.session_id, control_session_id: controlSession,
+      ...(current?.repair ? {repair: true} : {}),
       completed_segments: progress.results.length + (current?.status === 'completed' ? 1 : 0)
     }});
   } catch {}
@@ -122,7 +130,7 @@ async function invoke(method, args) {
     if (operation.method !== method) throw new Error('Retained operation order changed; reconcile this segment.');
     if (!operation.pending) return operation.result;
     if (method !== 'translate' && (method !== 'write_stdin' || operation.sent_input)) {
-      throw new Error('An operation has an unknown outcome. Resolve the previous cell, sessions, and effects, then use retry or accept.');
+      throw new Error('An operation has an unknown outcome. Resolve the previous cell, sessions, and effects, then use retry, repair, or accept.');
     }
   } else {
     operation = {method, pending: true, sent_input: method === 'write_stdin' && !!args.chars};
@@ -187,7 +195,7 @@ if (mixedConfig.action || mixedConfig.replacement) {
   if (!current || current.status === 'completed') {
     throw new Error('No failed or interrupted segment to reconcile; use the plain resume handle.');
   }
-  if (mixedConfig.replacement && mixedConfig.replacement.kind !== current.kind) {
+  if (mixedConfig.action !== 'repair' && mixedConfig.replacement && mixedConfig.replacement.kind !== current.kind) {
     throw new Error('A replacement must keep the failed segment kind.');
   }
   // These explicit actions attest that the old cell has ended, all potentially
@@ -198,17 +206,31 @@ if (mixedConfig.action || mixedConfig.replacement) {
     delete current.session_id;
     completeCurrent();
   } else {
-    if (mixedConfig.replacement) progress.replacement = mixedConfig.replacement;
+    if (mixedConfig.action === 'repair') {
+      const insertion = {
+        index: progress.index,
+        segment: {...mixedConfig.replacement, repair: true},
+        following: progress.replacement
+          ? {...segments[progress.index], ...progress.replacement, line: segments[progress.index].line}
+          : null
+      };
+      (progress.insertions ??= []).push(insertion);
+      if (insertion.following) segments[insertion.index] = insertion.following;
+      segments.splice(insertion.index, 0, insertion.segment);
+      delete progress.replacement;
+    } else if (mixedConfig.replacement) {
+      progress.replacement = mixedConfig.replacement;
+    }
     progress.operations = [];
     current = null;
     progress.current = null;
   }
   refreshTranslation = false;
 } else if (current?.status === 'failed' && current.kind === 'shell') {
-  throw new Error(`The failed shell may have changed state. Inspect it, then use resume ${state.handle} retry or accept.`);
+  throw new Error(`The failed shell may have changed state. Inspect it, then use resume ${state.handle} retry, repair, or accept.`);
 } else if (progress.operations.some(operation =>
   operation.method === 'apply_patch' && (operation.pending || operation.result?.isError === true))) {
-  throw new Error(`Host application is unresolved. Inspect effects and resolve live work before resume ${state.handle} retry or accept.`);
+  throw new Error(`Host application is unresolved. Inspect effects and resolve live work before resume ${state.handle} retry, repair, or accept.`);
 }
 
 try {
@@ -220,10 +242,11 @@ try {
     completeCurrent();
     await checkpoint('between_segments');
   }
-  while (progress.index < state.segments.length) {
-    const segment = progress.replacement ?? state.segments[progress.index];
-    current = {segment: progress.index + 1, line: state.segments[progress.index].line,
-      kind: segment.kind, status: 'started', session_id: current?.session_id};
+  while (progress.index < segments.length) {
+    const segment = progress.replacement ?? segments[progress.index];
+    current = {segment: progress.index + 1, line: segments[progress.index].line,
+      kind: segment.kind, status: 'started', session_id: current?.session_id,
+      ...(segments[progress.index].repair ? {repair: true} : {})};
     await checkpoint('segment_start');
     for (;;) {
       operationIndex = 0;
@@ -271,8 +294,8 @@ try {
   }
   const results = current ? [...progress.results, current] : progress.results;
   text(JSON.stringify({results, resume_handle: state.handle, expires_at: state.expires_at, sequence: {
-    segment_count: state.segments.length, started_segments: results.length,
-    not_started_segments: state.segments.length - results.length, stopped_reason: stoppedReason
+    segment_count: segments.length, started_segments: results.length,
+    not_started_segments: segments.length - results.length, stopped_reason: stoppedReason
   }}));
 }
 }

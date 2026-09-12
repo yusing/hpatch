@@ -20,6 +20,7 @@ import (
 type mixedScriptResult struct {
 	ResumeHandle string `json:"resume_handle"`
 	Results      []struct {
+		Repair     bool   `json:"repair"`
 		Segment    int    `json:"segment"`
 		Line       int    `json:"line"`
 		Kind       string `json:"kind"`
@@ -563,6 +564,97 @@ func TestHpatchResumeRejectsUnavailableHandles(t *testing.T) {
 		history, err := transform.translate(fmt.Sprintf("invalid-resume-%d", index), input, nil)
 		if err != nil || history.translationError == "" || history.carrierPayload != "" {
 			t.Fatalf("invalid handle emitted execution: %+v, %v", history, err)
+		}
+	}
+}
+
+func TestHpatchRepairAndResume(t *testing.T) {
+	for _, rejectedRepair := range []bool{false, true} {
+		t.Run(fmt.Sprint(rejectedRepair), func(t *testing.T) {
+			transform, overrides := mixedTestTransform(t)
+			run := func(call, source string) mixedScriptResult {
+				t.Helper()
+				history, err := transform.translate(call, source, nil)
+				if err != nil || history.translationError != "" {
+					t.Fatalf("translate: %v, %s", err, history.translationError)
+				}
+				var result mixedScriptResult
+				runShellCatJavaScript(t, transform.proxy.registry.NodeExecutable, transform.directory,
+					history.carrierInput(), &result, overrides)
+				return result
+			}
+			failed := run("original", "new target.txt\ntype \"broken\\n\"\nshell printf x >> attempts; test \"$(cat target.txt)\" = fixed\nshell printf x >> suffix")
+			if failed.Sequence.Stopped != "nonzero_exit" {
+				t.Fatalf("expected test failure: %+v", failed)
+			}
+			target := "broken"
+			if rejectedRepair {
+				target = "missing"
+			}
+			result := run("repair", "resume "+failed.ResumeHandle+" repair\nin target.txt\ntype \""+target+"\" \"fixed\"")
+			if rejectedRepair {
+				if result.Sequence.Stopped != "edit_rejected" || !result.Results[1].Repair {
+					t.Fatalf("repair rejection: %+v", result)
+				}
+				attempts, err := os.ReadFile(filepath.Join(transform.directory, "attempts"))
+				if err != nil || string(attempts) != "x" {
+					t.Fatalf("failed repair retried test: %q, %v", attempts, err)
+				}
+				result = run("repair-retry", "resume "+failed.ResumeHandle+" retry\nin target.txt\ntype \"broken\" \"fixed\"")
+			}
+			if result.ResumeHandle != failed.ResumeHandle || result.Sequence.Count != 4 ||
+				result.Sequence.Stopped != "" || len(result.Results) != 4 || !result.Results[1].Repair {
+				t.Fatalf("repair did not continue the retained suffix: %+v", result)
+			}
+			for name, want := range map[string]string{"attempts": "xx", "suffix": "x", "target.txt": "fixed\n"} {
+				data, err := os.ReadFile(filepath.Join(transform.directory, name))
+				if err != nil || string(data) != want {
+					t.Fatalf("%s = %q, want %q, error %v", name, data, want, err)
+				}
+			}
+			again := run("completed", "resume "+failed.ResumeHandle)
+			if again.Sequence.Stopped != "" || len(again.Results) != 4 {
+				t.Fatalf("completed resume: %+v", again)
+			}
+			data, err := os.ReadFile(filepath.Join(transform.directory, "attempts"))
+			if err != nil || string(data) != "xx" {
+				t.Fatalf("completed work replayed: %q, %v", data, err)
+			}
+		})
+	}
+}
+
+func TestHpatchRepairPreservesReplacement(t *testing.T) {
+	transform, overrides := mixedTestTransform(t)
+	run := func(call, source string) mixedScriptResult {
+		t.Helper()
+		history, err := transform.translate(call, source, nil)
+		if err != nil || history.translationError != "" {
+			t.Fatalf("translate: %v, %s", err, history.translationError)
+		}
+		var result mixedScriptResult
+		runShellCatJavaScript(t, transform.proxy.registry.NodeExecutable, transform.directory,
+			history.carrierInput(), &result, overrides)
+		return result
+	}
+	failed := run("original", "shell exit 17\nshell printf x >> suffix")
+	failed = run("replace", "resume "+failed.ResumeHandle+" retry\nshell test -f repaired")
+	completed := run("repair", "resume "+failed.ResumeHandle+" repair\nnew repaired\ntype \"ready\"")
+	if completed.Sequence.Stopped != "" || completed.Sequence.Count != 3 {
+		t.Fatalf("repair lost the previously replaced test: %+v", completed)
+	}
+}
+
+func TestHpatchRepairPreflight(t *testing.T) {
+	transform, _ := mixedTestTransform(t)
+	state, err := transform.retainMixedScript("shell false", []hpatchResumeSegment{{Kind: "shell", Source: "false", Line: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, suffix := range []string{"", "\nshell true", "\nnew x\ntype \"x\"\nshell true", "\nnew x\ntype", "\nin @shell/test\ntype \"x\" \"y\""} {
+		history, err := transform.translate(fmt.Sprintf("bad-repair-%d", index), "resume "+state.Handle+" repair"+suffix, nil)
+		if err != nil || history.translationError == "" || history.carrierPayload != "" {
+			t.Fatalf("invalid repair emitted execution: %+v, %v", history, err)
 		}
 	}
 }

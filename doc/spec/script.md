@@ -279,6 +279,7 @@ Use the routed `hpatch` tool:
 ```text
 resume HANDLE
 resume HANDLE retry
+resume HANDLE repair
 resume HANDLE accept
 ```
 
@@ -301,11 +302,26 @@ and all its native work is resolved; it records `reconciled`, not a successful
 application report, and advances to the unchanged suffix. Neither action cancels
 or restarts an existing session on the agent's behalf.
 
-Only `retry` may be followed by a newline and one replacement segment of the same
+`retry` may be followed by a newline and one replacement segment of the same
 kind. An edit replacement includes its own `in` or `new`; a shell replacement uses
 the ordinary `shell` syntax. The replacement is retained if it fails again.
 Completed and unstarted segments remain unchanged. Never ask the agent to resend
 the complete original script or regenerate its unchanged suffix.
+
+`repair` requires one workspace edit segment after the header. It carries the same
+inspection and live-work reconciliation requirements as `retry`. The carrier inserts
+the repair before the failed segment, applies it through the normal host patch tool,
+then retries that segment and continues its retained suffix in the same invocation.
+A previously supplied replacement for the failed segment is preserved. Syntax is
+validated before effects; repair targets are validated when the repair runs.
+
+The repair is retained under the existing handle and expiry, with no new model call
+between repair, retry, and suffix execution. Its checkpoints and result carry
+`repair: true`. Sequence positions and counts include inserted repairs; completed
+prefix positions remain unchanged. Original physical-line references are preserved.
+A failed or interrupted repair stops before retrying the original segment and can
+itself be resumed, retried, replaced, or reconciled through the same handle. Completed
+repairs are not replayed after interruption. No repair is inferred from unrelated edits.
 
 Each carrier uses one argument-free `shell` control channel for checkpoints and
 edit translation. The helper discovers storage through inherited `CODEX_THREAD_ID`

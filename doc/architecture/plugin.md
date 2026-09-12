@@ -246,10 +246,10 @@ targets, or move final-reference projection across the root boundary.
 
 For mixed HPATCH/shell input under `REQ-SCRIPT-001`, the router owns preflight and
 one sequential Code Mode carrier. Each edit segment is translated at execution
-time through the authenticated fixed shell worker's private translation-only
-mode. Larger source transfers use bounded command arguments and a raw, non-echoing
-native stdin session instead of exceeding the outer shell's argv limit. The worker
-bounds source bytes and times out an abandoned transfer. The worker reuses `TranslateForHostAt` against the current filesystem and
+time through the authenticated fixed shell worker's argument-free control channel.
+Bounded stdin frames carry source and checkpoints; acknowledged reply chunks avoid
+native output truncation. The worker bounds source bytes and expires abandoned channels.
+It reuses `TranslateForHostAt` against the current filesystem and
 returns structured patch/report or rejection data; it never applies a workspace
 patch. The carrier validates that complete result, then calls Codex's patch tool.
 Shell segments reuse existing shell translation, quoting, execution, and native
@@ -264,3 +264,10 @@ through atomic file replacement under a stable file lock. Revision comparison
 rejects stale carriers. Its storage mode never applies workspace edits or starts
 the authored shell program. Code Mode still owns every workspace operation and
 native session; notifications expose compact progress independently of final output.
+
+Repair-and-resume inserts one prepared edit before the failed segment in the retained
+execution plan. The continuation progress stores ordered insertions, not a second copy
+of the original plan. Each insertion preserves any replacement of the following failed
+segment. The same operation journal, revision checks, host patch boundary, and completion
+checkpoints govern repairs, retries, and the original suffix; no secondary handle or
+provider request coordinates them.

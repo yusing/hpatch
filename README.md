@@ -308,6 +308,10 @@ type "draft" "ready"
 shell rg -n ready notes.txt
 ```
 
+Mixed scripts reduce model handoffs for dependent edit/command chains, but add host calls
+for checkpoints and translation. Use ordinary hpatch for edits alone and the shell tool
+for command-only work.
+
 Use `shell COMMAND` for a single physical line, without quoting or escaping it
 for HPATCH. Quotes, pipes, and redirects remain shell source, but `<<` is not
 allowed anywhere in a single-line command, even inside quotes. For multiline
@@ -338,6 +342,19 @@ its intended state externally. Completed work is not replayed, and remaining edi
 targets are checked against current files. Handles last one hour in the current
 thread and expire sooner if the router stops. Ordinary edit-only calls keep their
 existing atomicity and recovery behavior.
+
+To fix code and rerun the failed test without a separate resume call, submit one edit
+segment with `repair`:
+
+```text
+resume HANDLE repair
+in app.go
+type "incorrect expression" "correct expression"
+```
+
+After the repair succeeds, the carrier retries the failed segment and runs its retained
+suffix automatically. If the repair fails, the same handle retains it for correction.
+
 See the [mixed-script contract](doc/spec/script.md#shell-in-script).
 
 ### Direct scripts

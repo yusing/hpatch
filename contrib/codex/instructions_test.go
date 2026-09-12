@@ -59,6 +59,7 @@ func TestInstructionsTeachMixedScriptBoundaries(t *testing.T) {
 				"`resume HANDLE`",
 				"`resume HANDLE retry`",
 				"Successful recovery automatically runs the retained suffix in the same carrier",
+				"`resume HANDLE repair`",
 				"`resume HANDLE accept`",
 				"one hour from creation",
 				"partial or unknown effects",
