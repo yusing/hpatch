@@ -29,7 +29,7 @@ Each listed file owns one ownership contract. Related facts are cited by stable 
 
 - [`CTR-SUBAGENTS-001`](subagents.md): router-owned third-party provider bridge
 - [`CTR-COMMENTARY-001`](commentary.md): router-owned subagent commentary projection
-- [`CTR-MENTOR-001`](mentor.md): router-owned subagent model schedule
+- [`CTR-MENTOR-001`](mentor.md): router-owned main and subagent model schedule
 - [`CTR-CTP-001`](ctp.md): router-owned compact provider representation
 - [`CTR-SYNTAX-001`](syntax.md): shared compact-script framing
 - [`CTR-CORE-001`](core.md): virtual workspace and immutable-baseline edit planning

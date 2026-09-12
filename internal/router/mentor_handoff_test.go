@@ -53,7 +53,7 @@ func mentorTestItems(t *testing.T, itemTypes ...string) []json.RawMessage {
 	return items
 }
 
-func TestMentorHandoffUsesCanonicalThreadSpawnMarker(t *testing.T) {
+func TestMentorHandoffRecognizesMainAndCanonicalThreadSpawn(t *testing.T) {
 	mentor := newMentorHandoff()
 	tests := []struct {
 		name    string
@@ -65,7 +65,7 @@ func TestMentorHandoffUsesCanonicalThreadSpawnMarker(t *testing.T) {
 		{name: "thread spawn", model: "gpt-5.6-luna", headers: mentorTestHeaders(t, "child"), want: true},
 		{name: "second eligible model", model: "gpt-5.6-terra", headers: mentorTestHeaders(t, "child-terra"), want: true},
 		{name: "ordinary session", model: "gpt-5.6-luna", headers: http.Header{}},
-		{name: "ordinary fork metadata", model: "gpt-5.6-luna", headers: serverMetadataHeaders(t, "turn", nil)},
+		{name: "ordinary fork metadata", model: "gpt-5.6-luna", headers: serverMetadataHeaders(t, "turn", nil), want: true},
 		{name: "leader model", model: mentorLeaderModel, headers: mentorTestHeaders(t, "leader")},
 		{name: "unknown lower model", model: "gpt-test", headers: mentorTestHeaders(t, "unknown")},
 		{name: "marker without metadata", model: "gpt-5.6-luna", headers: http.Header{openAISubagentHeader: []string{threadSpawnSubagent}}, wantErr: "canonical thread-spawn metadata"},
@@ -104,6 +104,81 @@ func TestMentorHandoffUsesCanonicalThreadSpawnMarker(t *testing.T) {
 			}
 			if string(reasoning["summary"]) != `"auto"` {
 				t.Fatalf("reasoning siblings = %s", request.fields["reasoning"])
+			}
+		})
+	}
+}
+
+func TestMentorHandoffAstraMapping(t *testing.T) {
+	for _, test := range []struct{ effort, want string }{
+		{"low", "low"}, {"medium", "low"}, {"high", "medium"},
+		{"xhigh", "high"}, {"max", "xhigh"}, {"ultra", "xhigh"}, {"", "low"},
+	} {
+		t.Run(test.effort, func(t *testing.T) {
+			for _, main := range []bool{false, true} {
+				mentor := newMentorHandoff()
+				headers := mentorTestHeaders(t, "thread")
+				if main {
+					headers.Del(openAISubagentHeader)
+					headers.Set(codexTurnMetadataHeader, `{"request_kind":"turn"}`)
+				}
+				metadata, valid := decodeCodexTurnMetadata(headers)
+				request := mentorTestRequest(t, "gpt-5.6")
+				if test.effort == "" {
+					delete(request.fields, "reasoning")
+				} else if err := request.setModelAndReasoningEffort("gpt-5.6", test.effort); err != nil {
+					t.Fatal(err)
+				}
+				handoff, err := mentor.prepare(headers, metadata, valid, &request)
+				if err != nil || handoff == nil || request.modelDescription() != "gpt-6-astra "+test.want {
+					t.Fatalf("main=%t: request=%q handoff=%v err=%v", main, request.modelDescription(), handoff, err)
+				}
+				handoff.record(mentorInputTokenLimit, true)
+				request = mentorTestRequest(t, "gpt-5.6")
+				handoff, err = mentor.prepare(headers, metadata, valid, &request)
+				if err != nil || handoff != nil || request.modelDescription() != "gpt-5.6 medium" {
+					t.Fatalf("post-handoff main=%t: request=%q handoff=%v err=%v", main, request.modelDescription(), handoff, err)
+				}
+			}
+		})
+	}
+}
+
+func TestMentorHandoffMainBoundary(t *testing.T) {
+	for _, test := range []struct {
+		name, model, metadata, marker string
+		want                          bool
+	}{
+		{"main luna", "gpt-5.6-luna", `{"request_kind":"turn"}`, "", true},
+		{"main terra", "gpt-5.6-terra", `{"request_kind":"turn"}`, "", true},
+		{"main sol unchanged", "gpt-5.6-sol", `{"request_kind":"turn"}`, "", false},
+		{"main astra unchanged", "gpt-6-astra", `{"request_kind":"turn"}`, "", false},
+		{"missing metadata", "gpt-5.6-luna", "", "", false},
+		{"invalid metadata", "gpt-5.6-luna", "{", "", false},
+		{"unmarked child", "gpt-5.6-luna", `{"subagent_kind":"thread_spawn"}`, "", false},
+		{"other subagent", "gpt-5.6-luna", `{"request_kind":"turn"}`, "review", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			headers := http.Header{}
+			headers.Set(threadIDHeader, "main")
+			if test.metadata != "" {
+				headers.Set(codexTurnMetadataHeader, test.metadata)
+			}
+			if test.marker != "" {
+				headers.Set(openAISubagentHeader, test.marker)
+			}
+			request := mentorTestRequest(t, test.model)
+			metadata, valid := decodeCodexTurnMetadata(headers)
+			handoff, err := newMentorHandoff().prepare(headers, metadata, valid, &request)
+			if err != nil || (handoff != nil) != test.want {
+				t.Fatalf("handoff=%v err=%v, want active=%t", handoff, err, test.want)
+			}
+			want := test.model + " medium"
+			if test.want {
+				want = mentorLeaderModel + " " + mentorLeaderEffort
+			}
+			if request.modelDescription() != want {
+				t.Fatalf("request=%q, want %q", request.modelDescription(), want)
 			}
 		})
 	}
@@ -249,6 +324,48 @@ func TestExecuteRequestMentorHandoffPreservesHistoryAndRestoresRequestedModel(t 
 		if !bytes.Contains(request.fields["input"], []byte("keep exact history")) {
 			t.Errorf("request %d lost inherited input: %s", index+1, request.fields["input"])
 		}
+	}
+}
+
+func TestExecuteRequestMainAstraMentorHandoff(t *testing.T) {
+	provider := &serverFakeProvider{}
+	for range 3 {
+		provider.results = append(provider.results, serverForwardResult{
+			response: serverHTTPResponse(string(mustTestJSON(t, map[string]any{
+				"status": "completed",
+				"output": mentorTestItems(t, "message"),
+				"usage":  map[string]any{"input_tokens": 1_000},
+			}))),
+		})
+	}
+	headers := serverMetadataHeaders(t, "turn", nil)
+	headers.Set(threadIDHeader, "main")
+	mentor := newMentorHandoff()
+	for range 3 {
+		request := mentorTestRequest(t, "gpt-5.6")
+		if err := request.setModelAndReasoningEffort("gpt-5.6", "ultra"); err != nil {
+			t.Fatal(err)
+		}
+		if err := executeRequest(t.Context(), t.Context(), request, headers, "main",
+			provider, io.Discard, nil, nil, nil, mentor); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for index, want := range []string{"gpt-6-astra xhigh", "gpt-6-astra xhigh", "gpt-5.6 ultra"} {
+		request, err := parseResponsesRequest(provider.forwarded[index])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if request.modelDescription() != want || !bytes.Contains(request.fields["input"], []byte("keep exact history")) {
+			t.Fatalf("request %d = %q, input=%s", index, request.modelDescription(), request.fields["input"])
+		}
+	}
+	// Completing main must not complete a newly spawned child's schedule.
+	childHeaders := mentorTestHeaders(t, "child")
+	metadata, valid := decodeCodexTurnMetadata(childHeaders)
+	child := mentorTestRequest(t, "gpt-5.6")
+	if handoff, err := mentor.prepare(childHeaders, metadata, valid, &child); err != nil || handoff == nil {
+		t.Fatalf("child handoff=%v err=%v", handoff, err)
 	}
 }
 

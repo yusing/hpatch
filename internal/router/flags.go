@@ -35,7 +35,7 @@ func newRouterFlags(stderr io.Writer) routerFlags {
 		streamIdleTimeout:    flags.Duration("stream-idle-timeout", defaultStreamIdleTimeout, "maximum upstream inactivity between WebSocket messages or HTTP response bytes"),
 		mode:                 flags.String("mode", defaultRewriteMode, "response mode: mekugi or passthrough"),
 		modelProtocol:        flags.String("model-protocol", defaultModelProtocol, "model protocol: native or ctp2"),
-		mentorHandoffEnabled: flags.Bool("mentor-handoff", true, "use gpt-5.6-sol high for eligible spawned subagents"),
+		mentorHandoffEnabled: flags.Bool("mentor-handoff", true, "start eligible main and subagent threads with a mentor model"),
 		grokEnabled:          flags.Bool("grok", false, "enable native Grok subagents and plaintext collaboration projection"),
 		grokAuthFile:         flags.String("grok-auth-file", "", "Grok OAuth credential file (default ~/.grok/auth.json)"),
 		metricsOutput:        flags.String("metrics-output", "", "optional final metrics JSON path"),

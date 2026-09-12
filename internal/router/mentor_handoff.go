@@ -56,11 +56,23 @@ func newMentorHandoff() *mentorHandoff {
 }
 
 func (m *mentorHandoff) prepare(headers http.Header, metadata codexTurnMetadata, metadataValid bool, request *parsedResponsesRequest) (*mentorRequest, error) {
-	if m == nil || !mentorEligibleModel(request.model()) || !isThreadSpawnSubagent(headers) {
+	if m == nil || !mentorEligibleModel(request.model()) {
 		return nil, nil
 	}
-	if !metadataValid || metadata.SubagentKind != threadSpawnSubagentKind {
-		return nil, errors.New("mentor handoff requires canonical thread-spawn metadata")
+	if isThreadSpawnSubagent(headers) {
+		if !metadataValid || metadata.SubagentKind != threadSpawnSubagentKind {
+			return nil, errors.New("mentor handoff requires canonical thread-spawn metadata")
+		}
+	} else {
+		// Main sessions (including ordinary forks) have no subagent marker.
+		for name := range headers {
+			if strings.EqualFold(name, openAISubagentHeader) {
+				return nil, nil
+			}
+		}
+		if !metadataValid || metadata.SubagentKind != "" || codexThreadID(headers) == "" {
+			return nil, nil
+		}
 	}
 	threadID := codexThreadID(headers)
 	if threadID == "" {
@@ -75,7 +87,25 @@ func (m *mentorHandoff) prepare(headers http.Header, metadata codexTurnMetadata,
 	}
 
 	requestedModel := request.model()
-	if err := request.setModelAndReasoningEffort(mentorLeaderModel, mentorLeaderEffort); err != nil {
+	model, effort := mentorLeaderModel, mentorLeaderEffort
+	if requestedModel == "gpt-5.6" {
+		model = "gpt-6-astra"
+		var reasoning struct {
+			Effort string `json:"effort"`
+		}
+		_ = json.Unmarshal(request.fields["reasoning"], &reasoning)
+		switch reasoning.Effort {
+		case "high":
+			effort = "medium"
+		case "xhigh":
+			effort = "high"
+		case "max", "ultra":
+			effort = "xhigh"
+		default:
+			effort = "low"
+		}
+	}
+	if err := request.setModelAndReasoningEffort(model, effort); err != nil {
 		m.mu.Unlock()
 		return nil, fmt.Errorf("prepare Mentor Handoff request: %w", err)
 	}
@@ -87,7 +117,7 @@ func (m *mentorHandoff) prepare(headers http.Header, metadata codexTurnMetadata,
 }
 
 func mentorEligibleModel(model string) bool {
-	return model == "gpt-5.6-luna" || model == "gpt-5.6-terra"
+	return model == "gpt-5.6" || model == "gpt-5.6-luna" || model == "gpt-5.6-terra"
 }
 
 func isThreadSpawnSubagent(headers http.Header) bool {
