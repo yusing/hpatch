@@ -16,6 +16,10 @@ import (
 // Presentation only: never evaluate code, expand paths, or alter the observed call.
 func subagentToolActivityTexts(item map[string]json.RawMessage, qualifiedName string, history *mekugiHistory, shellDisplay func(map[string]json.RawMessage, string) (string, bool)) []string {
 	name := jsonString(item, "name")
+	// Agent messages already have a dedicated commentary render.
+	if name == "send_message" && commentaryExcluded(jsonString(item, "namespace"), name) {
+		return nil
+	}
 	if commentaryExcluded(jsonString(item, "namespace"), name) {
 		return []string{"Tool call: " + commentaryCode(qualifiedName)}
 	}
