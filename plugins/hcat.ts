@@ -313,7 +313,7 @@ async function readHashLines(spec: ReadSpec, options: ReaderOptions): Promise<Co
 /**
  * hcatArguments converts parsed hcat input to the internal argv representation.
  */
-function hcatArguments(input: string): string[] {
+function hcatArguments(input: string): {argv: string[]; pathIndex: number} {
   const prefix: string[] = [];
   while (input.startsWith("--max-tokens ") || input.startsWith("--preview-bytes ")
       || input.startsWith("--tail ") || input.startsWith("-n ")) {
@@ -332,9 +332,9 @@ function hcatArguments(input: string): string[] {
   readerOptions(prefix, true);
   const spec = parseReadSpec(stripOptionalFinalNewline(input));
   if (spec.startLine === 0) {
-    return [...prefix, spec.path];
+    return {argv: [...prefix, spec.path], pathIndex: prefix.length};
   }
-  return [...prefix, spec.path, `${spec.startLine}:${spec.endLine}`];
+  return {argv: [...prefix, spec.path, `${spec.startLine}:${spec.endLine}`], pathIndex: prefix.length};
 }
 
 
@@ -365,10 +365,12 @@ export function createHCatTool(description: string, grammar: string): Tool<strin
     description,
     grammar,
     argv(input, context) {
-      const argumentsValue = hcatArguments(input);
-      const {offset} = readerOptions(argumentsValue, true);
-      argumentsValue[offset] = context.resolvePath(argumentsValue[offset]);
-      return argumentsValue;
+      const {argv, pathIndex} = hcatArguments(input);
+      // Preserve the parsed boundary after flattening into executor argv.
+      // Relative option-like names need a path spelling, not an option spelling.
+      const resolved = context.resolvePath(argv[pathIndex]);
+      argv[pathIndex] = resolved.startsWith("-") ? `./${resolved}` : resolved;
+      return argv;
     },
     async execute(argv) {
       let options: ReaderOptions;

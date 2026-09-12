@@ -66,17 +66,18 @@ func parseHRunArguments(arguments []string) (hrunOptions, []string, error) {
 }
 
 // hrunCapture drains every write. Token-only tail mode uses a byte ring;
-// line mode retains complete lines instead of imposing a byte ceiling.
+// line mode retains complete lines, bounding each candidate when tokens are limited.
 type hrunCapture struct {
-	maxLines int
-	rows     []string
-	rowStart int
-	pending  strings.Builder
-	buffer   []byte
-	start    int
-	size     int
-	tail     bool
-	omitted  bool
+	maxLines     int
+	rows         []string
+	rowStart     int
+	pendingBytes *hrunCapture
+	pending      strings.Builder
+	buffer       []byte
+	start        int
+	size         int
+	tail         bool
+	omitted      bool
 }
 
 func (capture *hrunCapture) Write(value []byte) (int, error) {
@@ -111,7 +112,7 @@ func (capture *hrunCapture) Write(value []byte) (int, error) {
 }
 
 // Line selection retains complete LF-delimited lines, including an unterminated
-// final line. Its memory depends on selected line lengths, not a token budget.
+// final line. With a token ceiling, only the admissible bytes of each line are retained.
 func (capture *hrunCapture) appendLine(line string) {
 	if len(capture.rows) < capture.maxLines {
 		capture.rows = append(capture.rows, line)
@@ -124,6 +125,30 @@ func (capture *hrunCapture) appendLine(line string) {
 	}
 }
 
+func (capture *hrunCapture) writeLinePart(value []byte) {
+	if len(capture.buffer) <= utf8.UTFMax {
+		capture.pending.Write(value)
+		return
+	}
+	if capture.pendingBytes == nil {
+		// Reuse the line capture's otherwise idle byte buffer. Scan all
+		// input for newlines even after this candidate window is full.
+		capture.pendingBytes = &hrunCapture{buffer: capture.buffer, tail: capture.tail}
+	}
+	capture.pendingBytes.Write(value)
+}
+
+func (capture *hrunCapture) finishLine() {
+	if capture.pendingBytes == nil {
+		capture.appendLine(capture.pending.String())
+		capture.pending.Reset()
+		return
+	}
+	capture.appendLine(capture.pendingBytes.text())
+	capture.omitted = capture.omitted || capture.pendingBytes.omitted
+	*capture.pendingBytes = hrunCapture{buffer: capture.buffer, tail: capture.tail}
+}
+
 func (capture *hrunCapture) writeLines(value []byte) (int, error) {
 	length := len(value)
 	for len(value) > 0 {
@@ -133,12 +158,11 @@ func (capture *hrunCapture) writeLines(value []byte) (int, error) {
 		}
 		end := bytes.IndexByte(value, '\n')
 		if end < 0 {
-			capture.pending.Write(value)
+			capture.writeLinePart(value)
 			break
 		}
-		capture.pending.Write(value[:end+1])
-		capture.appendLine(capture.pending.String())
-		capture.pending.Reset()
+		capture.writeLinePart(value[:end+1])
+		capture.finishLine()
 		value = value[end+1:]
 	}
 	return length, nil
@@ -146,9 +170,8 @@ func (capture *hrunCapture) writeLines(value []byte) (int, error) {
 
 func (capture *hrunCapture) text() string {
 	if capture.maxLines > 0 {
-		if capture.pending.Len() > 0 {
-			capture.appendLine(capture.pending.String())
-			capture.pending.Reset()
+		if capture.pending.Len() > 0 || (capture.pendingBytes != nil && capture.pendingBytes.size > 0) {
+			capture.finishLine()
 		}
 		value := strings.Join(capture.rows[capture.rowStart:], "") + strings.Join(capture.rows[:capture.rowStart], "")
 		// Bound the tokenizer request after line selection. The same byte

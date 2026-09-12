@@ -199,10 +199,14 @@ func TestShellRunnerHRunLines(t *testing.T) {
 	if stdout != "out\n" || !strings.HasPrefix(stderr, "err\nhrun:") || status != 7 {
 		t.Fatalf("line streams/status: %q %q %d", stdout, stderr, status)
 	}
-	stdout, stderr, status = runShellWorkerTest(t, registry, "bash", nil,
-		`hrun -n 1 --max-tokens 20 -- sh -c 'head -c 17000000 /dev/zero | tr "\000" a'`, nil)
-	if status != 0 || stdout == "" || !strings.Contains(stderr, "20-token limit") {
-		t.Fatalf("large selected line: %q %q %d", stdout, stderr, status)
+	for _, mode := range []string{"", "--tail"} {
+		stdout, stderr, status = runShellWorkerTest(t, registry, "bash", nil,
+			`hrun -n 1 --max-tokens 20 `+mode+` -- sh -c 'printf START; head -c 17000000 /dev/zero | tr "\000" a; printf END'`, nil)
+		if status != 0 || !strings.Contains(stderr, "20-token limit") ||
+			(mode == "" && !strings.HasPrefix(stdout, "START")) ||
+			(mode != "" && !strings.HasSuffix(stdout, "END")) {
+			t.Fatalf("large selected line mode=%q: %q %q %d", mode, stdout, stderr, status)
+		}
 	}
 	stdout, stderr, status = runShellWorkerTest(t, registry, "bash", nil,
 		`hrun -n 1 -- sh -c 'head -c 200000 /dev/zero | tr "\000" a'`, nil)
@@ -213,6 +217,31 @@ func TestShellRunnerHRunLines(t *testing.T) {
 	for _, flags := range []string{"-n", "-n 0", "-n -1", "-n 01", "-n 1.5", "-n 999999999999999999999", "-n 1 -n 2"} {
 		if _, _, err := parseHRunArguments(strings.Fields(flags + " -- echo")); err == nil {
 			t.Fatalf("accepted %q", flags)
+		}
+	}
+}
+
+func TestHRunCombinedCaptureBoundsPendingLine(t *testing.T) {
+	for _, tail := range []bool{false, true} {
+		capture := hrunCapture{maxLines: 2, buffer: make([]byte, 132), tail: tail}
+		chunk := []byte(strings.Repeat("a", 4096))
+		for range 1000 {
+			capture.Write(chunk)
+			if capture.pending.Len() != 0 || capture.pendingBytes == nil ||
+				capture.pendingBytes.size > len(capture.buffer) {
+				t.Fatal("combined mode retained an unbounded pending line")
+			}
+		}
+		capture.Write([]byte("END\nlast\n"))
+		got := capture.text()
+		if !capture.omitted || len(got) > len(capture.buffer) {
+			t.Fatalf("tail=%t: bytes=%d omitted=%t", tail, len(got), capture.omitted)
+		}
+		if tail && !strings.HasSuffix(got, "END\nlast\n") {
+			t.Fatalf("tail lost final line boundaries: %q", got)
+		}
+		if !tail && strings.Trim(got, "a") != "" {
+			t.Fatalf("head lost initial bytes: %q", got)
 		}
 	}
 }

@@ -152,7 +152,8 @@ evaluate shell syntax, shell functions, or private reader names. An explicit she
 is required for compound commands. Display-budget exhaustion never cancels the command:
 stdout and stderr are drained to completion. Token-only capture uses byte-bounded buffers;
 line capture retains at most N complete lines per stream plus the current unfinished line,
-so memory depends on line lengths. Infinite producers still require cancellation.
+so line-only memory depends on line lengths. With both limits, each line candidate is
+byte-bounded during ingestion before final token selection. Infinite producers still require cancellation.
 Prefix mode keeps the beginning of each stream; tail mode keeps the ending. Results are delivered after completion,
 not streamed as live progress. Existing host continuation and cancellation remain authoritative.
 

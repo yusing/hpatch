@@ -437,7 +437,7 @@ describe("hcat built-in plugin", () => {
     const description = plugin.tools[0].specification.description.replace(/\s+/g, " ");
     expect(description).toContain("Read one UTF-8 file or inclusive logical-line range");
     expect(description).toContain("`LINE:HASH TEXT`");
-    expect(description).toContain("`hcat PATH [START:END]`");
+    expect(description).toContain("`hcat [-n N] [--max-tokens N] [--preview-bytes N] [--tail] PATH [START:END]`");
     for (const persistent of ["authorized edit", "ordinary read", "HPATCH targets", "through `shell`"]) {
       expect(description).not.toContain(persistent);
     }
@@ -469,6 +469,26 @@ describe("hcat built-in plugin", () => {
       "\"unterminated",
     ]) {
       expect(rustRegexMatches(format.definition, input)).toBe(false);
+    }
+  });
+
+  test("preserves quoted option-like paths through execution", async () => {
+    const directory = await temporaryDirectory("hcat-option-path-");
+    process.chdir(directory);
+    const tool = createHCatTool("", "");
+    for (const name of ["--tail", "--max-tokens", "--preview-bytes", "-n"]) {
+      const file = path.join(directory, name);
+      await writeFile(file, "first\nsecond\n");
+      for (const [prefix, range, expected] of [
+        ["", "", formatVerifiedRow(1, "first") + formatVerifiedRow(2, "second")],
+        ["-n 1 --tail ", " 2:2", formatVerifiedRow(2, "second")],
+      ]) {
+        const argv = await tool.parse(`${prefix}${JSON.stringify(name)}${range}`, {
+          resolvePath: value => value,
+        });
+        expect(argv).toContain(`./${name}`);
+        expect(await tool.execute(argv, executionContext)).toMatchObject({stdout: expected, exitCode: 0});
+      }
     }
   });
 
