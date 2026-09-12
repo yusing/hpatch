@@ -223,7 +223,7 @@ func (t *mekugiResponseTransform) transformStructuredCommentary(item map[string]
 	}
 	var ids []string
 	if len(extracted.mutations) != 0 {
-		ids, err = t.proxy.journals.apply(t.ctx, t.proxy.replayStore, t.directory, t.shellThreadID, callID+":journal", extracted.mutations)
+		ids, err = t.proxy.journals.apply(t.ctx, t.proxy.replayStore, t.directory, t.shellThreadID, callID+":journal", bindJournalAnswers(extracted.mutations, t.journalQuestion))
 		if err != nil {
 			return nil, err
 		}

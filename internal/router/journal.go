@@ -25,23 +25,27 @@ const (
 	maxJournalItems     = 256
 	maxJournalItemBytes = 16 << 10
 	// Terminal delivery is independent of the live progress budget. The extra
-	// space covers item labels and the bounded canonical agent name.
-	maxJournalFlushBytes = maxJournalItems*(maxJournalItemBytes+64) + maxJournalItemBytes
+	// space covers indentation of every content line, Q&A labels, item IDs,
+	// and the bounded canonical agent name.
+	maxJournalFlushBytes = maxJournalItems*(3*maxJournalItemBytes+128) + maxJournalItemBytes
 	maxJournalReceipts   = 16384
 )
 
 var errJournalThreadCapacity = errors.New("journal thread capacity reached")
 
 type journalMutation struct {
-	Op        string  `json:"op"`
-	ID        string  `json:"id,omitempty"`
-	Text      *string `json:"text,omitempty"`
-	ReportNow bool    `json:"report_now,omitzero"`
+	Op               string  `json:"op"`
+	ID               string  `json:"id,omitempty"`
+	Text             *string `json:"text,omitempty"`
+	Answer           *bool   `json:"answer,omitempty"`
+	inferredQuestion string
+	ReportNow        bool `json:"report_now,omitzero"`
 }
 
 type journalItem struct {
 	ID        string `json:"id"`
 	Text      string `json:"text"`
+	Question  string `json:"question,omitempty"`
 	Author    string `json:"author"`
 	Created   uint64 `json:"created"`
 	Updated   uint64 `json:"updated"`
@@ -281,6 +285,15 @@ func (s *journalStore) initialize(ctx context.Context, store *mekugiReplayStore,
 	})
 }
 
+// Pin inferred source without changing the model-authored receipt digest.
+func bindJournalAnswers(mutations []journalMutation, question string) []journalMutation {
+	bound := slices.Clone(mutations)
+	for index := range bound {
+		bound[index].inferredQuestion = question
+	}
+	return bound
+}
+
 func decodeJournalMutations(raw []byte) ([]journalMutation, error) {
 	var mutations []journalMutation
 	decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -322,12 +335,25 @@ func (s *journalStore) apply(ctx context.Context, store *mekugiReplayStore, work
 			return errors.New("journal receipt capacity reached")
 		}
 		for _, mutation := range mutations {
+			question := ""
 			index := slices.IndexFunc(j.Items, func(item journalItem) bool { return item.ID == mutation.ID })
+			if mutation.Op == "edit" && index >= 0 {
+				question = j.Items[index].Question
+			}
+			if mutation.Answer != nil {
+				question = ""
+				if *mutation.Answer {
+					question = mutation.inferredQuestion
+					if strings.TrimSpace(question) == "" || !utf8.ValidString(question) {
+						return errors.New("journal answer requires a nonblank UTF-8 user question")
+					}
+				}
+			}
 			switch mutation.Op {
 			case "add", "edit":
 				if mutation.Text == nil || strings.TrimSpace(*mutation.Text) == "" || !utf8.ValidString(*mutation.Text) ||
-					len(*mutation.Text) > maxJournalItemBytes {
-					return errors.New("journal text must be nonblank UTF-8 and at most 16 KiB")
+					len(*mutation.Text)+len(question) > maxJournalItemBytes {
+					return errors.New("journal text must be nonblank UTF-8; text and question together must be at most 16 KiB")
 				}
 				if mutation.Op == "add" && (mutation.ID != "" || len(j.Items) >= maxJournalItems) {
 					return errors.New("journal add requires no ID and available item capacity")
@@ -339,8 +365,8 @@ func (s *journalStore) apply(ctx context.Context, store *mekugiReplayStore, work
 				if index < 0 {
 					return errors.New("journal item not found")
 				}
-				if mutation.Text != nil {
-					return errors.New("journal delete does not accept text")
+				if mutation.Text != nil || mutation.Answer != nil {
+					return errors.New("journal delete does not accept text or answer")
 				}
 			default:
 				return errors.New("journal op must be add, edit, or delete")
@@ -352,10 +378,11 @@ func (s *journalStore) apply(ctx context.Context, store *mekugiReplayStore, work
 			switch mutation.Op {
 			case "add":
 				j.NextID++
-				item := journalItem{ID: fmt.Sprintf("j%d", j.NextID), Text: *mutation.Text, Author: j.Author, Created: j.Sequence, Updated: j.Sequence, ReportNow: mutation.ReportNow}
+				item := journalItem{ID: fmt.Sprintf("j%d", j.NextID), Text: *mutation.Text, Question: question, Author: j.Author, Created: j.Sequence, Updated: j.Sequence, ReportNow: mutation.ReportNow}
 				j.Items = append(j.Items, item)
 				ids = append(ids, item.ID)
 			case "edit":
+				j.Items[index].Question = question
 				j.Items[index].Text = *mutation.Text
 				j.Items[index].Updated = j.Sequence
 				j.Items[index].ReportNow = mutation.ReportNow

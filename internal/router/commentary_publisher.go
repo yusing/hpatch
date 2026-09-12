@@ -39,15 +39,16 @@ type publishedCommentary struct {
 }
 
 type commentaryRoute struct {
-	originThread string
-	author       string
-	threadID     string
-	sessionID    string
-	callID       string
-	expires      time.Time
-	nextID       uint64
-	events       []publishedCommentary
-	complete     bool
+	journalQuestion string
+	originThread    string
+	author          string
+	threadID        string
+	sessionID       string
+	callID          string
+	expires         time.Time
+	nextID          uint64
+	events          []publishedCommentary
+	complete        bool
 }
 
 // Replay provenance has its own non-evicting budget. A thread can outlive its
@@ -307,8 +308,9 @@ func (b *commentaryBroker) serveHTTP(writer http.ResponseWriter, request *http.R
 	b.mu.Lock()
 	b.cleanupExpiredLocked(time.Now())
 	route := b.routes[token]
-	var session, thread string
+	var session, thread, question, callID string
 	if route != nil {
+		question, callID = route.journalQuestion, route.callID
 		session, thread = route.sessionID, route.originThread
 		route.expires = time.Now().Add(commentaryRouteTTL)
 	}
@@ -326,17 +328,17 @@ func (b *commentaryBroker) serveHTTP(writer http.ResponseWriter, request *http.R
 		http.Error(writer, "invalid journal publication", http.StatusBadRequest)
 		return
 	}
-	ids, err := b.journalPublisher(request.Context(), session, thread, publication.ID, mutations)
+	ids, err := b.journalPublisher(request.Context(), session, thread, publication.ID, bindJournalAnswers(mutations, question))
 	if err != nil {
 		http.Error(writer, "journal mutation rejected", http.StatusBadRequest)
 		return
 	}
 	source := "code_mode"
-	if route.callID == "" {
+	if callID == "" {
 		source = "shell"
 	}
 	trace := featureUsageTrace{debug: b.debug, threadID: thread}
-	trace.record("journal", source, "mutation", "accepted", route.callID, "")
+	trace.record("journal", source, "mutation", "accepted", callID, "")
 
 	writer.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(writer).Encode(map[string]any{"ok": true, "items": ids})
@@ -451,6 +453,15 @@ func (s *httpShellCommentarySink) send(ctx context.Context, publication map[stri
 		return fmt.Errorf("journal publisher returned status %d", response.StatusCode)
 	}
 	return nil
+}
+
+// Only a call-scoped capability can pin the request's user message.
+func (b *commentaryBroker) bindJournalQuestion(token, question string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if route := b.routes[token]; route != nil && route.callID != "" {
+		route.journalQuestion = question
+	}
 }
 
 func (b *commentaryBroker) bindActivity(token, thread string) {

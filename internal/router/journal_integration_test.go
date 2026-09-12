@@ -149,7 +149,7 @@ func TestJournalLiveReportRemainsEligibleForTerminalFlush(t *testing.T) {
 		}
 	}
 	live := "Journal update `/root` (`j1`)\nTests passed"
-	flush := "Journal flush `/root`\n- `j1` Tests passed"
+	flush := "Journal flush `/root`\n- `j1`\n\n  Tests passed\n"
 	deliver(false, false, live)
 	checkState(false, false)
 	deliver(false, true, live)
@@ -165,7 +165,7 @@ func TestJournalLiveReportRemainsEligibleForTerminalFlush(t *testing.T) {
 	}
 	checkState(false, false)
 	deliver(false, true, "")
-	deliver(true, true, "Journal flush `/root`\n- `j1` Tests passed again")
+	deliver(true, true, "Journal flush `/root`\n- `j1`\n\n  Tests passed again\n")
 	checkState(true, true)
 }
 
@@ -563,5 +563,23 @@ func TestJournalToolSchemaIncludesBatchedMutations(t *testing.T) {
 	}
 	if !bytes.Equal(schema.Properties["journal"], journalMutationsSchema()) {
 		t.Fatalf("missing or incorrect journal schema: %s", schema.Properties["journal"])
+	}
+}
+
+func TestJournalFlushNestsMultilineMarkdown(t *testing.T) {
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+	transform, _, _, workspace := newMekugiTestTransformWithProxy(t, proxy)
+	body := "Result\n\n- first\n  - nested\n\n1. ordered\n2. next\n\n```go\nx := 1\n```\n\nParagraph."
+	if _, err := proxy.journals.apply(t.Context(), proxy.replayStore, workspace, "thread-1", "", []journalMutation{
+		{Op: "add", Text: new(body)},
+		{Op: "add", Text: new("Second item")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	messages, err := transform.prepareJournalDelivery(true)
+	defer transform.ReleaseDelivery()
+	want := "Journal flush `/root`\n- `j1`\n\n  Result\n  \n  - first\n    - nested\n  \n  1. ordered\n  2. next\n  \n  ```go\n  x := 1\n  ```\n  \n  Paragraph.\n\n- `j2`\n\n  Second item\n"
+	if err != nil || len(messages) != 1 || commentaryMessageText(messages[0]) != want {
+		t.Fatalf("flush: %s %v; want %q", mustTestJSON(t, messages), err, want)
 	}
 }

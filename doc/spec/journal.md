@@ -3,10 +3,11 @@
 ## REQ-JOURNAL-001 — Per-thread milestone journals
 
 Mekugi mode owns one durable milestone journal per stable thread. Passthrough is unchanged.
-Items have router-assigned IDs (`j1`, `j2`, ...), nonblank UTF-8 text, canonical author,
-router sequence creation/update values, `report_now`, `reported`, and `flushed` state. A thread has at most
-256 items and 256 threads are retained. Item text and the per-response live progress budget
-are 16 KiB. Terminal flushes have a separate bound sized for all 256 items, including labels
+Items have router-assigned IDs (`j1`, `j2`, ...), nonblank UTF-8 text, an optional original
+question, canonical author, router sequence creation/update values, `report_now`, `reported`,
+and `flushed` state. A thread has at most 256 items and 256 threads are retained. Combined
+question and text content is limited to 16 KiB per item. The per-response live progress budget
+is also 16 KiB. Terminal flushes have a separate bound sized for all 256 items, including labels
 and the author heading; child root copies have an independent terminal budget of the same size
 plus the bounded child prefix. Capacity exhaustion rejects new journal state, not unrelated calls. When initialization hits
 capacity, ordinary provider answers remain visible and journal finish returns an error.
@@ -25,6 +26,15 @@ It MUST remain eligible for a terminal **Journal flush**, whose heading identifi
 and whose entries identify their IDs. These labels distinguish journals from stock commentary
 and reasoning summaries without rewriting stock output. Deletes are silent unless retracting
 an already-reported ID.
+
+An add/edit mutation may carry `answer: true`, with only the answer in `text`. The router
+attaches the latest actual user message from that request's visible history, not instruction
+or environment context. The agent does not repeat the message. Missing or oversized source
+content rejects the answer mutation rather than inventing or silently truncating a question.
+Omitting `answer` on edit preserves the attached question; false clears it; true attaches the
+current source message. Delete, list, and finish reject a direct `answer` operand. The attached
+question is retained by list, durable replay, restart, and forks, independently of later user
+messages. Inference is request-local; concurrent threads and branches do not share its source.
 
 Mekugi mode also exposes `functions.journal` with one operation: `list`, `add`, `edit`, or
 `delete`, or `finish`. List is read-only and may address only a proven ancestor or descendant journal. Unknown
@@ -66,15 +76,20 @@ are rewritten to journal guidance. Passthrough retains the stock tool and prompt
 
 Journals record checkpoints and milestones, not plans or ongoing narration. Agent guidance
 asks for a concise final report of findings, results, validation, or blockers, with superseded
-entries reconciled. The router renders unflushed revisions verbatim rather than rewriting them.
+entries reconciled. Agents mark answer items with `answer: true` and put only the answer in
+`text`; the router supplies the original question. Live notices and terminal flushes label these as **Question** and **Answer**.
+The router preserves authored Markdown rather than summarizing it. Each terminal item keeps its
+ID separate from its body and indents all body lines under that item, including blank lines,
+nested lists, paragraphs, and fenced code blocks.
 
-Code Mode reserves `await journal({op, id?, text?, report_now?})`, also accepting
+Code Mode reserves `await journal({op, id?, text?, answer?, report_now?})`, also accepting
 a mutation array. The parser preserves strings, comments, properties, and unrelated
 identifiers, and leaves unparseable source unchanged for the executor to diagnose.
 
 Bash and POSIX reserve `journal add TEXT`, `journal edit ID TEXT`, and
-`journal delete ID`, optionally followed by `--report-now`. Expanded operands remain
-individual argv values. A successful publication writes no script output. Invalid
+`journal delete ID`, optionally followed by `--report-now`. Shell commands record milestones;
+use the dedicated tool, a structured tool mutation, or Code Mode for answer items.
+Expanded operands remain individual argv values. A successful publication writes no script output. Invalid
 mutations and unavailable publishers return errors rather than silently losing records.
 There is no `commentary` alias. Other interpreters have no journal builtin.
 
@@ -116,3 +131,6 @@ and drains already-buffered provider output rather than leaking a successful pro
    containing finish and its last mutations, with no final-answer continuation.
 8. Debug evidence separates applied mutations, runtime wiring, live rendering, and
    terminal flushing without recording journal bodies or private publication credentials.
+9. Multiline Markdown stays within its terminal journal item. Answer items display the
+   original question and a labelled answer in live and terminal delivery; question edits,
+   clearing, list, replay, restart, and forks preserve the specified state semantics.

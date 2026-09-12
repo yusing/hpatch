@@ -32,6 +32,8 @@ command sessions, and patch diff UI. No fork, no config edits, no daemon.
     every new or revised entry, including live updates. Only revisions already flushed are
     skipped. Journals replace the separate final-answer essay. Agents finish with a direct
     journal finish call, which completes the turn without an extra model request.
+  - Answer entries show the original question and a labelled answer. Multiline lists and
+    code blocks stay grouped with their journal entry.
   - Scripts can record milestones without mixing them into command output. Child updates
     carry the agent's path when Codex supplies its identity.
   - When Codex supplies parent-thread metadata, child activity also appears inline
@@ -332,6 +334,10 @@ Omit `--report-now` or `report_now` to record silently for the terminal flush. I
 updates also remain eligible for that flush. Other
 interpreters do not support the shell journal command. Use `functions.journal` to list,
 add, edit, or delete entries directly.
+
+Answer entries use `answer: true` in a structured journal call or Code Mode, with only the
+answer in `text`. Mekugi attaches the latest user message automatically. Edits preserve that
+question unless marked as a new answer or cleared with `answer: false`.
 
 When programs need separate interpreters, execution options, or isolated shell state,
 Code Mode can run an explicit sequential batch:

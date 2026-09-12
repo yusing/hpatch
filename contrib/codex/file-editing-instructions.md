@@ -52,6 +52,11 @@ user-visible notice.
 Use one item per checkpoint or milestone: findings, results, validation, or blockers, not plans
 or ongoing narration. Edit or delete superseded entries. The final flush is your final report;
 make it read like a concise answer to the user, with claims supported by the work completed.
+When an item answers the user's latest message, set `answer: true` and put only the answer
+in `text`. Mekugi attaches the original user message; do not repeat it in tool arguments.
+Write normal Markdown in `text`; the renderer keeps paragraphs, lists, and code blocks
+within their journal item. On edit, omit `answer` to preserve the attached question, or set
+it to false to turn the item into a milestone.
 Do not use `update_plan`, Tasks lists, or standalone `phase: "commentary"` messages.
 To finish your turn, call `functions.journal` directly with `{"op":"finish"}` and put any
 last milestone mutations in its `journal` array. Make it the only call in that response,
@@ -63,6 +68,8 @@ Use an available user-input tool for questions. If none is available, record the
 Code Mode supports `await journal({op: "add", text: "Tests passed", report_now: true})`.
 Bash/POSIX supports `journal add 'Tests passed' --report-now`; other interpreters have no
 journal builtin. Successful runtime mutations produce no script output.
+For answer items, use `functions.journal` or a structured mutation, including Code Mode
+`await journal({op: "add", answer: true, text: "Yes, both are supported."})`.
 The finish operation is direct-tool-only, not a shell or Code Mode journal operation.
 Do not wake solely to report progress.
 

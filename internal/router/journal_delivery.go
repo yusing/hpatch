@@ -15,6 +15,13 @@ type journalDelivery struct {
 	terminal  bool
 }
 
+func journalItemText(item journalItem) string {
+	if item.Question == "" {
+		return item.Text
+	}
+	return "**Question:**\n\n" + item.Question + "\n\n**Answer:**\n\n" + item.Text
+}
+
 func journalUpdateText(author, id, text string) string {
 	heading := "Journal update"
 	if author != "" {
@@ -78,7 +85,7 @@ func (t *mekugiResponseTransform) prepareJournalDelivery(terminal bool) ([]map[s
 		return nil, err
 	}
 	for _, item := range journal.Items {
-		if item.ReportNow && !item.Reported && len(journalUpdateText(journal.Author, item.ID, item.Text)) <= maxCommentaryPublicationBytes-t.journalLiveBytes {
+		if item.ReportNow && !item.Reported && len(journalUpdateText(journal.Author, item.ID, journalItemText(item))) <= maxCommentaryPublicationBytes-t.journalLiveBytes {
 			t.journalQuietFile = nil
 			break
 		}
@@ -135,7 +142,13 @@ func (t *mekugiResponseTransform) prepareJournalDelivery(terminal bool) ([]map[s
 				flushed++
 				continue
 			}
-			text.WriteString("\n- " + commentaryCode(item.ID) + " " + item.Text)
+			// Markdown treats CRLF and bare CR as line breaks too. Normalize only
+			// the rendering copy so every logical line remains inside this item.
+			body := strings.ReplaceAll(journalItemText(item), "\r\n", "\n")
+			body = strings.ReplaceAll(body, "\r", "\n")
+			text.WriteString("\n- " + commentaryCode(item.ID) + "\n\n  " + strings.ReplaceAll(body, "\n", "\n  "))
+
+			text.WriteByte('\n')
 			revisions[item.ID] = item.Updated
 		}
 		t.journalNewCount, t.journalFlushedCount = len(revisions), flushed
@@ -151,7 +164,7 @@ func (t *mekugiResponseTransform) prepareJournalDelivery(terminal bool) ([]map[s
 			if item.Reported || !item.ReportNow {
 				continue
 			}
-			text := journalUpdateText(journal.Author, item.ID, item.Text)
+			text := journalUpdateText(journal.Author, item.ID, journalItemText(item))
 			if len(text) > maxCommentaryPublicationBytes-t.journalLiveBytes {
 				continue
 			}

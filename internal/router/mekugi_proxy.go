@@ -267,6 +267,7 @@ type mekugiResponseTransform struct {
 	journalNewCount           int
 	journalFlushedCount       int
 	journalDeliveryRelease    func()
+	journalQuestion           string // Request-local user text for answer-marked journal mutations.
 	journalActive             bool
 	journalPending            map[string]bool
 	journalCalls              map[string]map[string]json.RawMessage
@@ -551,6 +552,7 @@ func (p *mekugiProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	} else {
 		transform.finalAnswer.journal = true
 	}
+	transform.journalQuestion = journalQuestionFromInput(request.fields["input"])
 	transform.journalActive = true
 	transform.journalPending = make(map[string]bool)
 	transform.journalCalls = make(map[string]map[string]json.RawMessage)

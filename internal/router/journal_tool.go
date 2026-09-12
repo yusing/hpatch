@@ -17,6 +17,7 @@ const journalHistoryTool = "__mekugi_journal"
 type journalListItem struct {
 	ID       string `json:"id"`
 	Text     string `json:"text"`
+	Question string `json:"question,omitempty"`
 	Author   string `json:"author"`
 	Reported bool   `json:"reported"`
 	Flushed  bool   `json:"flushed"`
@@ -31,6 +32,7 @@ func journalMutationsSchema() json.RawMessage {
 			"properties": map[string]any{
 				"op":         map[string]any{"type": "string", "enum": []string{"add", "edit", "delete"}},
 				"id":         map[string]any{"type": "string"},
+				"answer":     map[string]any{"type": "boolean", "description": "Mark text as an answer to the latest user message; edit preserves the association when omitted and clears it when false."},
 				"text":       map[string]any{"type": "string"},
 				"report_now": map[string]any{"type": "boolean"},
 			}, "required": []string{"op"},
@@ -78,6 +80,7 @@ func exposeJournalTool(fields map[string]json.RawMessage, catalog *responsesTool
 				"op":         map[string]any{"type": "string", "enum": []string{"list", "add", "edit", "delete", "finish"}},
 				"id":         map[string]any{"type": "string", "description": "Router-assigned item ID; required for edit and delete."},
 				"text":       map[string]any{"type": "string", "description": "Required nonblank milestone text for add and edit."},
+				"answer":     map[string]any{"type": "boolean", "description": "For add/edit, associate text with the inferred latest user message. Omit on edit to preserve; false clears it."},
 				"journal":    journalMutationsSchema(),
 				"agent":      map[string]any{"type": "string", "description": "Canonical path of a proven ancestor or descendant, for list only. Defaults to the caller."},
 				"report_now": map[string]any{"type": "boolean"},
@@ -163,7 +166,7 @@ func (t *mekugiResponseTransform) executeJournalCall(item map[string]json.RawMes
 	var result any
 	if err := decoder.Decode(&args); err != nil || decoder.Decode(new(any)) != io.EOF {
 		result = map[string]any{"ok": false, "error": "invalid journal arguments"}
-	} else if args.Op == "finish" && (args.ID != "" || args.Text != nil || args.Agent != "" || args.ReportNow) {
+	} else if args.Op == "finish" && (args.ID != "" || args.Text != nil || args.Answer != nil || args.Agent != "" || args.ReportNow) {
 		result = map[string]any{"ok": false, "error": "journal finish accepts only op and batched journal mutations"}
 	} else {
 		if len(args.Journal) != 0 {
@@ -171,7 +174,7 @@ func (t *mekugiResponseTransform) executeJournalCall(item map[string]json.RawMes
 			if err != nil {
 				return nil, err
 			}
-			batchedIDs, err = t.proxy.journals.apply(t.ctx, t.proxy.replayStore, t.directory, t.shellThreadID, callID+":journal", mutations)
+			batchedIDs, err = t.proxy.journals.apply(t.ctx, t.proxy.replayStore, t.directory, t.shellThreadID, callID+":journal", bindJournalAnswers(mutations, t.journalQuestion))
 			if err != nil {
 				return nil, err
 			}
@@ -184,7 +187,7 @@ func (t *mekugiResponseTransform) executeJournalCall(item map[string]json.RawMes
 				result = map[string]any{"ok": true, "finish_requested": true}
 			}
 		} else if args.Op == "list" {
-			if args.ID != "" || args.Text != nil || args.ReportNow {
+			if args.ID != "" || args.Text != nil || args.Answer != nil || args.ReportNow {
 				err = errors.New("journal list accepts only agent and batched journal mutations")
 			}
 			thread := t.shellThreadID
@@ -197,14 +200,14 @@ func (t *mekugiResponseTransform) executeJournalCall(item map[string]json.RawMes
 			}
 			listed := make([]journalListItem, 0, len(items))
 			for _, item := range items {
-				listed = append(listed, journalListItem{ID: item.ID, Text: item.Text, Author: item.Author, Reported: item.Reported, Flushed: item.Flushed})
+				listed = append(listed, journalListItem{ID: item.ID, Text: item.Text, Question: item.Question, Author: item.Author, Reported: item.Reported, Flushed: item.Flushed})
 			}
 			result = map[string]any{"ok": true, "items": listed}
 		} else if args.Agent != "" {
 			err = errors.New("agent is only supported by journal list")
 		} else {
 			var ids []string
-			ids, err = t.proxy.journals.apply(t.ctx, t.proxy.replayStore, t.directory, t.shellThreadID, callID, []journalMutation{args.journalMutation})
+			ids, err = t.proxy.journals.apply(t.ctx, t.proxy.replayStore, t.directory, t.shellThreadID, callID, bindJournalAnswers([]journalMutation{args.journalMutation}, t.journalQuestion))
 			if err == nil {
 				t.featureTrace.record("journal", "tool", "mutation", "accepted", callID, "")
 				result = map[string]any{"ok": true, "id": ids[0]}
