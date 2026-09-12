@@ -46,5 +46,53 @@ var stockToolConflictReplacer = strings.NewReplacer(
 )
 
 func rewriteStockToolConflicts(input string) string {
-	return stockToolConflictReplacer.Replace(input)
+	return rewriteStockPlanInstructions(stockToolConflictReplacer.Replace(input))
+}
+
+// rewriteStockPlanInstructions removes checklist guidance independently of Codex's
+// launch-time filtering, which does not cover custom catalogs or direct routing.
+// Ordinary planning sections and our edit-planning workflow are not checklist APIs.
+// Source: codex-rs/core/src/context/update_plan_instructions.rs:4:62
+// without_update_plan_instructions in the read-only Codex source.
+func rewriteStockPlanInstructions(input string) string {
+	lines := strings.SplitAfter(input, "\n")
+	var rendered strings.Builder
+	for index := 0; index < len(lines); {
+		line := strings.TrimRight(lines[index], "\r\n")
+		switch line {
+		case "## Planning", "## Tasks", "# Tasks", "## `update_plan`", "## Plan tool", "## Plan Mode vs update_plan tool":
+			end := index + 1
+			for end < len(lines) && !strings.HasPrefix(lines[end], "# ") && !strings.HasPrefix(lines[end], "## ") &&
+				strings.TrimSpace(lines[end]) != mekugiInstructionsStartMarker && strings.TrimSpace(lines[end]) != mekugiInstructionsEndMarker {
+				end++
+			}
+			section := strings.Join(lines[index:end], "")
+			checklist := strings.Contains(section, "A tool named `update_plan` is available to you.") ||
+				strings.Contains(section, "When using the planning tool:\n- Skip using the planning tool for straightforward tasks (roughly the easiest 25%).\n- Do not make single-step plans.\n- When you made a plan, update it after having performed one of the sub-tasks that you shared on the plan.") ||
+				strings.Contains(section, "Separately, `update_plan` is a checklist/progress/TODOs tool; it does not enter or exit Plan Mode.") ||
+				strings.Contains(section, "You have access to an `update_plan` tool") ||
+				strings.Contains(section, "When `update_plan` is available, follow this section")
+			if checklist {
+				index = end
+				continue
+			}
+		}
+		if line == "Progress visibility:" && index+1 < len(lines) && strings.HasPrefix(lines[index+1], "If update_plan is available") {
+			index += 2
+			if index < len(lines) && strings.TrimSpace(lines[index]) == "" {
+				index++
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "- Use the plan tool ") || strings.HasPrefix(line, "- If you create a checklist or task list,") {
+			index++
+			for index < len(lines) && (strings.HasPrefix(lines[index], " ") || strings.HasPrefix(lines[index], "\t")) {
+				index++
+			}
+			continue
+		}
+		rendered.WriteString(lines[index])
+		index++
+	}
+	return rendered.String()
 }

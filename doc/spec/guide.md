@@ -34,7 +34,11 @@ immediately after the heading and blank separator with central guidance, and rem
 exec-command line. The active Astra prompt may instead have no legacy exec-command line and one
 pinned transport-independent shell-safety line after the search line; that safety line is preserved.
 The search and execution anchors must be unique, and an old file-editing section must be absent.
-For stock, marked, and configured custom prompts, the router also rewrites pinned conflicting
+For stock, marked, and configured custom prompts, the router removes recognized checklist-tool
+sections and list items before refreshing guidance, independently of Codex's launch-time filtering.
+This includes stock Planning/Tasks sections identified by their `update_plan` introduction, explicit
+plan-tool sections, and checklist progress instructions. Ordinary planning, edit planning, and
+unrelated custom instructions remain intact. The router also rewrites pinned conflicting
 progress-channel, initial-update, skill-announcement, approval-rejection delivery, 60-second wait, Code Mode batching,
 and unrestricted parallelization fragments outside the owned section. Progress uses journal mutations. Known reads and searches batch in a shell script, and parallelism respects tool
 contracts with hpatch running alone. Unrelated instructions, including authorization, validation,
