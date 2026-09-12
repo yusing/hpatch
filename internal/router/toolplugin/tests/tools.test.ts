@@ -296,6 +296,60 @@ describe("reader budgets and previews", () => {
   });
 });
 
+describe("hcat line limits", () => {
+  test("selects complete head/tail lines before optional token limits", async () => {
+    const directory = await temporaryDirectory("hcat-lines-");
+    const file = path.join(directory, "rows.txt");
+    const tool = createHCatTool("", "");
+    await writeFile(file, "one\r\ntwo\rthree\nfour");
+    for (const [flags, expected] of [
+      [["-n", "2"], formatVerifiedRow(1, "one") + formatVerifiedRow(2, "two")],
+      [["--tail", "-n", "2"], formatVerifiedRow(3, "three") + formatVerifiedRow(4, "four")],
+      [["-n", "2", "--max-tokens", "100"], formatVerifiedRow(1, "one") + formatVerifiedRow(2, "two")],
+      [["--tail", "-n", "2", "--max-tokens", "100"], formatVerifiedRow(3, "three") + formatVerifiedRow(4, "four")],
+    ] as const) {
+      const result = await tool.execute([...flags, file], executionContext);
+      expect(result.stdout).toBe(expected);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("2-line limit");
+    }
+    const range = await tool.execute(["--tail", "-n", "1", file, "1:2"], executionContext);
+    expect(range.stdout).toBe(formatVerifiedRow(2, "two"));
+    expect(await tool.parse('-n 2 --tail "rows.txt"', {resolvePath: value => `/root/${value}`})).toEqual(
+      ["-n", "2", "--tail", "/root/rows.txt"]);
+    for (const flags of [["-n"], ["-n", "0"], ["-n", "01"], ["-n", "1", "-n", "2"], ["-n", "9007199254740992"]]) {
+      expect((await tool.execute([...flags, file], executionContext)).failureClass).toBe("invalid_arguments");
+    }
+  });
+
+  test("line-only mode admits long complete rows beyond the default token ceiling", async () => {
+    const directory = await temporaryDirectory("hcat-line-long-");
+    const file = path.join(directory, "rows.txt");
+    const content = "word ".repeat(20000);
+    await writeFile(file, `${content}\nend`);
+    const tool = createHCatTool("", "");
+    const head = await tool.execute(["-n", "1", file], executionContext);
+    expect(head.stdout).toBe(formatVerifiedRow(1, content));
+    const tail = await tool.execute(["--tail", "-n", "2", file], executionContext);
+    expect(tail.stdout).toBe(formatVerifiedRow(1, content) + formatVerifiedRow(2, "end"));
+    expect(tail.exitCode).toBe(0);
+    const limited = await tool.execute(["-n", "1", "--max-tokens", "20", file], executionContext);
+    expect(limited.stdout).toBe("");
+    const tailLimited = await tool.execute(["--tail", "-n", "2", "--max-tokens", "20", file], executionContext);
+    expect(tailLimited.stdout).toBe(formatVerifiedRow(2, "end"));
+    await writeFile(file, `first\n${"x".repeat(2_000_000)}`);
+    const smallHead = await tool.execute(["-n", "1", file], executionContext);
+    expect(smallHead.stdout).toBe(formatVerifiedRow(1, "first"));
+    expect(smallHead.stderr).toContain("1-line limit");
+    // Skipping unselected rows must not skip whole-source UTF-8 validation.
+    await writeFile(file, Buffer.concat([Buffer.from("first\n"), Buffer.from([0xff])]));
+    expect((await tool.execute(["-n", "1", file], executionContext)).stderr).toContain("not UTF-8");
+
+    await writeFile(file, "");
+    expect((await tool.execute(["--tail", "-n", "2", file], executionContext)).exitCode).toBe(0);
+  });
+});
+
 describe("hcat tail", () => {
   test("returns a whole-row suffix within the budget, including ranges and previews", async () => {
     const directory = await temporaryDirectory("hcat-tail-");

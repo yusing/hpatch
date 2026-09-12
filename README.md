@@ -375,15 +375,20 @@ and omitted-byte counts. Without preview mode, rows remain exact. A caller's
 token ceiling is strict; omitted records are reported as incomplete, not silently
 cut. See the [reader contract](doc/spec/read.md) for ranges and bounds.
 
-Use `hcat --tail --max-tokens 2000 source.ts` to keep the final complete rows.
+Use `hcat --tail -n 20 source.ts` to keep the final 20 complete rows.
 For external command output:
 
 ```sh
-hrun --max-tokens 2000 --tail -- go test ./internal/router
+hrun --tail -n 20 -- go test ./internal/router
 ```
 
-Hrun keeps the beginning unless `--tail` is supplied. It runs to completion and
-preserves the command's exit status. Stdout and stderr share the budget, with stderr
+Both commands accept `-n N` without tokenization; add `--max-tokens N` to limit
+selected lines by tokens afterward. Hrun applies the line count separately to stdout
+and stderr. An unterminated final line counts as a line. Hcat uses source logical lines.
+
+Hrun keeps the beginning unless `--tail` is supplied. It drains to completion, even
+with `-n`, so infinite producers still need cancellation. Tail waits for EOF. It
+preserves the command's exit status. When supplied, stdout and stderr share the token budget, with stderr
 taking priority; omissions are reported. See the [shell contract](doc/spec/shell.md)
 for details.
 

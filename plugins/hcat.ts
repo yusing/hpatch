@@ -110,12 +110,13 @@ class VerifiedRowTail {
   #bytes = 0;
   incomplete = false;
 
-  constructor(private readonly maxTokens: number) {}
+  constructor(private readonly maxTokens?: number, private readonly maxLines?: number) {}
 
   append(row: string): void {
     this.#rows.push(row);
     this.#bytes += byteLength(row);
-    while (this.#bytes > this.maxTokens * MAX_POSSIBLE_GPT5_TOKEN_BYTES) {
+    while ((this.maxLines !== undefined && this.#rows.length - this.#head > this.maxLines)
+        || (this.maxTokens !== undefined && this.#bytes > this.maxTokens * MAX_POSSIBLE_GPT5_TOKEN_BYTES)) {
       this.#bytes -= byteLength(this.#rows[this.#head]);
       this.#rows[this.#head++] = "";
       this.incomplete = true;
@@ -134,10 +135,13 @@ class VerifiedRowTail {
   }
 
   finish(): {current: string; incomplete: boolean} {
+    if (this.maxTokens === undefined) {
+      return {current: this.#rows.slice(this.#head).join(""), incomplete: this.incomplete};
+    }
     let current = "";
     for (let index = this.#rows.length - 1; index >= this.#head; index -= 1) {
       const candidate = this.#rows[index] + current;
-      if (countGPT5Tokens(candidate) > this.maxTokens) {
+      if (this.maxTokens !== undefined && countGPT5Tokens(candidate) > this.maxTokens) {
         this.incomplete = true;
         break;
       }
@@ -174,10 +178,12 @@ async function readHashLines(spec: ReadSpec, options: ReaderOptions): Promise<Co
     let content = "";
     let limitReason: string | undefined;
     let contentBytes = 0;
-    const tail = options.tail ? new VerifiedRowTail(options.maxTokens!) : undefined;
+    const tail = options.tail ? new VerifiedRowTail(options.maxTokens, options.maxLines) : undefined;
     let oversizedRow = false;
     const output = new VerifiedRowOutput(options.maxTokens);
 
+    let selectedLines = 0;
+    let lineOutput = "";
     const selected = () => wholeFile
       || (lineNumber >= spec.startLine && lineNumber <= spec.endLine);
     const appendContent = (text: string): void => {
@@ -188,8 +194,14 @@ async function readHashLines(spec: ReadSpec, options: ReaderOptions): Promise<Co
       if (!selected() || oversizedRow || (!tail && output.incomplete)) {
         return;
       }
+      if (!tail && options.maxLines !== undefined && selectedLines >= options.maxLines) {
+        output.incomplete = true;
+        return;
+      }
+
       contentBytes += byteLength(text);
-      if (contentBytes > VERIFIED_ROW_MAX_TOKENS * MAX_POSSIBLE_GPT5_TOKEN_BYTES) {
+      if (!(options.maxLines !== undefined && options.maxTokens === undefined && options.previewBytes === undefined)
+          && contentBytes > VERIFIED_ROW_MAX_TOKENS * MAX_POSSIBLE_GPT5_TOKEN_BYTES) {
         // Bound candidate storage even when only a preview will be emitted.
         if (options.previewBytes !== undefined) {
           limitReason = `row ${lineNumber} exceeds the ${VERIFIED_ROW_MAX_TOKENS * MAX_POSSIBLE_GPT5_TOKEN_BYTES}-byte inspection bound; use a byte-window reader\n`;
@@ -207,11 +219,18 @@ async function readHashLines(spec: ReadSpec, options: ReaderOptions): Promise<Co
     };
     const finishLine = (): void => {
       if (selected() && !oversizedRow && (tail || !output.incomplete)) {
-        const row = formatReaderRow(lineNumber, content, options);
-        if (tail) {
-          tail.append(row);
+        selectedLines += 1;
+        if (!tail && options.maxLines !== undefined && selectedLines > options.maxLines) {
+          output.incomplete = true;
         } else {
-          output.append(row);
+          const row = formatReaderRow(lineNumber, content, options);
+          if (tail) {
+            tail.append(row);
+          } else if (options.maxLines !== undefined && options.maxTokens === undefined) {
+            lineOutput += row;
+          } else {
+            output.append(row);
+          }
         }
       }
       oversizedRow = false;
@@ -284,7 +303,7 @@ async function readHashLines(spec: ReadSpec, options: ReaderOptions): Promise<Co
     const warning = !wholeFile && missingStartLine <= spec.endLine
       ? `hcat: ${missingStartLine}-${spec.endLine}: [out of range]\n`
       : undefined;
-    return {...(tail?.finish() ?? {current: output.current, incomplete: output.incomplete}), warning, limitReason};
+    return {...(tail?.finish() ?? {current: options.maxLines !== undefined && options.maxTokens === undefined ? lineOutput : output.current, incomplete: output.incomplete}), warning, limitReason};
   } finally {
     await handle.close();
   }
@@ -297,13 +316,13 @@ async function readHashLines(spec: ReadSpec, options: ReaderOptions): Promise<Co
 function hcatArguments(input: string): string[] {
   const prefix: string[] = [];
   while (input.startsWith("--max-tokens ") || input.startsWith("--preview-bytes ")
-      || input.startsWith("--tail ")) {
+      || input.startsWith("--tail ") || input.startsWith("-n ")) {
     if (input.startsWith("--tail ")) {
       prefix.push("--tail");
       input = input.slice("--tail ".length);
       continue;
     }
-    const match = input.match(/^(--(?:max-tokens|preview-bytes)) ([^ ]+)(?: |$)/u);
+    const match = input.match(/^(-n|--(?:max-tokens|preview-bytes)) ([^ ]+)(?: |$)/u);
     if (match === null) {
       throw new Error("reader option requires a value");
     }

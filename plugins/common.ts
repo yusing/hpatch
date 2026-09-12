@@ -17,13 +17,13 @@ export function isOutsideWorkspace(root: string, target: string): boolean {
   return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
 }
 
-export type ReaderOptions = {maxTokens?: number; previewBytes?: number; tail?: boolean};
+export type ReaderOptions = {maxTokens?: number; previewBytes?: number; tail?: boolean; maxLines?: number};
 
 export function readerOptions(argv: string[], allowTail = false): {options: ReaderOptions; rest: string[]; offset: number} {
   const options: ReaderOptions = {};
   let offset = 0;
   while (argv[offset] === "--max-tokens" || argv[offset] === "--preview-bytes"
-      || (allowTail && argv[offset] === "--tail")) {
+      || (allowTail && (argv[offset] === "--tail" || argv[offset] === "-n"))) {
     const name = argv[offset];
     if (name === "--tail") {
       if (options.tail) {
@@ -33,8 +33,8 @@ export function readerOptions(argv: string[], allowTail = false): {options: Read
       offset += 1;
       continue;
     }
-    const key = name === "--max-tokens" ? "maxTokens" : "previewBytes";
-    const maximum = key === "maxTokens" ? VERIFIED_ROW_MAX_TOKENS : 65_536;
+    const key = name === "-n" ? "maxLines" : name === "--max-tokens" ? "maxTokens" : "previewBytes";
+    const maximum = key === "maxLines" ? Number.MAX_SAFE_INTEGER : key === "maxTokens" ? VERIFIED_ROW_MAX_TOKENS : 65_536;
     const raw = argv[offset + 1] ?? "";
     const value = Number(raw);
     if (options[key] !== undefined || !/^[1-9][0-9]*$/u.test(raw)
@@ -44,13 +44,16 @@ export function readerOptions(argv: string[], allowTail = false): {options: Read
     options[key] = value;
     offset += 2;
   }
-  if (options.tail && options.maxTokens === undefined) {
-    throw new Error("--tail requires --max-tokens");
+  if (options.tail && options.maxTokens === undefined && options.maxLines === undefined) {
+    throw new Error("--tail requires -n or --max-tokens");
   }
   return {options, rest: argv.slice(offset), offset};
 }
 
 export function readerLimitDiagnostic(options: ReaderOptions): string {
+  if (options.maxLines !== undefined) {
+    return `output incomplete: ${options.maxLines}-line limit${options.maxTokens === undefined ? "" : ` or ${options.maxTokens}-token limit`} reached\n`;
+  }
   return options.maxTokens === undefined
     ? VERIFIED_ROW_LIMIT_DIAGNOSTIC
     : `output incomplete: ${options.maxTokens}-token limit reached\n`;

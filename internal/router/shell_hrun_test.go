@@ -149,3 +149,70 @@ func TestShellRunnerHRunLargeSinglePiece(t *testing.T) {
 		t.Fatalf("long output: bytes=%d stderr=%q status=%d", len(stdout), stderr, status)
 	}
 }
+
+func TestHRunLineCapture(t *testing.T) {
+	for _, tail := range []bool{false, true} {
+		for _, source := range []string{"", "a", "a\n", "a\nb", "a\nb\n", "a\nb\nc", "\n\n\n", "α\r\nβ\nγ"} {
+			capture := hrunCapture{maxLines: 2, tail: tail}
+			// Byte-at-a-time writes exercise split UTF-8 and newline boundaries.
+			for index := range len(source) {
+				if _, err := capture.Write([]byte(source[index : index+1])); err != nil {
+					t.Fatal(err)
+				}
+			}
+			lines := strings.SplitAfter(source, "\n")
+			if lines[len(lines)-1] == "" {
+				lines = lines[:len(lines)-1]
+			}
+			omitted := len(lines) > 2
+			if omitted {
+				if tail {
+					lines = lines[len(lines)-2:]
+				} else {
+					lines = lines[:2]
+				}
+			}
+			want := strings.Join(lines, "")
+			if got := capture.text(); got != want || capture.omitted != omitted {
+				t.Fatalf("tail=%t source=%q: got %q omitted=%t; want %q omitted=%t", tail, source, got, capture.omitted, want, omitted)
+			}
+		}
+	}
+}
+
+func TestShellRunnerHRunLines(t *testing.T) {
+	registry := sharedProxyTestRegistry(t)
+	for _, tc := range []struct{ flags, want string }{
+		{"-n 2", "1\n2\n"},
+		{"--tail -n 2", "999\n1000\n"},
+		{"-n 2 --max-tokens 100", "1\n2\n"},
+		{"--max-tokens 100 --tail -n 2", "999\n1000\n"},
+	} {
+		stdout, stderr, status := runShellWorkerTest(t, registry, "bash", nil,
+			"hrun "+tc.flags+" -- seq 1 1000", nil)
+		if stdout != tc.want || status != 0 || !strings.Contains(stderr, "2-line limit") {
+			t.Fatalf("%s: %q %q status=%d", tc.flags, stdout, stderr, status)
+		}
+	}
+	stdout, stderr, status := runShellWorkerTest(t, registry, "sh", nil,
+		`hrun -n 1 -- sh -c 'printf "out\nextra\n"; printf "err\nextra\n" >&2; exit 7'`, nil)
+	if stdout != "out\n" || !strings.HasPrefix(stderr, "err\nhrun:") || status != 7 {
+		t.Fatalf("line streams/status: %q %q %d", stdout, stderr, status)
+	}
+	stdout, stderr, status = runShellWorkerTest(t, registry, "bash", nil,
+		`hrun -n 1 --max-tokens 20 -- sh -c 'head -c 17000000 /dev/zero | tr "\000" a'`, nil)
+	if status != 0 || stdout == "" || !strings.Contains(stderr, "20-token limit") {
+		t.Fatalf("large selected line: %q %q %d", stdout, stderr, status)
+	}
+	stdout, stderr, status = runShellWorkerTest(t, registry, "bash", nil,
+		`hrun -n 1 -- sh -c 'head -c 200000 /dev/zero | tr "\000" a'`, nil)
+	if status != 0 || len(stdout) != 200000 || stderr != "" {
+		t.Fatalf("line-only default bypass: %d bytes %q %d", len(stdout), stderr, status)
+	}
+
+	for _, flags := range []string{"-n", "-n 0", "-n -1", "-n 01", "-n 1.5", "-n 999999999999999999999", "-n 1 -n 2"} {
+		if _, _, err := parseHRunArguments(strings.Fields(flags + " -- echo")); err == nil {
+			t.Fatalf("accepted %q", flags)
+		}
+	}
+}

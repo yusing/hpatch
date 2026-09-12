@@ -446,7 +446,7 @@ func toolActivityReadCommand(script string, call *syntax.CallExpr) (string, bool
 		if argv[0] == "hcat" {
 			pathIndex := 1
 			seen := make(map[string]bool)
-			for pathIndex < len(argv) && (argv[pathIndex] == "--max-tokens" || argv[pathIndex] == "--preview-bytes" || argv[pathIndex] == "--tail") {
+			for pathIndex < len(argv) && (argv[pathIndex] == "--max-tokens" || argv[pathIndex] == "--preview-bytes" || argv[pathIndex] == "--tail" || argv[pathIndex] == "-n") {
 				option := argv[pathIndex]
 				if option == "--tail" {
 					if seen[option] {
@@ -460,6 +460,9 @@ func toolActivityReadCommand(script string, call *syntax.CallExpr) (string, bool
 					return "", false
 				}
 				maximum := uint64(15500)
+				if option == "-n" {
+					maximum = 1<<53 - 1
+				}
 				if option == "--preview-bytes" {
 					maximum = 65536
 				}
@@ -469,7 +472,7 @@ func toolActivityReadCommand(script string, call *syntax.CallExpr) (string, bool
 				seen[option] = true
 				pathIndex += 2
 			}
-			if seen["--tail"] && !seen["--max-tokens"] {
+			if seen["--tail"] && !seen["--max-tokens"] && !seen["-n"] {
 				return "", false
 			}
 			if len(argv)-pathIndex != 1 && len(argv)-pathIndex != 2 {

@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -91,6 +92,14 @@ func executeShellTool(
 	terminalShell := stdin != nil && term.IsTerminal(int(stdin.Fd()))
 	middleware := func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 		return func(handlerCtx context.Context, command []string) (runErr error) {
+			// An early-closing pipeline consumer is a command failure, not an
+			// interpreter failure. Leave pipefail and errexit to the shell.
+			defer func() {
+				if errors.Is(runErr, syscall.EPIPE) || errors.Is(runErr, io.ErrClosedPipe) {
+					runErr = interp.ExitStatus(141)
+				}
+			}()
+
 			if command[0] == "hrun" {
 				return executeHRun(handlerCtx, manifest, runtimeRoot, shellContribution, command[1:], terminalShell)
 			}
@@ -137,7 +146,7 @@ func executeShellTool(
 					switch arguments[pathIndex] {
 					case "--tail":
 						pathIndex++
-					case "--max-tokens", "--preview-bytes":
+					case "--max-tokens", "--preview-bytes", "-n":
 						pathIndex += 2
 					default:
 						break options

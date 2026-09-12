@@ -7,11 +7,22 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestHRunCancellationDrainsDescendantPipes(t *testing.T) {
+	testHRunCancellation(t, `hrun --max-tokens 20 --tail -- sh -c 'sleep 30 & printf ready > ready; wait'`)
+}
+
+func TestHRunLineCancellation(t *testing.T) {
+	testHRunCancellation(t, `hrun -n 20 -- sh -c 'printf ready > ready; exec yes'`)
+}
+
+func testHRunCancellation(t *testing.T, script string) {
+	t.Helper()
+
 	registry := sharedProxyTestRegistry(t)
 	directory := t.TempDir()
 	t.Chdir(directory)
@@ -20,7 +31,7 @@ func TestHRunCancellationDrainsDescendantPipes(t *testing.T) {
 	finished := make(chan int, 1)
 	go func() {
 		_, status := RunToolPluginWorker(ctx, registry.shellRuntime,
-			[]string{"bash", `hrun --max-tokens 20 --tail -- sh -c 'sleep 30 & printf ready > ready; wait'`},
+			[]string{"bash", script},
 			nil, io.Discard, io.Discard)
 		finished <- status
 	}()
@@ -45,5 +56,38 @@ func TestHRunCancellationDrainsDescendantPipes(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("cancellation left descendant output pipes open")
+	}
+}
+
+func TestShellRunnerClosedInspectionPipes(t *testing.T) {
+	registry := sharedProxyTestRegistry(t)
+	directory := t.TempDir()
+	t.Chdir(directory)
+	if err := os.WriteFile("rows.txt", []byte(strings.Repeat(strings.Repeat("x", 80)+"\n", 20000)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{
+		"hrun -n 20000 -- cat rows.txt",
+		"hcat -n 20000 rows.txt",
+		"hrun --max-tokens 15500 -- cat rows.txt",
+		"hcat --max-tokens 15500 rows.txt",
+	} {
+		for _, mode := range []string{"", "set -o pipefail\n", "set -eo pipefail\n"} {
+			stdout, stderr, status := runShellWorkerTest(t, registry, "bash", nil,
+				mode+command+" | head -n 1 >/dev/null\nprintf 'AFTER:%s' \"$?\"", nil)
+			if mode == "set -eo pipefail\n" {
+				if stdout != "" || status != 141 {
+					t.Fatalf("%s %s: %q %q status=%d", mode, command, stdout, stderr, status)
+				}
+				continue
+			}
+			want := "AFTER:0"
+			if mode != "" {
+				want = "AFTER:141"
+			}
+			if stdout != want || status != 0 || strings.Contains(stderr, "broken pipe") {
+				t.Fatalf("%s %s: %q %q status=%d", mode, command, stdout, stderr, status)
+			}
+		}
 	}
 }

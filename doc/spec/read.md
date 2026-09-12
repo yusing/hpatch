@@ -17,7 +17,7 @@ model calls to their names are not routed, and no executable frontend is install
 The private `hcat` command accepts exactly one file:
 
 ```text
-hcat [--max-tokens N] [--preview-bytes N] [--tail] PATH [START:END]
+hcat [-n N] [--max-tokens N] [--preview-bytes N] [--tail] PATH [START:END]
 ```
 
 The shell owns quoting and argument separation. A path containing whitespace is therefore one
@@ -83,17 +83,20 @@ Exact token counting must remain practical for long unbroken words and whitespac
 the bounded candidate size. The pinned model's token identities and splitting rules
 remain unchanged; large pieces must not require quadratic repeated merge scans.
 
-Hcat additionally accepts a leading `--tail`, at most once and only with an explicit
-`--max-tokens`. It selects a suffix of complete formatted rows from the file or requested
-range, in original source order, within the strict token ceiling. It never cuts a row or
+Hcat additionally accepts leading `-n N` and `--tail`, each at most once. Line counts
+are canonical positive safe integers. `-n` selects first/last N complete logical source
+lines within the requested range, before any explicit token ceiling. Without a token
+ceiling, line mode bypasses tokenization and the default token admission rule; selected
+exact line lengths determine storage. Omitted lines retain the incomplete/nonzero contract.
+`--tail` requires `-n` or `--max-tokens`. It selects a suffix of complete formatted rows
+from the file or requested range, in original source order, within any supplied limits. It never cuts a row or
 skips an oversized final row to show earlier content. Preview mode still takes each
 selected source row's prefix. Omitted earlier rows use the existing incomplete/nonzero
 contract; a complete suffix covering every selected row is successful. Empty files succeed.
-Tail reads scan and validate the whole file with bounded candidate storage, including
-source beyond the requested range. A source-bound row clears earlier tail candidates;
+Tail reads scan and validate the whole file, including source beyond the requested range. A source-bound row clears earlier tail candidates;
 later verifiable rows may still be retained. Hgrep does not accept this option.
 
-Hcat retains its bounded whole-row candidate storage in preview mode. A source
+Hcat retains its bounded whole-row candidate storage in token-limited and preview modes. A source
 row exceeding 1,984,000 UTF-8 bytes cannot be verified by this reader; it is omitted
 with a distinct source-bound diagnostic and nonzero status. Use a byte-window
 reader when such a file needs content inspection. Whole-file UTF-8 validation
@@ -124,6 +127,6 @@ Acceptance:
    path resolution can precede option validation. Quoted paths, line ranges,
    and thread-private retained reads work with either leading option order.
 10. Tail selection works with either option order, quoted paths, ranges, previews,
-    and retained descriptors. Missing budgets and repeated `--tail` reject before reading.
-    Long and source-bound rows cannot cause unbounded storage or prevent retaining later
+    and retained descriptors. Missing limits and repeated `--tail` reject before reading.
+    In token-limited mode, long and source-bound rows cannot cause unbounded storage or prevent retaining later
     rows; invalid UTF-8 anywhere in the file still fails.

@@ -149,8 +149,8 @@ does not coordinate job-control handoff across pipelines; cancellation uses a bo
 inherited-pipe wait.
 The same shell middleware owns `hrun` argument validation and bounded prefix/tail display.
 Hrun reuses the existing external-command execution owner with substituted capture writers;
-it owns no alternate process or session lifecycle. Exact output selection uses a private
-formatting operation on the existing shell executor, sharing the readers' bundled GPT-5
+it owns no alternate process or session lifecycle. Line-only selection stays in the Go capture
+owner without tokenization. Exact token selection uses a private formatting operation on the existing shell executor, sharing the readers' bundled GPT-5
 tokenizer. Large tokenization pieces use heap-ordered byte-pair merges with the pinned
 model's vocabulary and splitting rules; cancellation can retire the formatting invocation.
 Hrun stays outside the plugin contribution and AX reader catalogs. The direct carrier excludes hrun, and declaration validation reserves

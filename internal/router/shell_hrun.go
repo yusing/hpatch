@@ -1,6 +1,7 @@
 package router
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 const hrunMaxTokens = 15_500
 
 type hrunOptions struct {
+	maxLines  int
 	maxTokens int
 	tail      bool
 }
@@ -34,6 +36,17 @@ func parseHRunArguments(arguments []string) (hrunOptions, []string, error) {
 			}
 			options.maxTokens = number
 			arguments = arguments[2:]
+		case "-n":
+			if len(arguments) < 2 || options.maxLines != 0 {
+				return options, nil, fmt.Errorf("-n requires one positive integer and cannot repeat")
+			}
+			number, err := strconv.Atoi(arguments[1])
+			if err != nil || number < 1 || strconv.Itoa(number) != arguments[1] {
+				return options, nil, fmt.Errorf("-n requires one positive integer")
+			}
+			options.maxLines = number
+			arguments = arguments[2:]
+
 		case "--tail":
 			if options.tail {
 				return options, nil, fmt.Errorf("--tail cannot repeat")
@@ -41,28 +54,36 @@ func parseHRunArguments(arguments []string) (hrunOptions, []string, error) {
 			options.tail = true
 			arguments = arguments[1:]
 		case "--":
-			if options.maxTokens == 0 || len(arguments) < 2 || arguments[1] == "" {
-				return options, nil, fmt.Errorf("expected --max-tokens N [--tail] -- COMMAND [ARG...]")
+			if (options.maxTokens == 0 && options.maxLines == 0) || len(arguments) < 2 || arguments[1] == "" {
+				return options, nil, fmt.Errorf("expected -n N or --max-tokens N, optionally --tail, then -- COMMAND [ARG...]")
 			}
 			return options, arguments[1:], nil
 		default:
-			return options, nil, fmt.Errorf("expected --max-tokens N [--tail] -- COMMAND [ARG...]")
+			return options, nil, fmt.Errorf("expected -n N or --max-tokens N, optionally --tail, then -- COMMAND [ARG...]")
 		}
 	}
-	return options, nil, fmt.Errorf("expected --max-tokens N [--tail] -- COMMAND [ARG...]")
+	return options, nil, fmt.Errorf("expected -n N or --max-tokens N, optionally --tail, then -- COMMAND [ARG...]")
 }
 
-// hrunCapture drains every write. Tail mode uses a byte ring so output volume
-// cannot grow memory or cause repeated copying of the retained window.
+// hrunCapture drains every write. Token-only tail mode uses a byte ring;
+// line mode retains complete lines instead of imposing a byte ceiling.
 type hrunCapture struct {
-	buffer  []byte
-	start   int
-	size    int
-	tail    bool
-	omitted bool
+	maxLines int
+	rows     []string
+	rowStart int
+	pending  strings.Builder
+	buffer   []byte
+	start    int
+	size     int
+	tail     bool
+	omitted  bool
 }
 
 func (capture *hrunCapture) Write(value []byte) (int, error) {
+	if capture.maxLines > 0 {
+		return capture.writeLines(value)
+	}
+
 	length := len(value)
 	limit := len(capture.buffer)
 	if !capture.tail {
@@ -89,7 +110,62 @@ func (capture *hrunCapture) Write(value []byte) (int, error) {
 	return length, nil
 }
 
+// Line selection retains complete LF-delimited lines, including an unterminated
+// final line. Its memory depends on selected line lengths, not a token budget.
+func (capture *hrunCapture) appendLine(line string) {
+	if len(capture.rows) < capture.maxLines {
+		capture.rows = append(capture.rows, line)
+		return
+	}
+	capture.omitted = true
+	if capture.tail {
+		capture.rows[capture.rowStart] = line
+		capture.rowStart = (capture.rowStart + 1) % capture.maxLines
+	}
+}
+
+func (capture *hrunCapture) writeLines(value []byte) (int, error) {
+	length := len(value)
+	for len(value) > 0 {
+		if !capture.tail && len(capture.rows) == capture.maxLines {
+			capture.omitted = true
+			break
+		}
+		end := bytes.IndexByte(value, '\n')
+		if end < 0 {
+			capture.pending.Write(value)
+			break
+		}
+		capture.pending.Write(value[:end+1])
+		capture.appendLine(capture.pending.String())
+		capture.pending.Reset()
+		value = value[end+1:]
+	}
+	return length, nil
+}
+
 func (capture *hrunCapture) text() string {
+	if capture.maxLines > 0 {
+		if capture.pending.Len() > 0 {
+			capture.appendLine(capture.pending.String())
+			capture.pending.Reset()
+		}
+		value := strings.Join(capture.rows[capture.rowStart:], "") + strings.Join(capture.rows[:capture.rowStart], "")
+		// Bound the tokenizer request after line selection. The same byte
+		// reserve as token-only capture cannot exclude an admissible token.
+		if limit := len(capture.buffer); limit > utf8.UTFMax && len(value) > limit {
+			capture.omitted = true
+			if capture.tail {
+				value = value[len(value)-limit:]
+			} else {
+				value = value[:limit]
+			}
+			value = trimHRunBoundary(value, capture.tail)
+		}
+
+		return strings.ToValidUTF8(value, "\uFFFD")
+	}
+
 	end := min(capture.start+capture.size, len(capture.buffer))
 	value := string(capture.buffer[capture.start:end]) + string(capture.buffer[:capture.size-(end-capture.start)])
 	if capture.omitted {
@@ -130,8 +206,8 @@ func executeHRun(ctx context.Context, manifest toolWorkerManifest, runtimeRoot s
 	// No GPT-5 token spans more than 128 bytes. Keep a small UTF-8 boundary
 	// reserve, separately for each stream, before exact final token selection.
 	byteLimit := options.maxTokens*128 + utf8.UTFMax
-	stdout := hrunCapture{buffer: make([]byte, byteLimit), tail: options.tail}
-	stderr := hrunCapture{buffer: make([]byte, byteLimit), tail: options.tail}
+	stdout := hrunCapture{buffer: make([]byte, byteLimit), tail: options.tail, maxLines: options.maxLines}
+	stderr := hrunCapture{buffer: make([]byte, byteLimit), tail: options.tail, maxLines: options.maxLines}
 	childHandler := handler
 	childHandler.Stdout, childHandler.Stderr = &stdout, &stderr
 	runErr := runExternalShellCommand(ctx, command, terminalShell, childHandler)
@@ -146,19 +222,22 @@ func executeHRun(ctx context.Context, manifest toolWorkerManifest, runtimeRoot s
 	if options.tail {
 		mode = "tail"
 	}
-	// Keep exact token selection with the readers' bundled tokenizer, in an
-	// invocation the existing process-group owner can cancel during formatting.
-	formatted, err := toolplugin.Execute(ctx, manifest.NodeExecutable, runtimeRoot,
-		shellContribution.Module, shellContribution.ModuleIndex,
-		[]string{"--hrun-output", strconv.Itoa(options.maxTokens), mode, outText, errText},
-		nil, handler.Dir, shellEnvironment(handler.Env))
-	if err != nil {
-		return fmt.Errorf("hrun: select output: %w", err)
+	selectedOut, selectedErr := outText, errText
+	if options.maxTokens > 0 {
+		// Keep exact token selection with the readers' bundled tokenizer, in an
+		// invocation the existing process-group owner can cancel during formatting.
+		formatted, err := toolplugin.Execute(ctx, manifest.NodeExecutable, runtimeRoot,
+			shellContribution.Module, shellContribution.ModuleIndex,
+			[]string{"--hrun-output", strconv.Itoa(options.maxTokens), mode, outText, errText},
+			nil, handler.Dir, shellEnvironment(handler.Env))
+		if err != nil {
+			return fmt.Errorf("hrun: select output: %w", err)
+		}
+		if formatted.ExitCode != 0 {
+			return fmt.Errorf("hrun: output selection failed")
+		}
+		selectedOut, selectedErr = formatted.Stdout, formatted.Stderr
 	}
-	if formatted.ExitCode != 0 {
-		return fmt.Errorf("hrun: output selection failed")
-	}
-	selectedOut, selectedErr := formatted.Stdout, formatted.Stderr
 	if _, err := io.WriteString(handler.Stdout, selectedOut); err != nil {
 		return err
 	}
@@ -170,7 +249,14 @@ func executeHRun(ctx context.Context, manifest toolWorkerManifest, runtimeRoot s
 		if selectedErr != "" && !strings.HasSuffix(selectedErr, "\n") {
 			separator = "\n"
 		}
-		if _, err := fmt.Fprintf(handler.Stderr, "%shrun: output incomplete: %d-token limit reached\n", separator, options.maxTokens); err != nil {
+		limit := fmt.Sprintf("%d-token limit", options.maxTokens)
+		if options.maxLines > 0 {
+			limit = fmt.Sprintf("%d-line limit", options.maxLines)
+			if options.maxTokens > 0 {
+				limit += fmt.Sprintf(" or %d-token limit", options.maxTokens)
+			}
+		}
+		if _, err := fmt.Fprintf(handler.Stderr, "%shrun: output incomplete: %s reached\n", separator, limit); err != nil {
 			return err
 		}
 	}
