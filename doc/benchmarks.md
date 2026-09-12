@@ -99,6 +99,22 @@ and is valid only in `mekugi-diagnostic` mode. No control attempt is launched or
 imported. Historical comparisons across models or effort levels are descriptive,
 not controlled measurements of a router change. Paired defaults are unchanged.
 
+To measure Astra mentoring the main Sol agent, without CTP/2:
+
+```sh
+MODEL=gpt-5.6-sol REASONING_EFFORT=high BENCHMARK_MODE=mekugi-diagnostic \
+  BENCHMARK_MAIN_MENTOR=true DIAGNOSTIC_MODEL_PROTOCOL=native \
+  REPETITIONS=1 BENCHMARK_REPORT_ISSUES=false bash benchmarks/bench.sh
+```
+
+`BENCHMARK_MAIN_MENTOR` defaults to `false`. Enabling it requires diagnostic mode and
+`gpt-5.6` or `gpt-5.6-sol`. It enables `--main-mentor-handoff` while leaving subagent handoff off. The normal router
+mapping starts these requests on Astra with
+one lower reasoning level, capped at xhigh, then hands back to the configured main model.
+The report records the configured schedule and requires the measured main thread to start
+on Astra, with no return to Astra after handoff. Comparing this run with an earlier Astra/CTP/2 baseline changes both
+the model schedule and protocol; it is a descriptive comparison, not an isolated handoff test.
+
 Native Mekugi versus CTP/2:
 
 ```sh
@@ -338,6 +354,8 @@ Synthetic test inputs cover replay mechanics only and are not efficiency evidenc
 ```sh
 bash benchmarks/commentary_coverage_test.sh
 bash benchmarks/expected_final_response_test.sh
+python3 benchmarks/main_mentor_test.py
+bash benchmarks/diagnostic_protocol_test.sh
 bash benchmarks/report_test.sh
 bash benchmarks/control_only_test.sh
 bash benchmarks/task_contract_test.sh

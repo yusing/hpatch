@@ -54,7 +54,7 @@ func mentorTestItems(t *testing.T, itemTypes ...string) []json.RawMessage {
 }
 
 func TestMentorHandoffRecognizesMainAndCanonicalThreadSpawn(t *testing.T) {
-	mentor := newMentorHandoff()
+	mentor := newMentorHandoff(true, true)
 	tests := []struct {
 		name    string
 		model   string
@@ -66,7 +66,7 @@ func TestMentorHandoffRecognizesMainAndCanonicalThreadSpawn(t *testing.T) {
 		{name: "second eligible model", model: "gpt-5.6-terra", headers: mentorTestHeaders(t, "child-terra"), want: true},
 		{name: "ordinary session", model: "gpt-5.6-luna", headers: http.Header{}},
 		{name: "ordinary fork metadata", model: "gpt-5.6-luna", headers: serverMetadataHeaders(t, "turn", nil), want: true},
-		{name: "leader model", model: mentorLeaderModel, headers: mentorTestHeaders(t, "leader")},
+		{name: "astra unchanged", model: "gpt-6-astra", headers: mentorTestHeaders(t, "leader")},
 		{name: "unknown lower model", model: "gpt-test", headers: mentorTestHeaders(t, "unknown")},
 		{name: "marker without metadata", model: "gpt-5.6-luna", headers: http.Header{openAISubagentHeader: []string{threadSpawnSubagent}}, wantErr: "canonical thread-spawn metadata"},
 		{name: "marker without thread", model: "gpt-5.6-luna", headers: mentorTestHeaders(t, ""), wantErr: "Codex thread ID"},
@@ -109,6 +109,44 @@ func TestMentorHandoffRecognizesMainAndCanonicalThreadSpawn(t *testing.T) {
 	}
 }
 
+func TestMentorHandoffIndependentToggles(t *testing.T) {
+	flags := newRouterFlags(io.Discard)
+	if *flags.mainMentorHandoffEnabled || !*flags.mentorHandoffEnabled {
+		t.Fatal("main mentor must default off and subagent mentor on")
+	}
+	for _, mainEnabled := range []bool{false, true} {
+		for _, subagentEnabled := range []bool{false, true} {
+			for _, child := range []bool{false, true} {
+				headers := mentorTestHeaders(t, "thread")
+				want := subagentEnabled
+				if !child {
+					headers.Del(openAISubagentHeader)
+					headers.Set(codexTurnMetadataHeader, `{"request_kind":"turn"}`)
+					want = mainEnabled
+				}
+				request := mentorTestRequest(t, "gpt-5.6-sol")
+				metadata, valid := decodeCodexTurnMetadata(headers)
+				mentor := newMentorHandoff(mainEnabled, subagentEnabled)
+				handoff, err := mentor.prepare(headers, metadata, valid, &request)
+				if err != nil || (handoff != nil) != want {
+					t.Fatalf("main=%t subagent=%t child=%t: handoff=%v err=%v", mainEnabled, subagentEnabled, child, handoff, err)
+				}
+				wantModel := "gpt-5.6-sol medium"
+				if want {
+					wantModel = "gpt-6-astra low"
+				}
+				if request.modelDescription() != wantModel {
+					t.Fatalf("request=%q want=%q", request.modelDescription(), wantModel)
+				}
+				astra := mentorTestRequest(t, "gpt-6-astra")
+				if handoff, err := mentor.prepare(headers, metadata, valid, &astra); err != nil || handoff != nil || astra.model() != "gpt-6-astra" {
+					t.Fatal("configured Astra must never hand off to Sol")
+				}
+			}
+		}
+	}
+}
+
 func TestMentorHandoffAstraMapping(t *testing.T) {
 	for _, test := range []struct{ effort, want string }{
 		{"low", "low"}, {"medium", "low"}, {"high", "medium"},
@@ -116,7 +154,7 @@ func TestMentorHandoffAstraMapping(t *testing.T) {
 	} {
 		t.Run(test.effort, func(t *testing.T) {
 			for _, main := range []bool{false, true} {
-				mentor := newMentorHandoff()
+				mentor := newMentorHandoff(true, true)
 				headers := mentorTestHeaders(t, "thread")
 				if main {
 					headers.Del(openAISubagentHeader)
@@ -151,7 +189,6 @@ func TestMentorHandoffMainBoundary(t *testing.T) {
 	}{
 		{"main luna", "gpt-5.6-luna", `{"request_kind":"turn"}`, "", true},
 		{"main terra", "gpt-5.6-terra", `{"request_kind":"turn"}`, "", true},
-		{"main sol unchanged", "gpt-5.6-sol", `{"request_kind":"turn"}`, "", false},
 		{"main astra unchanged", "gpt-6-astra", `{"request_kind":"turn"}`, "", false},
 		{"missing metadata", "gpt-5.6-luna", "", "", false},
 		{"invalid metadata", "gpt-5.6-luna", "{", "", false},
@@ -169,7 +206,7 @@ func TestMentorHandoffMainBoundary(t *testing.T) {
 			}
 			request := mentorTestRequest(t, test.model)
 			metadata, valid := decodeCodexTurnMetadata(headers)
-			handoff, err := newMentorHandoff().prepare(headers, metadata, valid, &request)
+			handoff, err := newMentorHandoff(true, true).prepare(headers, metadata, valid, &request)
 			if err != nil || (handoff != nil) != test.want {
 				t.Fatalf("handoff=%v err=%v, want active=%t", handoff, err, test.want)
 			}
@@ -196,7 +233,7 @@ func TestMentorHandoffCompletesAtEachBound(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			mentor := newMentorHandoff()
+			mentor := newMentorHandoff(true, true)
 			headers := mentorTestHeaders(t, "child")
 			metadata, valid := decodeCodexTurnMetadata(headers)
 			for index, items := range test.responses {
@@ -233,7 +270,7 @@ func TestMentorHandoffCompletesAtEachBound(t *testing.T) {
 }
 
 func TestMentorHandoffWaitsForCompletedToolResultResponse(t *testing.T) {
-	mentor := newMentorHandoff()
+	mentor := newMentorHandoff(true, true)
 	headers := mentorTestHeaders(t, "child")
 	metadata, valid := decodeCodexTurnMetadata(headers)
 	record := func(items []json.RawMessage, completed bool) mentorProgress {
@@ -298,7 +335,7 @@ func TestExecuteRequestMentorHandoffPreservesHistoryAndRestoresRequestedModel(t 
 		{response: response("message")},
 		{response: response("message")},
 	}}
-	mentor := newMentorHandoff()
+	mentor := newMentorHandoff(true, true)
 	headers := mentorTestHeaders(t, "child")
 	for range 4 {
 		request := mentorTestRequest(t, "gpt-5.6-luna")
@@ -328,6 +365,14 @@ func TestExecuteRequestMentorHandoffPreservesHistoryAndRestoresRequestedModel(t 
 }
 
 func TestExecuteRequestMainAstraMentorHandoff(t *testing.T) {
+	for _, model := range []string{"gpt-5.6", "gpt-5.6-sol"} {
+		t.Run(model, func(t *testing.T) {
+			testExecuteRequestMainAstraMentorHandoff(t, model)
+		})
+	}
+}
+
+func testExecuteRequestMainAstraMentorHandoff(t *testing.T, model string) {
 	provider := &serverFakeProvider{}
 	for range 3 {
 		provider.results = append(provider.results, serverForwardResult{
@@ -340,10 +385,10 @@ func TestExecuteRequestMainAstraMentorHandoff(t *testing.T) {
 	}
 	headers := serverMetadataHeaders(t, "turn", nil)
 	headers.Set(threadIDHeader, "main")
-	mentor := newMentorHandoff()
+	mentor := newMentorHandoff(true, true)
 	for range 3 {
-		request := mentorTestRequest(t, "gpt-5.6")
-		if err := request.setModelAndReasoningEffort("gpt-5.6", "ultra"); err != nil {
+		request := mentorTestRequest(t, model)
+		if err := request.setModelAndReasoningEffort(model, "high"); err != nil {
 			t.Fatal(err)
 		}
 		if err := executeRequest(t.Context(), t.Context(), request, headers, "main",
@@ -351,7 +396,7 @@ func TestExecuteRequestMainAstraMentorHandoff(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for index, want := range []string{"gpt-6-astra xhigh", "gpt-6-astra xhigh", "gpt-5.6 ultra"} {
+	for index, want := range []string{"gpt-6-astra medium", "gpt-6-astra medium", model + " high"} {
 		request, err := parseResponsesRequest(provider.forwarded[index])
 		if err != nil {
 			t.Fatal(err)
@@ -379,7 +424,7 @@ func TestExecuteRequestMentorHandoffCountsFailedResponseInput(t *testing.T) {
 		"usage":  map[string]any{"input_tokens": 1},
 	})))
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: failed}, {response: completed}}}
-	mentor := newMentorHandoff()
+	mentor := newMentorHandoff(true, true)
 	headers := mentorTestHeaders(t, "child")
 	for range 2 {
 		request := mentorTestRequest(t, "gpt-5.6-luna")
@@ -404,7 +449,7 @@ func TestExecuteRequestMentorHandoffCountsFailedResponseInput(t *testing.T) {
 }
 
 func TestMentorHandoffRejectsInvalidReasoningWithoutSharingSessionCapacity(t *testing.T) {
-	mentor := newMentorHandoff()
+	mentor := newMentorHandoff(true, true)
 	headers := mentorTestHeaders(t, "child")
 	metadata, valid := decodeCodexTurnMetadata(headers)
 	request := mentorTestRequest(t, "gpt-5.6-luna")
@@ -413,7 +458,7 @@ func TestMentorHandoffRejectsInvalidReasoningWithoutSharingSessionCapacity(t *te
 		t.Fatal("invalid reasoning was accepted")
 	}
 
-	mentor = newMentorHandoff()
+	mentor = newMentorHandoff(true, true)
 	for index := range maxSessionHistories {
 		mentor.sessions[fmt.Sprintf("active-%d", index)] = mentorSession{}
 	}

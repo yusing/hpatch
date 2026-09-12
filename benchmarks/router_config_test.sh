@@ -10,18 +10,20 @@ SH
 chmod +x "$fixture/mekugi"
 for mode in passthrough mekugi; do
  for protocol in native ctp2; do
+  for main_mentor in false true; do
   for mentor in false true; do
    CAPTURE="$fixture/args" PATH="$fixture:$PATH" BENCH_ARTIFACT_DIR=/benchmark-artifacts/session \
-    MEKUGI_RUNTIME_DIR="$fixture/runtime" MEKUGI_BENCH_MODE="$mode" MEKUGI_BENCH_PROTOCOL="$protocol" MEKUGI_BENCH_MENTOR="$mentor" \
+    MEKUGI_RUNTIME_DIR="$fixture/runtime" MEKUGI_BENCH_MODE="$mode" MEKUGI_BENCH_PROTOCOL="$protocol" MEKUGI_BENCH_MENTOR="$mentor" MEKUGI_BENCH_MAIN_MENTOR="$main_mentor" \
     bash "$benchmark_root/session-entry.sh" exec 'prompt with spaces'
-   python3 - "$fixture/args" "$mode" "$protocol" "$mentor" <<'PY'
+   python3 - "$fixture/args" "$mode" "$protocol" "$mentor" "$main_mentor" <<'PY'
 import pathlib,sys
-path,mode,protocol,mentor=sys.argv[1:]
+path,mode,protocol,mentor,main_mentor=sys.argv[1:]
 args=pathlib.Path(path).read_text().splitlines()
-assert args == ['--mode',mode,'--model-protocol',protocol,f'--mentor-handoff={mentor}',
+assert args == ['--mode',mode,'--model-protocol',protocol,f'--main-mentor-handoff={main_mentor}',f'--mentor-handoff={mentor}',
  '--capture-output','/benchmark-artifacts/session/capture.jsonl',
  '--metrics-output','/benchmark-artifacts/session/metrics.json','codex','--disable','apps','exec','prompt with spaces']
 PY
+  done
   done
  done
 done

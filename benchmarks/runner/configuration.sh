@@ -7,6 +7,7 @@ configure_benchmark() {
 	mentor_parent_model=${MENTOR_PARENT_MODEL:-gpt-5.6-sol}
 	mentor_parent_reasoning_effort=high
 	mentor_model_protocol=${MENTOR_MODEL_PROTOCOL:-native}
+	main_mentor=${BENCHMARK_MAIN_MENTOR:-false}
 	diagnostic_model_protocol=${DIAGNOSTIC_MODEL_PROTOCOL:-native}
 	mentor_child_role=benchmark_worker
 	repetitions=${REPETITIONS:-1}
@@ -74,6 +75,16 @@ configure_benchmark() {
 	    printf 'bench.sh: DIAGNOSTIC_MODEL_PROTOCOL requires mekugi-diagnostic mode\n' >&2
 	    exit 2
 	fi
+	case $main_mentor in
+	true)
+		if [[ $benchmark_mode != mekugi-diagnostic || ($model != gpt-5.6 && $model != gpt-5.6-sol) ]]; then
+			printf 'bench.sh: BENCHMARK_MAIN_MENTOR=true requires mekugi-diagnostic and MODEL=gpt-5.6 or gpt-5.6-sol\n' >&2
+			exit 2
+		fi
+		;;
+	false) ;;
+	*) printf 'bench.sh: BENCHMARK_MAIN_MENTOR must be true or false\n' >&2; exit 2 ;;
+	esac
 	task_id=${TASK_ID:-etcd-range-stream}
 	suite_manifest="$benchmark_root/diverse-suite.json"
 	task=

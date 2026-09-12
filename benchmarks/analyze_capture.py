@@ -641,6 +641,7 @@ def validate_results(
     result_usage_excluded = result_usage_excluded or set()
     expected: dict[str, dict[str, int]] = {}
     allowed_models: dict[str, set[str]] = {}
+    main_models: dict[str, str] = {}
     mentor_threads: dict[str, str] = {}
     for result_record in load_jsonl(results_path):
         if result_record.get("arm") != arm:
@@ -654,6 +655,20 @@ def validate_results(
         parent_model = result_record.get("parent_model") or configured_model
         parent_model = required_text(parent_model, "result parent model")
         allowed_models[thread] = {parent_model}
+
+        main_mentor = config.get("main_mentor", {})
+        if main_mentor.get("enabled"):
+            if config.get("benchmark_mode") != "mekugi-diagnostic" or arm != "mekugi":
+                raise ValueError("main mentor requires the diagnostic Mekugi arm")
+            if parent_model not in {"gpt-5.6", "gpt-5.6-sol"} or main_mentor.get("requested_model") != parent_model:
+                raise ValueError("main mentor configured model mismatch")
+            if main_mentor.get("requested_reasoning_effort") != result_record.get("reasoning_effort"):
+                raise ValueError("main mentor configured reasoning effort mismatch")
+            if main_mentor.get("model") != "gpt-6-astra":
+                raise ValueError("unsupported main mentor model")
+            allowed_models[thread].add("gpt-6-astra")
+            main_models[thread] = parent_model
+            mentor_threads[thread] = "gpt-6-astra"
 
         child_model = result_record.get("child_model")
         proof_value = agent.get("child_proof_path") if isinstance(agent, dict) else None
@@ -698,6 +713,12 @@ def validate_results(
             model = attempt.get("model") if isinstance(attempt, dict) else None
             if model not in allowed_models[thread]:
                 raise ValueError(f"provider model {model} violates the configured schedule")
+            if thread in main_models:
+                configured = main_models[thread]
+                if model == configured and "gpt-6-astra" not in actual_models[thread]:
+                    raise ValueError("main schedule did not start with Astra")
+                if model == "gpt-6-astra" and configured in actual_models[thread]:
+                    raise ValueError("main schedule restarted Astra after handoff")
             actual_models[thread].add(model)
         if thread in observed:
             seen.add(thread)
@@ -713,7 +734,7 @@ def validate_results(
             raise ValueError("capture has no request for a proved mentor child")
     for child_thread, mentor_model in mentor_threads.items():
         if mentor_model not in actual_models[child_thread]:
-            raise ValueError("mentor treatment never routed the proved child to the mentor model")
+            raise ValueError("mentor treatment never routed the scheduled thread to the mentor model")
     return len(expected)
 
 

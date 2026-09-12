@@ -2,8 +2,10 @@
 
 ## REQ-MENTOR-001 — Main and subagent Mentor Handoff
 
-Mentor Handoff is a `mekugi`-mode product schedule. It is enabled by default and disabled with
-`--mentor-handoff=false`. Passthrough mode keeps it off and rejects an explicit enable. Its
+Mentor Handoff is a `mekugi`-mode product schedule. Subagent handoff is enabled by default
+and disabled with `--mentor-handoff=false`. Main handoff is independently controlled by
+`--main-mentor-handoff`, which defaults to `false`. Passthrough mode keeps both off and
+rejects an explicit enable of either. Its
 eligible threads are main sessions (including ordinary forks) with valid Codex turn metadata,
 no subagent header, no `subagent_kind`, and a Codex thread ID; or AgentControl thread spawns
 carrying exactly one `x-openai-subagent: collab_spawn` header and valid Codex turn metadata whose
@@ -13,10 +15,10 @@ or instructions. Requests outside these boundaries remain unchanged.
 
 For an eligible request whose configured model is exactly `gpt-5.6-luna` or
 `gpt-5.6-terra`, the mentor is `gpt-5.6-sol` with `high` reasoning.
-For exactly `gpt-5.6`, the mentor is `gpt-6-astra` with one lower reasoning level,
+For exactly `gpt-5.6` or `gpt-5.6-sol`, the mentor is `gpt-6-astra` with one lower reasoning level,
 floored at `low` and capped at `xhigh`: `low` and `medium` map to `low`, `high` to
 `medium`, `xhigh` to `high`, and `max` and `ultra` to `xhigh`. Missing or unrecognized
-effort uses `low`. Other configured models, including `gpt-5.6-sol` and `gpt-6-astra`,
+effort uses `low`. Other configured models, including `gpt-6-astra`,
 remain unchanged. The router replaces only the top-level model and reasoning effort,
 preserving other reasoning members, input history, tools, metadata, and request fields.
 This happens before Mekugi projection, CTP preparation, provider serialization, and transport capture. Codex continues to construct later requests from its session

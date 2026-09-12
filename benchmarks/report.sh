@@ -214,6 +214,12 @@ ctp_failed=false
 	printf -- '- Mode: `%s`\n' "$mode"
 	printf -- '- Model: `%s`\n' "$model"
 	printf -- '- Reasoning effort: `%s`\n' "$effort"
+	if [[ $(jq -r '.main_mentor.enabled // false' "$config") == true ]]; then
+		printf -- '- Main Mentor Handoff: `%s` → `%s` (`%s` configured reasoning)\n' \
+			"$(jq -r '.main_mentor.model' "$config")" \
+			"$(jq -r '.main_mentor.requested_model' "$config")" \
+			"$(jq -r '.main_mentor.requested_reasoning_effort' "$config")"
+	fi
 	if [[ $mode == mentor-handoff ]]; then
 		printf -- '- Both arms model protocol: `%s`\n' "$mentor_protocol"
 		printf -- '- Requested child model: `%s`; initial mentor model: `%s`\n' \
