@@ -66,7 +66,7 @@ command sessions, and patch diff UI. No fork, no config edits, no daemon.
   - `functions.hpatch` accepts verified `LINE:HASH` rows, inclusive ranges,
     and exact literal text, including text the agent already knows.
   - Related edits across files share one validation pass before Codex applies
-    the generated patch. Invalid targets or conflicting edits reject the whole script.
+    the generated patch. Invalid targets or conflicting edits reject the edit transaction.
   - Successful reports return current row references for follow-up edits.
     Unchanged saved rows remain reusable after line shifts when their hash
     identifies exactly one row.
@@ -304,6 +304,70 @@ complete read/edit/apply cycle and inspect current content after a handoff.
 See the [editing guarantees](doc/spec/output.md) and
 [target selection rules](doc/spec/select.md).
 
+### Edits and shell in one call
+
+With Code Mode, `functions.hpatch` can interleave atomic edit segments and shell
+programs. Completed work stays applied if a later segment fails:
+
+```text
+shell test -f notes.txt
+in notes.txt
+type "draft" "ready"
+shell rg -n ready notes.txt
+```
+
+Mixed scripts reduce model handoffs for dependent edit/command chains, but add host calls
+for checkpoints and translation. Use ordinary hpatch for edits alone and the shell tool
+for command-only work.
+
+Use `shell COMMAND` for a single physical line, without quoting or escaping it
+for HPATCH. Quotes, pipes, and redirects remain shell source, but `<<` is not
+allowed anywhere in a single-line command, even inside quotes. For multiline
+programs or any source containing `<<`, use `shell <<SHELL`, the program body,
+and a closing `SHELL` line. Empty or whitespace-only programs complete as no-ops
+without starting a process.
+That exact opener is reserved: an unclosed block rejects rather than falling
+back to single-line execution. Each shell form accepts one program with the
+usual interpreter selector and execution directives. Normal HPATCH syntax and
+target checks still apply outside shell commands.
+Each edit segment starts with its own file selection and reads a fresh baseline
+after preceding commands finish. Codex still authorizes every generated patch
+and shell execution.
+
+The result shows completed, failed, and unstarted segments. Execution stops on
+failure without rolling back earlier effects. Checkpoints preserve progress and
+known native session handles even when a Code Mode cell is terminated.
+The result's `change_id` groups workspace edit diffs and resumed repairs for
+`hchanges read ID`. Shell effects are not included in those diffs.
+
+Mixed execution opens one argument-free `shell` control channel. Actual shell commands
+keep their normal display; private checkpoint and translation data travel through stdin,
+so the host may show control-channel input activity. No private flags or runtime paths
+are added to the displayed command.
+
+Continue with `hpatch` using `resume HANDLE`, without resending the original script.
+First resolve the previous cell and any potentially running work. After inspecting
+a failed or uncertain segment, use `resume HANDLE retry` to retry it, optionally
+followed by one replacement segment, or `resume HANDLE accept` after establishing
+its intended state externally. Completed work is not replayed, and remaining edit
+targets are checked against current files. Handles last one hour in the current
+thread and expire sooner if the router stops. Ordinary edit-only calls keep their
+existing atomicity and recovery behavior.
+
+To fix code and rerun the failed test without a separate resume call, submit one edit
+segment with `repair`:
+
+```text
+resume HANDLE repair
+in app.go
+type "incorrect expression" "correct expression"
+```
+
+After the repair succeeds, the carrier retries the failed segment and runs its retained
+suffix automatically. If the repair fails, the same handle retains it for correction.
+
+See the [mixed-script contract](doc/spec/script.md#shell-in-script).
+
 ### Direct scripts
 
 The agent can send a program directly to `functions.shell`, for example:
@@ -391,19 +455,29 @@ Hpatch keeps durable review records in the router's replay store. An agent can h
 
 ```sh
 hchanges read hp_a1..hp_a3
-hchanges read --summary hp_a1..hp_a3
-hchanges read --history hp_a2
+hchanges read hp_a1..hp_a3 --summary
+hchanges read hp_a2 --history
 ```
 
 Ranges are inclusive and stay within one agent's stream. Recovery keeps the original ID.
 Default reads show outcomes and captured diffs, not repeated recovery scripts; `--history`
-includes the full chain. These are hpatch's evaluated changes, including formatting, not
+includes the full chain. Use `--summary` when you only need operations, paths, and
+added/removed line counts. Counts describe each edit separately, not the net change
+across several edits. A normal update looks like:
+
+```text
+hp_a1 applied
+update "src/parser.go" +8 -3
+```
+
+These are hpatch's evaluated changes, including formatting, not
 a record of shell edits or other workspace changes. Prepared diffs are marked unconfirmed
 until execution is confirmed; the host's newline handling can still affect applied bytes.
 
 Reads default to 4,000 output tokens. Use `--max-tokens N` to change that limit,
-`--path PATH` to select an exact recorded path, or `--workspace DIR` when reading from
-a subdirectory. Incomplete reads return a continuation cursor on stderr and a nonzero
+`--path PATH` to select a recorded path (absolute or relative to the selected workspace),
+or `--workspace DIR` when reading from a subdirectory. Flags work before or after IDs.
+A path with no matches is reported explicitly. Incomplete reads return a continuation cursor on stderr and a nonzero
 status. Repeat the same command with `--cursor VALUE` to continue. Missing records or
 a changed snapshot fail explicitly. Isolated executors need the router's replay directory
 mounted at its original absolute path. See the [change record contract](doc/spec/changes.md).

@@ -63,6 +63,35 @@ type mekugiHistory struct {
 	sequence uint64
 }
 
+// confirmsReport accepts only the exact retained report, either directly or in
+// the matching host carrier's completed envelope. Never search arbitrary output
+// for success prose: failed, yielded, truncated, or extra output is not a receipt.
+func (h mekugiHistory) confirmsReport(raw json.RawMessage) bool {
+	if h.translationError != "" || h.report == "" {
+		return false
+	}
+	texts := executionOutputTexts(raw)
+	// Code Mode prepends its metadata as a separate content block before
+	// text(report). Native exec_command instead returns one combined block.
+	if len(texts) == 2 && h.carrierName != nativeExecCommandToolName {
+		state, _, body := codeModeExecutionHeader(texts[0])
+		return state == "Script completed" && body == "" && texts[1] == h.report
+	}
+	if len(texts) != 1 {
+		return false
+	}
+	text := texts[0]
+	if text == h.report {
+		return true
+	}
+	if h.carrierName == nativeExecCommandToolName {
+		state, body := nativeExecutionHeader(text)
+		return state == "Process exited with code 0" && body == h.report
+	}
+	state, _, body := codeModeExecutionHeader(text)
+	return state == "Script completed" && body == h.report
+}
+
 type mekugiHistorySession struct {
 	calls map[string]mekugiHistory
 	bytes int
@@ -335,7 +364,7 @@ func (p *mekugiProxy) reconcileVisibleInput(ctx context.Context, request *parsed
 		}
 		carrierKind := history.effectiveCarrierKind()
 		if itemType == carrierOutputItemType(carrierKind) {
-			if history.translationError == "" && jsonString(item, "output") == history.report {
+			if history.confirmsReport(item["output"]) {
 				history.confirmed = true
 			}
 			visible[callID] = history

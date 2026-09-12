@@ -3,7 +3,7 @@
 ## REQ-CORRECT-001 — Rejected-script recovery
 
 The router exposes a separate model-visible `functions.hpatch_recover` custom tool with an
-independent embedded Lark grammar. Recovery is unavailable from root public APIs, root
+independent embedded Lark grammar. Edit-only rejected-script recovery is unavailable from root public APIs, root
 `tool_grammar.lark`, and ordinary `functions.hpatch`. Recovery interpretation is
 selected only by the dedicated tool, never by inspecting ordinary hpatch payloads.
 
@@ -53,6 +53,19 @@ recovery view, without deleting durable replay records needed by another branch.
 forked threads inherit only ancestry actually visible in their input. Ordering and executor
 confirmation are request-local; concurrent requests cannot alter each other's recovery baseline
 or target aliases.
+
+Mixed HPATCH/shell invocations and their resume calls under
+[REQ-SCRIPT-001](script.md#retained-continuation) are not edit-only recovery
+baselines. If the latest visible HPATCH invocation was mixed or a resume,
+`hpatch_recover` directs the agent to inspect checkpoints, current files, and
+known sessions, then use `hpatch` with `resume HANDLE` only if continuation
+retention succeeded. Mixed preflight failure without a retained handle instead
+reports that no segment ran and asks for a corrected script through `hpatch`.
+A rejected resume request directs the agent to correct its diagnostic and inspect
+the original continuation state, not resend the original mixed script.
+It never falls back to an older rejected edit-only script or infers execution
+success from preflight or translation. This diagnostic performs
+no execution and changes no workspace or retained continuation state.
 
 When every structured rejection is `row-stale`, the routed diagnostic lists only the rejected
 target-bearing commands and their current `C...` handles. Recovery guidance directs the model to
@@ -106,3 +119,10 @@ Acceptance:
     or oversized corrections without advancing ancestry or evaluating workspace
     edits. Accepted reconstructions use the same ordinary dispatch, replay,
     re-rejection, and isolation rules as target-only corrections.
+13. After a mixed script completes an edit and then fails a shell or edit segment,
+    `hpatch_recover` refuses with mixed-specific remaining-work guidance. The same
+    exclusion applies to interrupted, successful, and preflight-rejected mixed
+    calls. Test the diagnostic as well as refusal: it must neither claim a failed
+    or unresolved call succeeded nor select an older edit-only rejection. A mixed
+    preflight failure without a retained handle reports that no segment ran and
+    requests corrected input, without advertising `resume HANDLE`.

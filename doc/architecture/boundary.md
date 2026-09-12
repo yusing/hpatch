@@ -76,7 +76,8 @@ No model-visible schema, public plugin implementation, or executable frontend is
 `REQ-SESSION-001`; `cmd/mekugi` dispatches its read-only command before router startup.
 It reads rollout call identities and validates records through the replay store's reader,
 without opening its writable lifecycle or constructing a recovery view. It reuses stored
-translation facts and exact-report confirmation, never derives execution from carrier code.
+translation facts and the request-replay exact-report confirmation helper, including
+completed host envelopes, never derives execution from carrier code.
 Bounded text projection remains separate from sanitized transport metrics.
 
 Transport capture is auxiliary: tokenization or durable-write failures cannot replace a successful

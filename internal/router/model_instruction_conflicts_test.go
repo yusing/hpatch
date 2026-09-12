@@ -274,3 +274,159 @@ func TestChecklistRewritePreservesCustomPolicyAndMarkers(t *testing.T) {
 		}
 	}
 }
+
+func TestRewritePlanModeDeveloperInstructionConflicts(t *testing.T) {
+	const plan = `# Plan Mode (Conversational)
+* Keep asking until you can clearly state: goal + success criteria, audience, in/out of scope, constraints, current state, and the key preferences/tradeoffs.
+* Once intent is stable, keep asking until the spec is decision complete: approach, interfaces (APIs/schemas/I/O), data flow, edge cases/failure modes, testing + acceptance criteria, rollout/monitoring, and any migrations/compat constraints.
+You SHOULD ask many questions, but each question must:`
+	const userText = "You SHOULD ask many questions, but each question must:"
+	guidance := codexinstructions.InstructionsForModel("gpt-6-astra", false)
+	request := parsedResponsesRequest{fields: map[string]json.RawMessage{
+		"model":        mustTestJSON(t, "gpt-6-astra"),
+		"instructions": mustTestJSON(t, stockModelInstructionsForTest("", "")),
+		"input": mustTestJSON(t, []any{
+			map[string]any{"type": "message", "role": "developer", "content": plan},
+			map[string]any{"type": "message", "role": "developer", "content": []any{
+				map[string]any{"type": "input_text", "text": "* Keep asking until you can clearly state: goal + success criteria, audience, in/out of scope, constraints, current state, and the key preferences/tradeoffs."},
+				map[string]any{"type": "input_text", "text": "You SHOULD ask many questions, but each question must:"},
+				map[string]any{"type": "input_text", "text": "unrelated trailing guidance", "provider_metadata": map[string]any{"kept": true}},
+			}},
+			map[string]any{"type": "message", "role": "user", "content": userText},
+		}),
+	}}
+	if err := rewriteReceivedModelInstructions(t.Context(), &request, false, guidance); err != nil {
+		t.Fatal(err)
+	}
+	var messages []struct {
+		Role    string
+		Content json.RawMessage
+	}
+	if err := json.Unmarshal(request.fields["input"], &messages); err != nil {
+		t.Fatal(err)
+	}
+	var rewrittenPlan string
+	if err := json.Unmarshal(messages[0].Content, &rewrittenPlan); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rewrittenPlan, "Keep asking until") ||
+		strings.Contains(rewrittenPlan, "SHOULD ask many questions") ||
+		!strings.Contains(rewrittenPlan, "Ask only the questions needed") {
+		t.Fatalf("Plan mode conflicts were not rewritten: %q", rewrittenPlan)
+	}
+	var parts []struct {
+		Text             string
+		ProviderMetadata json.RawMessage `json:"provider_metadata"`
+	}
+	if err := json.Unmarshal(messages[1].Content, &parts); err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 3 || parts[2].Text != "unrelated trailing guidance" {
+		t.Fatalf("multipart developer content changed shape: %#v", parts)
+	}
+	var metadata struct {
+		Kept bool
+	}
+	if err := json.Unmarshal(parts[2].ProviderMetadata, &metadata); err != nil || !metadata.Kept {
+		t.Fatalf("multipart provider metadata was not preserved: %s", parts[2].ProviderMetadata)
+	}
+	for _, part := range parts {
+		if strings.Contains(part.Text, "Keep asking until") || strings.Contains(part.Text, "SHOULD ask many questions") {
+			t.Fatalf("multipart Plan mode conflict was not rewritten: %q", part.Text)
+		}
+	}
+	var rewrittenUser string
+	if err := json.Unmarshal(messages[2].Content, &rewrittenUser); err != nil {
+		t.Fatal(err)
+	}
+	if rewrittenUser != userText {
+		t.Fatal("user content was rewritten as an instruction")
+	}
+}
+
+func TestRewriteDefaultModeRequestUserInputConflict(t *testing.T) {
+	const defaultMode = `# Collaboration Mode: Default
+
+Use the ` + "`request_user_input`" + ` tool only when it is listed in the available tools for this turn.
+
+In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions.
+
+Use the ` + "`request_user_input`" + ` tool only for optional questions where the answer would materially improve the quality of the work.
+
+If ` + "`request_user_input`" + ` returns no answers, continue with best judgment instead of asking again or treating the turn as blocked.
+
+When available, you can use the ` + "`functions.request_user_input_async`" + ` tool.`
+	guidance := codexinstructions.InstructionsForModel("gpt-6-astra", false)
+	request := parsedResponsesRequest{fields: map[string]json.RawMessage{
+		"model":        mustTestJSON(t, "gpt-6-astra"),
+		"tools":        mustTestJSON(t, []any{map[string]any{"type": "function", "name": "request_user_input", "description": "Request user input. This tool is only available in Plan mode."}}),
+		"instructions": mustTestJSON(t, stockModelInstructionsForTest("", "")),
+		"input": mustTestJSON(t, []any{
+			map[string]any{"type": "message", "role": "developer", "content": defaultMode},
+			map[string]any{"type": "additional_tools", "tools": []any{map[string]any{"type": "function", "name": "provider_tool", "description": "provider tool"}}},
+		}),
+	}}
+	if err := rewriteReceivedModelInstructions(t.Context(), &request, false, guidance); err != nil {
+		t.Fatal(err)
+	}
+	catalog := request.responseTools()
+	if len(catalog.additional) != 1 {
+		t.Fatalf("additional tool groups = %d, want 1", len(catalog.additional))
+	}
+	group := catalog.additional[0]
+	if err := catalog.encodeAdditional(request.fields, group, group.tools); err != nil {
+		t.Fatal(err)
+	}
+	var messages []struct {
+		Content string
+	}
+	if err := json.Unmarshal(request.fields["input"], &messages); err != nil {
+		t.Fatal(err)
+	}
+	got := messages[0].Content
+	for _, conflict := range []string{
+		"only when it is listed",
+		"only for optional questions",
+		"returns no answers",
+	} {
+		if strings.Contains(got, conflict) {
+			t.Errorf("Default mode request_user_input conflict survived: %q", conflict)
+		}
+	}
+	for _, want := range []string{
+		"Do not call the `request_user_input` tool in Default mode",
+		"For optional questions, make a reasonable assumption",
+		"`functions.request_user_input_async`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing preserved or replacement guidance %q", want)
+		}
+	}
+}
+
+func TestPreserveDefaultModeRequestUserInputWhenHostEnablesIt(t *testing.T) {
+	const defaultMode = "Use the `request_user_input` tool only when it is listed in the available tools for this turn."
+	guidance := codexinstructions.InstructionsForModel("gpt-6-astra", false)
+	request := parsedResponsesRequest{fields: map[string]json.RawMessage{
+		"model":        mustTestJSON(t, "gpt-6-astra"),
+		"instructions": mustTestJSON(t, stockModelInstructionsForTest("", "")),
+		"tools": mustTestJSON(t, []any{
+			map[string]any{"type": "function", "name": "request_user_input", "description": "Request user input. This tool is only available in Default or Plan mode."},
+		}),
+		"input": mustTestJSON(t, []any{
+			map[string]any{"type": "message", "role": "developer", "content": defaultMode},
+		}),
+	}}
+	if err := rewriteReceivedModelInstructions(t.Context(), &request, false, guidance); err != nil {
+		t.Fatal(err)
+	}
+	var messages []struct {
+		Content string
+	}
+	if err := json.Unmarshal(request.fields["input"], &messages); err != nil {
+		t.Fatal(err)
+	}
+	if messages[0].Content != defaultMode {
+		t.Fatalf("Default-enabled host guidance changed: %q", messages[0].Content)
+	}
+}

@@ -166,8 +166,92 @@ func TestTextGrammarPayloadLines(t *testing.T) {
 	}
 }
 
+func TestShellGrammarPayloadLines(t *testing.T) {
+	line := grammarTerminalRegexp(t, "SHELL_BODY_LINE")
+	suffix := grammarTerminalRegexp(t, "SHELL_SUFFIX")
+	matchesBodyLine := func(value string) bool {
+		if line.MatchString(value) {
+			return true
+		}
+		tail, ok := strings.CutPrefix(value, "SHELL")
+		return ok && strings.HasSuffix(tail, "\n") && suffix.MatchString(strings.TrimSuffix(tail, "\n"))
+	}
+	for _, payload := range []string{"", "S", "SH", "SHE", "SHEL", "SHELL ", " SHELL", "SHELLx", "Sx", "SHx", "SHEx", "SHELx", "a\rb", "SHELL\rx", "\r", "#!python3", "type <<PATCH", "PATCH", "TEXT", `echo "$(date)"`, "世界"} {
+		for _, ending := range []string{"\n", "\r\n"} {
+			if !matchesBodyLine(payload + ending) {
+				t.Errorf("shell body rejects %q", payload+ending)
+			}
+		}
+	}
+	for _, invalid := range []string{"SHELL\n", "SHELL\r\n", "no terminator", "bare\r"} {
+		if matchesBodyLine(invalid) {
+			t.Errorf("shell body accepts %q", invalid)
+		}
+	}
+}
+
+func TestShellGrammarClosingLineLexing(t *testing.T) {
+	// A body token must not consume the CR after SHELL before discovering LF.
+	// Factor the marker from its suffix so NL can win at that boundary.
+	body := grammarTerminalRegexp(t, "SHELL_BODY_LINE")
+	for _, ending := range []string{"\n", "\r\n"} {
+		if body.MatchString("SHELL" + ending) {
+			t.Fatalf("closing line matched as body: %q", ending)
+		}
+	}
+	suffix := grammarTerminalRegexp(t, "SHELL_SUFFIX")
+	for _, value := range []string{"", "\r", "\r\n", "\n"} {
+		if suffix.MatchString(value) {
+			t.Errorf("closing suffix matched as body: %q", value)
+		}
+	}
+	for _, value := range []string{"x", " ", "\rx", "\r\r"} {
+		if !suffix.MatchString(value) {
+			t.Errorf("body suffix rejected: %q", value)
+		}
+	}
+	if !strings.Contains(toolGrammar, `shell_block: "<<SHELL" NL (SHELL_BODY_LINE | "SHELL" SHELL_SUFFIX NL)* "SHELL"`) {
+		t.Fatal("shell marker must be factored from body suffix for longest-match lexing")
+	}
+}
+
+func TestShellGrammarAllowsWhitespacePrograms(t *testing.T) {
+	// Whitespace-only source remains valid; the router completes it as a no-op.
+	inline := grammarTerminalRegexp(t, "SHELL_INLINE")
+	for _, source := range []string{" ", "\t", " \t "} {
+		if !inline.MatchString(source) {
+			t.Errorf("shell grammar rejects whitespace-only source %q", source)
+		}
+	}
+}
+
+func TestShellInlineGrammar(t *testing.T) {
+	// Match the complete line, including ordinary single-< redirections.
+	inline := grammarTerminalRegexp(t, "SHELL_INLINE")
+	token := regexp.MustCompile(strings.TrimSuffix(inline.String(), "$"))
+	for _, command := range []string{"go test ./...", `rg -n 'TODO' src | head`, `echo "$(printf x)"`, "  echo x  ", "# comment", "世界", "printf '%s' 'a\rb'", "<", "cat < input", "echo '<'", "echo a<b", "echo > output"} {
+		if !inline.MatchString(command) || token.FindString(command) != command {
+			t.Errorf("inline grammar rejects or truncates %q", command)
+		}
+	}
+	for _, invalid := range []string{"", "<<", "<<SHELL", "<<SHELLx", "<<SHELL ", "echo '<<'", "cat <<<text", "echo $((1<<2))", "echo x\nnew a", "echo x\r\n", "<<SHELL\r\n", "<<SHELL\n"} {
+		if inline.MatchString(invalid) {
+			t.Errorf("inline grammar accepts %q", invalid)
+		}
+	}
+}
+
+func TestValidateScriptSyntaxDoesNotEvaluate(t *testing.T) {
+	if err := ValidateScriptSyntax("in missing\ntype 1:abcd \"value\""); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateScriptSyntax("shell <<SHELL\ntrue\nSHELL"); err == nil {
+		t.Fatal("engine syntax accepted routed execution")
+	}
+}
+
 func TestToolDescriptionIsNonInstructional(t *testing.T) {
-	const want = "Atomic HPATCH/2 edit-script application. Rejection or cancellation leaves the workspace unchanged."
+	const want = "HPATCH/2 edits and mixed edit/command execution (Code Mode required for mixed scripts). Edit validation is atomic; failed host application may have partial effects."
 	if got := ToolDescription(); got != want {
 		t.Fatalf("ToolDescription() = %q, want %q", got, want)
 	}

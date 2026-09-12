@@ -39,9 +39,16 @@ sections and list items before refreshing guidance, independently of Codex's lau
 This includes stock Planning/Tasks sections identified by their `update_plan` introduction, explicit
 plan-tool sections, and checklist progress instructions. Ordinary planning, edit planning, and
 unrelated custom instructions remain intact. The router also rewrites pinned conflicting
-progress-channel, initial-update, skill-announcement, approval-rejection delivery, 60-second wait, Code Mode batching,
-and unrestricted parallelization fragments outside the owned section. Progress uses journal mutations. Known reads and searches batch in a shell script, and parallelism respects tool
-contracts with hpatch running alone. Unrelated instructions, including authorization, validation,
+progress-channel, initial-update, skill-announcement, approval-rejection delivery, 60-second wait,
+Code Mode batching, unrestricted parallelization, Plan mode's repeated-question prompts, and
+Default mode's `request_user_input` prompts when that request's tool contract makes it Plan-only
+outside the owned section. Progress uses journal mutations. Known reads and searches batch in a
+shell script, and parallelism respects tool contracts with hpatch running alone.
+Plan mode asks only the questions needed for a decision-complete plan, while Default mode does
+not call `request_user_input` when the request's tool description restricts it to Plan mode;
+Default-enabled host guidance is preserved. The rewrite applies to every developer-message
+instruction, including collaboration-mode instructions delivered separately from the main model
+instructions. Unrelated instructions, including authorization, validation,
 and shell-safety rules, are preserved. These rewrites cover the GPT-6 Astra and shared GPT-5.6
 Sol/Terra/Luna templates and the active Codex prompt, including its “To reduce round trips”
 batching prefix and line-wrapped status-reply instruction. At startup,
@@ -87,14 +94,25 @@ The shared guidance must make these choices directly available in native and CTP
    [inspect.md](inspect.md), and [symbol.md](symbol.md).
 3. **Editing:** group ready related edits against immutable baselines; split dependent work
    only when validation or missing facts must determine the next edit. Prefer insertions and
-   targeted replacements, leaving language-aware formatting to the engine.
+   targeted replacements, leaving language-aware formatting to the engine. Mixed
+   HPATCH/shell calls require Code Mode and use separately validated edit segments
+   under [REQ-SCRIPT-001](script.md). Guidance distinguishes atomic validation from
+   potentially partial host application, explains interruption checkpoints and
+   unresolved sessions, and never treats cancellation as proof of rollback or
+   process termination.
 4. **Values and boundaries:** keep raw and collision-safe line-framed syntax, newline ownership,
    empty-value deletion, and advisory interpretation together in the shared HPATCH/2 reference.
    [REQ-SCRIPT-001](script.md), [REQ-EDIT-001](edit.md), and
    [REQ-OUTPUT-001](output.md) own the behavior.
-5. **Recovery:** choose a payload form in one shared section, using the current rejected
-   baseline rather than workspace rows. Follow [REQ-CORRECT-001](correct.md) for atomic
-   reevaluation, ancestry, and invalid corrections.
+5. **Recovery:** for edit-only rejections, choose a payload form in one shared section,
+   using the current rejected baseline rather than workspace rows. Follow
+   [REQ-CORRECT-001](correct.md) for atomic reevaluation, ancestry, invalid corrections,
+   and the redirect to retained continuation for mixed scripts. Mixed-script guidance
+   teaches `resume HANDLE`, explicit reconciliation with `retry` or `accept`,
+   failed-segment-only replacement, temporary thread-scoped lifetime, and fresh
+   target validation. It first resolves the previous cell, current files, and
+   potentially live sessions; neither failure nor an unknown outcome authorizes
+   automatic replay.
 
 Shared journal guidance includes the actual Bash/POSIX `journal add 'text'` command
 and Code Mode `await journal({op: "add", text: "text"})` form, alongside the optional field for eligible

@@ -75,9 +75,10 @@ Do not wake solely to report progress.
 
 ## Tool coordination
 
-Use the Shell reference's batching guidance for ready reads and searches; keep output bounded.
-Parallelize other independent calls only when their tool contracts allow it; run hpatch
-alone and wait for its result before another tool call. Use only the tools exposed for this request.
+Use `functions.shell` for routine commands and task-required native interfaces directly.
+Tool defaults do not override the interface under test.
+Keep output bounded and run hpatch alone. Other independent calls may run in parallel
+when their tool contracts allow it.
 
 ## Shell reference
 
@@ -200,8 +201,65 @@ is unavailable; use native session facilities for interactive input or terminati
 
 ## HPATCH/2
 
-HPATCH/2 applies one complete target-bearing edit script atomically. Do not call this tool
-in parallel with other tools. Rejection or cancellation changes nothing.
+Edit-only HPATCH/2 applies one complete target-bearing edit script atomically. Do not call this
+tool in parallel with other tools. Rejection before application changes nothing.
+
+Choose mixed scripts for dependent edit/command chains. Use the shell tool for command-only
+work and ordinary edit-only hpatch for edits alone; these avoid mixed-control overhead.
+
+### Shell-in-script
+
+With Code Mode available, use `shell go test ./...` for one physical command line.
+Everything after the first `shell ` is raw program source through the end of that line;
+quotes, pipes, redirects, and shell operators need no HPATCH escaping. `<<` is not allowed
+anywhere in a single-line command, even inside quotes. Use a block for such source or for
+multiline programs. A trailing backslash does not include the next HPATCH line.
+
+Put a multiline program between an exact `shell <<SHELL` header and an unindented closing
+`SHELL` line. The exact opener is reserved and never falls back to single-line execution;
+a missing close rejects before effects. Only that exact closing line is reserved in the
+body. HPATCH targets and values outside shell commands remain grammar-constrained; shell
+command text inside edit values remains data.
+
+Both shell forms may precede, follow, or separate edits. Each contiguous edit segment is
+validated separately against files as they exist when that segment starts. Begin
+each edit segment with `in` or `new`; file selection and pending edits do not cross shell
+boundaries. Each shell command accepts one program using the Shell reference's interpreter
+selector and execution directives, with independent shell state and params.
+
+All edit syntax and shell headers are checked before execution. Each edit is translated
+only after preceding commands finish, then Codex authorizes and applies its patch. A stale
+target, nonzero shell exit, host refusal, or cancellation stops the remainder. Completed
+edits and shell effects are not rolled back. Results identify started and unstarted segments
+and retain completed edit reports and shell output. Report rows describe that segment's
+completion, not changes a later shell command might make.
+
+Do not replay a mixed script or resend its suffix; use the retained handle after a failure.
+Checkpoints preserve the handle, segment, phase, completed count, and known native session
+even after hard Code Mode termination. A validation rejection applied nothing; an interrupted
+host patch may have partial or unknown effects, and a failed shell may have changed state.
+
+After the previous Code Mode cell ends, choose:
+- `resume HANDLE`: continue pending work, awaiting any known session rather than restarting it.
+- `resume HANDLE retry`: retry only the current segment after resolving live work and inspecting
+  uncertain effects. Optionally put one replacement segment of the same kind on the next line,
+  with its own file selection or `shell` command.
+- `resume HANDLE repair`: supply one workspace edit segment after the header to fix the cause,
+  retry the failed segment, and continue its suffix in one call. Apply the same live-work and
+  uncertain-effect checks as retry. The repair is retained under the same handle if it fails.
+- `resume HANDLE accept`: continue after establishing the segment's intended state externally
+  and resolving its native work. This records reconciliation, not application success.
+
+Successful recovery automatically runs the retained suffix in the same carrier; no separate
+resume call is needed. Remaining edit targets are revalidated. Cancellation of a wait alone
+does not establish that its underlying process stopped.
+
+Handles use temporary thread-scoped storage: one hour from creation, no renewal, ending
+earlier on router shutdown. Invalid or unavailable handles execute nothing.
+`hpatch_recover` remains for ordinary rejected edit-only scripts and directs mixed work to
+this continuation interface. Use separate shell calls for interactive programs or explicit
+shell batches. Mixed scripts edit workspace files, not `@shell/` sources.
+Native-only clients use separate hpatch and shell calls.
 
 Commands:
 
@@ -235,9 +293,8 @@ When exact known target text spans logical lines or includes a trailing LF, enco
 `\n` (or an equivalent `\u000A`) inside the quoted anchored or unanchored target. Keep the target
 on one physical command line. Literal tab is accepted; carriage returns and other controls are
 not.
-Before writing `N > 1`, count the exact literal occurrences in the acquired immutable baseline;
-never infer `N` from the number of intended replacements. If the count is not already visible,
-use hgrep or separate verified row anchors instead of guessing it.
+For `N > 1`, verify the literal occurrence count in the baseline using existing evidence or
+hgrep. Use separate verified row anchors when position matters.
 
 Use inline JSON-compatible strings for short or single-line values. Include `\n` when an
 insertion must form a complete new line:
@@ -365,14 +422,21 @@ Invalid corrections leave the workspace and retained baseline unchanged.
 
 ## Change handoffs
 
-Hpatch results include `change hp_a1`; recovery keeps that ID. Hand off IDs or inclusive
-same-agent ranges instead of a full Git diff. Inside shell, use
-`hchanges read hp_a1..hp_a3` for captured diffs and outcomes; add `--summary` for paths
-or `--history` for the full recovery chain. Reads default to 4,000 tokens.
+Hpatch results include `change hp_a1`; recovery keeps that ID. Review captured hpatch
+edits with `hchanges read hp_a1..hp_a3`, rather than Git diff. Hand off IDs or inclusive
+same-agent ranges instead of copying diffs. Use `--summary` only when you need an
+operation/path and added/removed line-count overview, not before an already-needed
+diff read; use `--history` to diagnose the full recovery chain.
+Git status and Git diff remain useful for untracked, shell-generated, or unrelated
+workspace changes; do not routinely pair them with hchanges for the same captured edits.
+
+Reads default to 4,000 tokens. Flags may appear before or after IDs.
 Optional `--max-tokens N`, `--path PATH`, and `--workspace DIR` narrow a read.
+Workspace file paths accept recorded, workspace-relative, or absolute spellings.
 An incomplete read supplies `--cursor HASH:BYTE`; repeat the same selection with that
 cursor to continue. These are historical evaluated diffs, not current editable row
-references or a record of shell edits. Unconfirmed results are not proof of application.
+references or a record of shell edits. Counts describe each evaluation, not a combined
+net change. Unconfirmed results are not proof of application.
 
 ## Reading and inspection reference
 

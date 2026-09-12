@@ -22,6 +22,7 @@ import (
 	"github.com/yusing/mekugi"
 	"github.com/yusing/mekugi/capturer"
 	codexinstructions "github.com/yusing/mekugi/contrib/codex"
+	"github.com/yusing/mekugi/internal/hpatchsyntax"
 	"github.com/yusing/mekugi/internal/router/toolplugin"
 	"github.com/yusing/mekugi/internal/shellsyntax"
 )
@@ -1075,6 +1076,14 @@ func (t *mekugiResponseTransform) translate(callID, input string, upstreamItem m
 	}
 	if len(input) > maxMekugiScriptBytes {
 		return mekugiHistory{}, fmt.Errorf("mekugi call %q script exceeds %d bytes", callID, maxMekugiScriptBytes)
+	}
+
+	if strings.HasPrefix(strings.TrimSpace(input), "resume ") {
+		return t.translateMixedResume(callID, input, upstreamItem)
+	}
+
+	if parts, mixed, err := hpatchsyntax.SplitShell(input); mixed {
+		return t.translateMixedScript(callID, input, parts, err, upstreamItem)
 	}
 
 	evaluated, err := mekugi.RewriteTargetAliases(input, t.targetAliases())

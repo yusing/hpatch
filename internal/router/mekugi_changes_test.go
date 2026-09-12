@@ -160,7 +160,7 @@ func TestTrackedChangesNoOpPendingAndMissing(t *testing.T) {
 		}
 	}
 	text, err := store.readChanges(t.Context(), options)
-	if err != nil || text != "hp_a1 attempts=1\nattempt 1 no-op\n" {
+	if err != nil || text != "hp_a1 no-op\n" {
 		t.Fatalf("no-op = %q, %v", text, err)
 	}
 	if err := os.Remove(filepath.Join(store.directory, replayRecordName("/w", "noop", false))); err != nil {
@@ -403,5 +403,129 @@ func TestTrackedNativeFailureIncludesChangeID(t *testing.T) {
 	output, err := exec.CommandContext(t.Context(), bash, "-c", script).CombinedOutput()
 	if err == nil || string(output) != "change hp_a1\nexecutor failed\n" {
 		t.Fatalf("failure output = %q, %v", output, err)
+	}
+}
+
+func TestTrackedHostEnvelopeConfirmation(t *testing.T) {
+	for _, carrier := range []string{nativeExecCommandToolName, "exec"} {
+		t.Run(carrier, func(t *testing.T) {
+			transform, proxy, _, workspace := newMekugiTestTransform(t, newInProcessMekugiTranslator(t.TempDir()))
+			store, err := openMekugiReplayStore(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			proxy.replayStore = store
+			history, err := transform.translate("edit", "new f.txt\ntype \"new\\n\"\n", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := transform.commitHistory(); err != nil {
+				t.Fatal(err)
+			}
+			// Use a separate durable chain with the actual carrier identity.
+			id, err := store.reserveChange(t.Context(), workspace, "host", "host-edit")
+			if err != nil {
+				t.Fatal(err)
+			}
+			history.changeID, history.correlationID = id, "host-edit"
+			history.carrierName = carrier
+			history.carrierKind = codeModeCarrierFunction
+			history.report = changeNotice(id) + strings.TrimPrefix(history.report, changeNotice("hp_a1"))
+			if err := store.put(t.Context(), workspace, map[string]mekugiHistory{"host-edit": history}); err != nil {
+				t.Fatal(err)
+			}
+			// The host's prepend_script_status inserts metadata as its own
+			// input_text block, followed by the carrier's text(report).
+			output := []any{
+				map[string]any{"type": "input_text", "text": "Script completed\nWall time 0.1 seconds\nOutput:\n"},
+				map[string]any{"type": "input_text", "text": history.report},
+			}
+			if carrier == nativeExecCommandToolName {
+				output = []any{map[string]any{"type": "input_text", "text": "Chunk ID: abc\nWall time: 0.1000 seconds\nProcess exited with code 0\nOriginal token count: 42\nOutput:\n" + history.report}}
+			}
+			request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+				"input": []any{map[string]any{
+					"type": "function_call_output", "call_id": "host-edit",
+					"output": output,
+				}},
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := proxy.reconcileVisibleInput(t.Context(), &request, workspace, "reader"); err != nil {
+				t.Fatal(err)
+			}
+			// A new reader process sees the persisted receipt, not a live cache.
+			store, err = openMekugiReplayStore(store.directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := store.readChanges(t.Context(), changeReadOptions{workspace: workspace, ids: []string{id}})
+			if err != nil || !strings.HasPrefix(got, id+" applied\n") {
+				t.Fatalf("receipt = %q, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestExactHostReportEvidence(t *testing.T) {
+	const report = "change hp_a1\nsuccess\n"
+	native := "Wall time: 0.1000 seconds\nProcess exited with code 0\nOutput:\n"
+	completed := "Script completed\nWall time 0.1 seconds\nOutput:\n"
+	for _, test := range []struct {
+		name, carrier, output string
+		want                  bool
+	}{
+		{"bare", "exec", report, true},
+		{"native", nativeExecCommandToolName, native + report, true},
+		{"code", "exec", completed + report, true},
+		{"wrong carrier", nativeExecCommandToolName, completed + report, false},
+		{"failed", nativeExecCommandToolName, strings.Replace(native, "code 0", "code 1", 1) + report, false},
+		{"running", nativeExecCommandToolName, strings.Replace(native, "Process exited with code 0", "Process running with session ID 42", 1) + report, false},
+		{"code failed", "exec", strings.Replace(completed, "completed", "failed", 1) + report, false},
+		{"prefix", "exec", "untrusted\n" + completed + report, false},
+		{"suffix", "exec", completed + report + "extra\n", false},
+		{"truncated", nativeExecCommandToolName, native + "Warning: truncated output\n" + report, false},
+		{"empty", "exec", "", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			history := mekugiHistory{carrierName: test.carrier, report: report}
+			if got := history.confirmsReport(mustMarshalJSON(test.output)); got != test.want {
+				t.Fatalf("confirmation = %v; want %v", got, test.want)
+			}
+		})
+	}
+	for _, test := range []struct {
+		header, body string
+		extra        bool
+		want         bool
+	}{
+		{completed, report, false, true},
+		{completed + "extra", report, false, false},
+		{completed, report + "extra", false, false},
+		{strings.Replace(completed, "completed", "failed", 1), report, false, false},
+		{"Script running with cell ID 42\nWall time 0.1 seconds\nOutput:\n", report, false, false},
+		{completed, report, true, false},
+	} {
+		blocks := []any{
+			map[string]any{"type": "input_text", "text": test.header},
+			map[string]any{"type": "input_text", "text": test.body},
+		}
+		if test.extra {
+			blocks = append(blocks, map[string]any{"type": "input_text", "text": "extra"})
+		}
+		if got := (mekugiHistory{report: report, carrierName: "exec"}).confirmsReport(mustMarshalJSON(blocks)); got != test.want {
+			t.Errorf("multipart %+v: got %v", test, got)
+		}
+	}
+	history := mekugiHistory{report: report}
+	if history.confirmsReport(mustMarshalJSON([]any{
+		map[string]any{"type": "input_text", "text": report},
+		map[string]any{"type": "input_text", "text": "extra"},
+	})) {
+		t.Fatal("accepted multiple output blocks")
+	}
+	if (mekugiHistory{}).confirmsReport(mustMarshalJSON("")) {
+		t.Fatal("empty report confirmed")
 	}
 }

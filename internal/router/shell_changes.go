@@ -16,7 +16,7 @@ import (
 	"mvdan.cc/sh/v3/interp"
 )
 
-const changesReadUsage = "hchanges read [--summary|--history] [--path PATH] [--workspace DIR] [--max-tokens N] [--cursor HASH:BYTE] ID[..ID] ..."
+const changesReadUsage = "hchanges read ID[..ID] ... [--summary|--history] [--path PATH] [--workspace DIR] [--max-tokens N] [--cursor HASH:BYTE] (flags may appear anywhere)"
 const maxChangeReadBytes = 64 << 20
 
 type changeReadOptions struct {
@@ -35,9 +35,14 @@ func parseChangeRead(arguments []string, cwd string) (changeReadOptions, error) 
 	}
 	arguments = arguments[1:]
 	seen := make(map[string]bool)
-	for len(arguments) > 0 && strings.HasPrefix(arguments[0], "--") {
+	var refs []string
+	for len(arguments) > 0 {
 		flag := arguments[0]
 		arguments = arguments[1:]
+		if !strings.HasPrefix(flag, "--") {
+			refs = append(refs, flag)
+			continue
+		}
 		if seen[flag] {
 			return options, fmt.Errorf("duplicate option %s", flag)
 		}
@@ -63,6 +68,9 @@ func parseChangeRead(arguments []string, cwd string) (changeReadOptions, error) 
 			case "--workspace":
 				options.workspace = value
 			case "--cursor":
+				if value == "" {
+					return options, errors.New("--cursor requires a nonempty HASH:BYTE value")
+				}
 				options.cursor = value
 			case "--max-tokens":
 				number, err := strconv.Atoi(value)
@@ -75,11 +83,11 @@ func parseChangeRead(arguments []string, cwd string) (changeReadOptions, error) 
 			return options, fmt.Errorf("unknown option %s; %s", flag, changesReadUsage)
 		}
 	}
-	if len(arguments) == 0 {
+	if len(refs) == 0 {
 		return options, errors.New(changesReadUsage)
 	}
 	var err error
-	options.ids, err = expandChangeRefs(arguments)
+	options.ids, err = expandChangeRefs(refs)
 	if err != nil {
 		return options, err
 	}
@@ -99,6 +107,8 @@ func trackedStatus(history mekugiHistory, confirmed bool) string {
 	switch {
 	case history.translationError != "":
 		return "rejected"
+	case history.carrierKind == codeModeCarrierCustom && history.toolName == mekugiToolName:
+		return "execution plan (see segment attempts)"
 	case history.alreadySatisfied:
 		return "no-op"
 	case history.applied || confirmed:
@@ -125,6 +135,7 @@ func (s *mekugiReplayStore) readChanges(ctx context.Context, options changeReadO
 
 func (s *mekugiReplayStore) renderChanges(ctx context.Context, options changeReadOptions, index changeIndex) (string, error) {
 	var output strings.Builder
+	matched := false
 	for _, id := range options.ids {
 		if err := ctx.Err(); err != nil {
 			return "", err
@@ -133,9 +144,11 @@ func (s *mekugiReplayStore) renderChanges(ctx context.Context, options changeRea
 		if !exists {
 			return "", fmt.Errorf("change %s is missing in workspace %q; check --workspace or explicit store cleanup", id, options.workspace)
 		}
-		fmt.Fprintf(&output, "%s attempts=%d\n", id, len(change.Calls))
+		if len(change.Calls) > 1 {
+			fmt.Fprintf(&output, "%s attempts=%d\n", id, len(change.Calls))
+		}
 		if len(change.Calls) == 0 {
-			output.WriteString("pending (no completed result)\n")
+			fmt.Fprintf(&output, "%s pending (no completed result)\n", id)
 		}
 		for position, call := range change.Calls {
 			record, found, err := s.read(options.workspace, call.ID, false)
@@ -146,8 +159,13 @@ func (s *mekugiReplayStore) renderChanges(ctx context.Context, options changeRea
 				return "", fmt.Errorf("change %s has a missing or inconsistent attempt", id)
 			}
 			history := record.History.history()
-			fmt.Fprintf(&output, "attempt %d %s\n", position+1, trackedStatus(history, call.Confirmed))
-			if strings.HasPrefix(strings.TrimLeft(history.recoveryBaseline(), "\r\n"), "in "+shellArtifactPrefix) {
+			if len(change.Calls) == 1 {
+				fmt.Fprintf(&output, "%s %s\n", id, trackedStatus(history, call.Confirmed))
+			} else {
+				fmt.Fprintf(&output, "attempt %d %s\n", position+1, trackedStatus(history, call.Confirmed))
+			}
+			retained := strings.HasPrefix(strings.TrimLeft(history.recoveryBaseline(), "\r\n"), "in "+shellArtifactPrefix)
+			if retained {
 				output.WriteString("scope: retained shell script, not workspace files\n")
 			}
 			if options.view == "history" {
@@ -165,13 +183,14 @@ func (s *mekugiReplayStore) renderChanges(ctx context.Context, options changeRea
 				}
 			}
 			for _, file := range history.reviewFiles {
-				if options.path != "" && options.path != file.BeforePath && options.path != file.AfterPath {
+				if options.path != "" && !changePathMatches(options, file.BeforePath, retained) && !changePathMatches(options, file.AfterPath, retained) {
 					continue
 				}
+				matched = true
 				if options.view == "summary" {
-					fmt.Fprintf(&output, "file %q -> %q\n", file.BeforePath, file.AfterPath)
+					output.WriteString(file.Summary())
 				} else {
-					output.WriteString(file.Diff)
+					output.WriteString(file.UnifiedDiff())
 				}
 			}
 			if output.Len() > maxChangeReadBytes {
@@ -179,7 +198,31 @@ func (s *mekugiReplayStore) renderChanges(ctx context.Context, options changeRea
 			}
 		}
 	}
+	if options.path != "" && !matched {
+		fmt.Fprintf(&output, "no files match --path %q\n", options.path)
+	}
 	return output.String(), nil
+}
+
+// Match lexical workspace-relative and absolute spellings without consulting
+// current files: historical paths may have been moved or deleted since capture.
+func changePathMatches(options changeReadOptions, recorded string, retained bool) bool {
+	if recorded == "" {
+		return false
+	}
+	if options.path == recorded {
+		return true
+	}
+	if retained || options.workspace == "" {
+		return false
+	}
+	resolve := func(path string) string {
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(options.workspace, path)
+		}
+		return filepath.Clean(path)
+	}
+	return resolve(options.path) == resolve(recorded)
 }
 
 // The cursor binds a byte offset to the complete selected projection. A recovery

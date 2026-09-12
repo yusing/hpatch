@@ -31,7 +31,8 @@ ancestry suppresses projection. Start notices use the existing bounded activity 
 provenance; they never replace child answers or add follow-up, message, wait, or interruption notices.
 
 Complete subagent tool calls are also forwarded as user-only activity, never as executable
-root calls. Known tools use operation labels rather than raw transport arguments. Shell calls
+root calls. Agent `send_message` calls omit generic tool activity because messaging has its own
+commentary render. Known tools use operation labels rather than raw transport arguments. Shell calls
 and transparent, statically recognized Code Mode shell wrappers share a `Run` display.
 An `exec` call recovered through the built-in shell pipeline uses the shell display only
 after recovery is recorded, without changing its original replay identity.

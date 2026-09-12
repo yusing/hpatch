@@ -145,7 +145,7 @@ func TestTrackedReadUsesAnUnlockedSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	current, err := store.readChanges(t.Context(), options)
-	if err != nil || !strings.Contains(current, "attempt 1 applied") {
+	if err != nil || !strings.Contains(current, "hp_a1 applied") {
 		t.Fatalf("current read = %q, %v", current, err)
 	}
 }

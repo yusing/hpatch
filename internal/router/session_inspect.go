@@ -432,9 +432,7 @@ func inspectSessionCall(call sessionInspectionCall, record replayRecord, found b
 		// A translated patch alone is not evidence that the host applied it.
 		if history.translationError == "" && !history.applied && !history.alreadySatisfied && history.report != "" {
 			for _, output := range call.outputs {
-				var text string
-				if output.Type == carrierOutputItemType(history.effectiveCarrierKind()) &&
-					json.Unmarshal(output.Output, &text) == nil && text == history.report {
+				if output.Type == carrierOutputItemType(history.effectiveCarrierKind()) && history.confirmsReport(output.Output) {
 					result.Outcome = "confirmed"
 					break
 				}

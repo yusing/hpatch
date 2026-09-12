@@ -39,3 +39,39 @@ func TestHostReviewCapturesFormattedState(t *testing.T) {
 		t.Fatalf("rejected review = %#v, err = %v", rejected.ReviewFiles, err)
 	}
 }
+
+func TestReviewPresentation(t *testing.T) {
+	files := reviewFiles([]change{
+		{kind: changeUpdate, originalPath: "file.txt", path: "file.txt", original: "--old\n", content: "++new\n"},
+		{kind: changeAdd, path: "new.txt", content: "new"},
+		{kind: changeDelete, originalPath: "gone.txt", original: "gone\n"},
+		{kind: changeAdd, path: "empty.txt"},
+		{kind: changeDelete, originalPath: "empty-old.txt"},
+		{kind: changeUpdate, originalPath: "old.txt", path: "renamed.txt", original: "same\n", content: "same\n"},
+	})
+	for i, want := range []string{
+		"update \"file.txt\" +1 -1\n",
+		"add \"new.txt\" +1 -0\n",
+		"delete \"gone.txt\" +0 -1\n",
+		"add \"empty.txt\" +0 -0\n",
+		"delete \"empty-old.txt\" +0 -0\n",
+		"move \"old.txt\" -> \"renamed.txt\" +0 -0\n",
+	} {
+		if got := files[i].Summary(); got != want {
+			t.Errorf("summary %d = %q; want %q", i, got, want)
+		}
+		diff := files[i].UnifiedDiff()
+		if i < 3 && !strings.HasPrefix(diff, "--- ") {
+			t.Errorf("unified headers missing: %q", diff)
+		}
+		if i >= 3 && diff != files[i].Diff {
+			t.Errorf("lost header-only change: %q", diff)
+		}
+		// Already compact records must render identically.
+		file := files[i]
+		file.Diff = diff
+		if file.UnifiedDiff() != diff || file.Summary() != want {
+			t.Errorf("presentation is not stable: %#v", file)
+		}
+	}
+}

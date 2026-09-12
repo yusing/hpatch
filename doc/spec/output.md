@@ -10,6 +10,9 @@ The host's `Add File` action performs the unconditional write even when the file
 Invalid paths or content return an error and no patch. This adapter is used by the shell carrier
 specified in `REQ-SHELL-001`; it does not alter engine translation semantics below.
 
+Routed mixed-script completion and partial effects are specified separately in
+`REQ-SCRIPT-001`; the engine guarantees below apply independently to each edit segment.
+
 Every engine evaluation entry point accepts one complete input and evaluates the entire script before an
 external filesystem commit or translated patch is returned. Basic `Apply` returns only an error.
 All apply and host entry points reject a nil context with `context is nil`, before evaluation
@@ -212,6 +215,18 @@ must coordinate those readers too. Cancellation observed before entering staging
 prevents application; cancellation during that sequence does not interrupt it. A host API can
 return late cancellation after applying changes. An application error therefore does not imply
 that no files changed; callers must inspect the outcome and workspace before retrying.
+
+Host patch translation does not extend root application's staging or rollback
+mechanism to Codex. Native host application may write files sequentially and fail
+after changing an earlier file. Host refusal before mutation, partial application,
+and interruption with an unknown outcome must not be collapsed into a blanket
+"workspace unchanged" guarantee. A translated patch or pre-rendered report is not
+confirmation of application; only host-confirmed success permits a routed
+application success report. A validated no-op may report no changes without
+host application, but must not claim a patch was applied. These distinctions
+apply to edit-only calls and to each edit segment in a mixed script.
+Mixed-script checkpoints and retry behavior remain owned by
+[REQ-SCRIPT-001](script.md).
 
 OpenAI `apply_patch` is a logical-line format. Translation returns LF-only patch text
 and normalizes line endings only in its displayed before/after lines; it does not

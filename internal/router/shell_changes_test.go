@@ -41,7 +41,7 @@ func TestShellChangesReadAcrossAgentsAndPages(t *testing.T) {
 	}
 	history := mekugiHistory{
 		changeID: id, correlationID: "edited", applied: true,
-		reviewFiles: []mekugi.ReviewFile{{AfterPath: "file.txt", Diff: strings.Repeat("+line π changed\n", 40)}},
+		reviewFiles: []mekugi.ReviewFile{{AfterPath: "file.txt", Diff: "add \"\" -> \"file.txt\"\n--- /dev/null\n+++ \"file.txt\"\n@@ -0,0 +1,40 @@\n" + strings.Repeat("+line π changed\n", 40)}},
 	}
 	if err := store.put(t.Context(), workspace, map[string]mekugiHistory{"edited": history}); err != nil {
 		t.Fatal(err)
@@ -93,8 +93,29 @@ func TestShellChangesReadAcrossAgentsAndPages(t *testing.T) {
 	}
 	stdout, stderr, status := runShellWorkerTest(t, registry, "bash", nil,
 		"cd child\nhchanges read --workspace .. --summary "+id, nil)
-	if status != 0 || stderr != "" || !strings.Contains(stdout, `file "" -> "file.txt"`) || strings.Contains(stdout, "+line") {
+	if status != 0 || stderr != "" || !strings.Contains(stdout, `add "file.txt" +40 -0`) || strings.Contains(stdout, "+line") {
 		t.Fatalf("summary from subdirectory: %q, %q, %d", stdout, stderr, status)
+	}
+	for _, command := range []string{
+		"hchanges read " + id + " --summary --path file.txt",
+		"hchanges read --summary " + id + " --path " + filepath.Join(workspace, "file.txt"),
+		"hchanges read " + id + " --path ./file.txt --summary " + id,
+	} {
+		stdout, stderr, status := runShellWorkerTest(t, registry, "bash", nil, command, nil)
+		if status != 0 || stderr != "" || stdout != id+" applied\nadd \"file.txt\" +40 -0\n" {
+			t.Fatalf("mixed flags: %q: %q, %q, %d", command, stdout, stderr, status)
+		}
+	}
+	stdout, stderr, status = runShellWorkerTest(t, registry, "bash", nil,
+		"hchanges read "+id+" --summary --path missing.txt", nil)
+	if status != 0 || stderr != "" || !strings.Contains(stdout, `no files match --path "missing.txt"`) {
+		t.Fatalf("unmatched path: %q, %q, %d", stdout, stderr, status)
+	}
+	stdout, stderr, status = runShellWorkerTest(t, registry, "sh", nil,
+		"hchanges read "+id+" --history --path file.txt --max-tokens 15500", nil)
+	if status != 0 || stderr != "" || !strings.Contains(stdout, "input:") ||
+		strings.Count(stdout, "--- /dev/null") != 1 || strings.Contains(stdout, `add "" ->`) {
+		t.Fatalf("history: %q, %q, %d", stdout, stderr, status)
 	}
 	for _, arguments := range []string{"read hp_a99", "read hp_a1..hp_b2", "read --max-tokens 0 hp_a1", "read --history --summary hp_a1"} {
 		stdout, stderr, status := runShellWorkerTest(t, registry, "bash", nil, "hchanges "+arguments, nil)
@@ -110,10 +131,38 @@ func TestParseChangeRead(t *testing.T) {
 		{}, {"write", "hp_a1"}, {"read"}, {"read", "--path", "", "hp_a1"},
 		{"read", "--summary", "--summary", "hp_a1"}, {"read", "--max-tokens", "01", "hp_a1"},
 		{"read", "--max-tokens", strconv.Itoa(hrunMaxTokens + 1), "hp_a1"},
-		{"read", "--cursor"}, {"read", "--unknown", "hp_a1"},
+		{"read", "--cursor"}, {"read", "--cursor", "", "hp_a1"}, {"read", "--unknown", "hp_a1"},
 	} {
 		if _, err := parseChangeRead(arguments, workspace); err == nil {
 			t.Fatalf("accepted %q", arguments)
 		}
+	}
+}
+
+func TestChangePathSpellings(t *testing.T) {
+	workspace := t.TempDir()
+	for _, test := range []struct {
+		path, recorded string
+		retained, want bool
+	}{
+		{"file.txt", filepath.Join(workspace, "file.txt"), false, true},
+		{filepath.Join(workspace, "file.txt"), "file.txt", false, true},
+		{"./file.txt", "file.txt", false, true},
+		{"other.txt", "file.txt", false, false},
+		{"file.txt", "", false, false},
+		{"./script", "script", true, false},
+		{"script", "script", true, true},
+	} {
+		got := changePathMatches(changeReadOptions{workspace: workspace, path: test.path}, test.recorded, test.retained)
+		if got != test.want {
+			t.Errorf("%+v: got %v", test, got)
+		}
+	}
+	options, err := parseChangeRead([]string{"read", "hp_a1", "--workspace", ""}, workspace)
+	if err != nil || options.workspace != "" {
+		t.Fatalf("no-directory selection: %+v, %v", options, err)
+	}
+	if changePathMatches(options, "file.txt", false) {
+		t.Fatal("empty selection unexpectedly matched")
 	}
 }

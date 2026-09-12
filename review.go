@@ -16,6 +16,43 @@ type ReviewFile struct {
 	Diff       string
 }
 
+// UnifiedDiff omits the redundant operation header when unified headers already
+// describe the file. Header-only changes (empty files and pure moves) retain it.
+// Rendering captured records here also keeps historical reads consistent.
+func (file ReviewFile) UnifiedDiff() string {
+	_, rest, ok := strings.Cut(file.Diff, "\n")
+	header := fmt.Sprintf("--- %s\n+++ %s\n", reviewPath(file.BeforePath), reviewPath(file.AfterPath))
+	if ok && strings.HasPrefix(rest, header) {
+		return rest
+	}
+	return file.Diff
+}
+
+// Summary describes one evaluated file change, not a net diff across calls.
+func (file ReviewFile) Summary() string {
+	action, path := "update", fmt.Sprintf("%q", file.AfterPath)
+	switch {
+	case file.BeforePath == "":
+		action = "add"
+	case file.AfterPath == "":
+		action, path = "delete", fmt.Sprintf("%q", file.BeforePath)
+	case file.BeforePath != file.AfterPath:
+		action, path = "move", fmt.Sprintf("%q -> %q", file.BeforePath, file.AfterPath)
+	}
+	added, removed := 0, 0
+	inHunk := false
+	for line := range strings.SplitSeq(file.Diff, "\n") {
+		if strings.HasPrefix(line, "@@ ") {
+			inHunk = true
+		} else if inHunk && strings.HasPrefix(line, "+") {
+			added++
+		} else if inHunk && strings.HasPrefix(line, "-") {
+			removed++
+		}
+	}
+	return fmt.Sprintf("%s %s +%d -%d\n", action, path, added, removed)
+}
+
 func reviewFiles(changes []change) []ReviewFile {
 	files := make([]ReviewFile, 0, len(changes))
 	for _, change := range changes {
