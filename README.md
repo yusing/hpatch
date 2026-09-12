@@ -132,14 +132,15 @@ and prerequisites.
 ### Performance
 
 - **Start eligible threads with [Mentor Handoff](doc/spec/mentor.md).**
-  - Subagent handoff is enabled by default. Main sessions and ordinary forks require
-    `--main-mentor-handoff`, which defaults to off.
-  - `gpt-5.6-luna` and `gpt-5.6-terra` start on
-    `gpt-5.6-sol` with high reasoning. `gpt-5.6` and `gpt-5.6-sol` start on
-    `gpt-6-astra` with one lower reasoning level, capped at xhigh.
+  - Main sessions, ordinary forks, and subagent handoff are enabled by default.
+    Disable main handoff with `--main-mentor-handoff=false`.
+  - Main `gpt-5.6-luna` starts on `gpt-6-astra` with medium reasoning.
+    Subagent Luna and all `gpt-5.6-terra` threads retain `gpt-5.6-sol` with high reasoning.
+    `gpt-5.6` and `gpt-5.6-sol` start on `gpt-6-astra` with one lower reasoning level,
+    capped at xhigh.
   - Enabled threads hand back to their configured model after the mentor's initial work.
     Configured Astra stays on Astra. Disable subagent handoff with `--mentor-handoff=false`;
-    the main toggle is independent.
+    the main toggle is independent. The next response shows commentary when handoff completes.
 
 Token savings and model handoffs are not a promise of faster commands or better
 results on every task. See the [benchmark methodology](doc/benchmarks.md) for
@@ -187,6 +188,9 @@ make install
 This regenerates the embedded plugins and installs both binaries. Installation
 and uninstallation leave Codex configuration and instruction files untouched.
 `make uninstall` removes only the installed `mekugi` and `shell` binaries.
+Running sessions retain their own worker executable; start a new session to use
+an installed update. For sessions started by older versions, follow
+[the older-installation guidance](#older-installations) before replacing binaries.
 
 ## Usage
 
@@ -234,7 +238,7 @@ request or accepted steering. Grok provider requests remain on HTTP.
 | --- | --- | --- |
 | `--mode` | `mekugi` | Use `passthrough` to forward traffic without mekugi tools, plugins, CTP/2, or Mentor Handoff |
 | `--model-protocol` | `ctp2` | Use `native` to disable CTP/2 in mekugi mode |
-| `--main-mentor-handoff` | `false` | Enable mentor handoff for eligible main sessions and ordinary forks |
+| `--main-mentor-handoff` | `true` | Enable mentor handoff for eligible main sessions and ordinary forks |
 | `--mentor-handoff` | `true` | Use `false` to keep subagents on their configured models |
 | `--grok` | `false` | Enable Grok subagents in mekugi mode |
 | `--grok-auth-file` | `~/.grok/auth.json` | Select a Grok OAuth credential store |
@@ -565,7 +569,8 @@ recover an earlier request that was not dumped.
 - **Executor environment:** the router and executor must see the same workspace
   paths and shell runtime directory. `MEKUGI_RUNTIME_DIR` overrides the default
   operating-system temporary directory; both must resolve it to the same
-  absolute path. The shared `shell` helper follows the session's
+  absolute path. This directory must permit executable files because it retains
+  the session's worker binary. The shared `shell` helper follows the session's
   `mekugi-runtime-<thread>` locator.
 - **Failures:** startup errors appear before Codex launches. Session failures
   appear as user-only commentary; undelivered notices appear on stderr after

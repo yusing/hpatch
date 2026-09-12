@@ -86,12 +86,20 @@ when a later call or the response is interrupted.
 For each configured executor-backed contributed tool, startup creates or verifies a session-private
 executable symlink in the authenticated snapshot's `bin` directory. Its basename is exactly the contributed tool name,
 and its target is the authenticated process-scoped snapshot wrapper with the same basename.
-The snapshot wrapper targets the running `mekugi` executable. Without a command template,
+The snapshot wrapper targets a session-private pinned instance of the running `mekugi`
+executable, not its replaceable installation pathname. Replacing the installation
+must not change the worker implementation or manifest decoder for an active session.
+The runtime directory must be on storage that permits execution of the pinned binary.
+On Linux, startup also pins the running image when its installation pathname has
+already been replaced or removed. Without a command template,
 the exec wrapper invokes only the basename and represents the parsed model input as its ordered
 argv. With a command template, the router replaces `{.}` with that same independently quoted
 basename and argv. When launched through both symlinks, the router verifies the session frontend
 location, snapshot identity, wrapper target, and registered implementation before passing the
 remaining argv unchanged.
+Worker authentication compares the executing file's identity with the resolved wrapper
+target. Strict manifest decoding remains mandatory; unknown fields are not ignored
+to accommodate a mismatched executable.
 The configured-plugin worker keeps the frontend standard input separate from the JavaScript
 host's JSON control stream. The host exposes that input only as a dedicated inherited descriptor during
 executor calls.

@@ -116,6 +116,9 @@ func (m *mentorHandoff) prepare(headers http.Header, metadata codexTurnMetadata,
 			effort = "low"
 		}
 	}
+	if !isThreadSpawnSubagent(headers) && requestedModel == "gpt-5.6-luna" {
+		model, effort = "gpt-6-astra", "medium"
+	}
 	if err := request.setModelAndReasoningEffort(model, effort); err != nil {
 		m.mu.Unlock()
 		return nil, fmt.Errorf("prepare Mentor Handoff request: %w", err)

@@ -65,11 +65,14 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 		return errors.New("--model-protocol must be native or ctp2")
 	}
 	protocolSet := false
+	mainMentorSet := false
 	mentorSet := false
 	flags.Visit(func(item *flag.Flag) {
 		switch item.Name {
 		case "model-protocol":
 			protocolSet = true
+		case "main-mentor-handoff":
+			mainMentorSet = true
 		case "mentor-handoff":
 			mentorSet = true
 		}
@@ -81,10 +84,11 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 		if mentorSet && *flags.mentorHandoffEnabled {
 			return errors.New("--mentor-handoff requires --mode mekugi")
 		}
-		if *flags.mainMentorHandoffEnabled {
+		if mainMentorSet && *flags.mainMentorHandoffEnabled {
 			return errors.New("--main-mentor-handoff requires --mode mekugi")
 		}
 		*flags.modelProtocol = "native"
+		*flags.mainMentorHandoffEnabled = false
 		*flags.mentorHandoffEnabled = false
 	}
 	if *flags.grokEnabled && *flags.mode != "mekugi" {
@@ -567,12 +571,18 @@ func executeRequest(
 	if err != nil {
 		return fmt.Errorf("prepare Mentor Handoff: %w", err)
 	}
+	var mekugiTransform *mekugiResponseTransform
 	handoffRecorded := false
 	recordHandoff := func(includeCompletedOutput bool) {
 		if handoffRequest == nil || handoffRecorded {
 			return
 		}
-		handoffRequest.record(finalization.observation.usageCounts.InputTokens, includeCompletedOutput)
+		progress := handoffRequest.record(finalization.observation.usageCounts.InputTokens, includeCompletedOutput)
+		if progress.transitioned && mekugiTransform != nil {
+			broker := mekugiCalls.commentary
+			token := broker.subscribeThread(mekugiTransform.historySessionID, threadID, mekugiTransform.commentaryAuthor)
+			broker.publish(token, "Mentor handoff complete. Continuing with the configured model and reasoning.", false)
+		}
 		handoffRecorded = true
 	}
 	defer func() {
@@ -580,7 +590,6 @@ func executeRequest(
 			recordHandoff(false)
 		}
 	}()
-	var mekugiTransform *mekugiResponseTransform
 	// Only the WebSocket provider guarantees non-generating warmup for every
 	// supported model. HTTP requests must retain ordinary preparation checks.
 	_, webSocketRequest := provider.(*webSocketExchange)

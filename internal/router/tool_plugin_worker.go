@@ -47,17 +47,14 @@ func RunToolPluginWorker(
 		return true, 1
 	}
 
-	executableLocation, err := os.Executable()
+	executable, err := openRunningExecutable()
 	if err != nil {
 		return fail(fmt.Errorf("locate mekugi executable: %w", err))
 	}
-	executableLocation, err = filepath.Abs(executableLocation)
+	defer executable.Close()
+	executableInfo, err := executable.Stat()
 	if err != nil {
-		return fail(fmt.Errorf("locate mekugi executable: %w", err))
-	}
-	executable, err := filepath.EvalSymlinks(executableLocation)
-	if err != nil {
-		return fail(fmt.Errorf("resolve mekugi executable: %w", err))
+		return fail(fmt.Errorf("inspect mekugi executable: %w", err))
 	}
 
 	wrapper := candidate
@@ -92,11 +89,11 @@ func RunToolPluginWorker(
 		return fail(errors.New("invoked tool and snapshot wrapper names differ"))
 	}
 
-	target, err := filepath.EvalSymlinks(wrapper)
+	target, err := os.Stat(wrapper)
 	if err != nil {
 		return fail(fmt.Errorf("resolve tool wrapper: %w", err))
 	}
-	if target != executable {
+	if !os.SameFile(target, executableInfo) {
 		return fail(errors.New("tool wrapper does not target the running mekugi executable"))
 	}
 

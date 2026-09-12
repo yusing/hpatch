@@ -19,7 +19,9 @@ targets, selecting suitable mutation forms, and leaving formatting to the engine
 prescribe general task autonomy, approval checkpoints, prose length, validation scope, or a ban
 on inspecting changed files. Those policies remain with the host and task instructions.
 Each requirement file listed from `doc/spec/index.md` owns one normative engine or router contract. Model-visible tool descriptions contain only concise
-call-local contracts and request-specific schemas. The router does not use private tool
+call-local contracts and request-specific schemas. Submission, batching, and continuation
+instructions stay in the shared guidance rather than being repeated in tool descriptions.
+The router does not use private tool
 descriptions as prompt text. Native model protocol injects the central source without its leading
 CTP/2 section and stops after the ordinary guidance rewrite; CTP/2 injects the complete source and
 then transforms only eligible model-visible strings under `REQ-CTP-001`.

@@ -29,18 +29,6 @@ func buildToolRegistry(ctx context.Context, dataDirectory, mekugiDescription str
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	executableLocation, err := os.Executable()
-	if err != nil {
-		return nil, fmt.Errorf("locate mekugi executable: %w", err)
-	}
-	executableLocation, err = filepath.Abs(executableLocation)
-	if err != nil {
-		return nil, fmt.Errorf("locate mekugi executable: %w", err)
-	}
-	executable, err := filepath.EvalSymlinks(executableLocation)
-	if err != nil {
-		return nil, fmt.Errorf("resolve mekugi executable: %w", err)
-	}
 	runtimeDirectory, err := shellruntime.Directory()
 	if err != nil {
 		return nil, fmt.Errorf("locate shell runtime directory: %w", err)
@@ -60,6 +48,9 @@ func buildToolRegistry(ctx context.Context, dataDirectory, mekugiDescription str
 			removeWorkerFrontendSymlinks(frontends, wrappers),
 			os.RemoveAll(snapshotDirectory),
 		)
+	}
+	if err := pinRunningToolWorker(snapshotDirectory); err != nil {
+		return fail(err)
 	}
 	diagnoseHooks := mekugi.NewDiagnoseHooks("")
 	if diagnose {
@@ -183,6 +174,7 @@ func buildToolRegistry(ctx context.Context, dataDirectory, mekugiDescription str
 		return fail(fmt.Errorf("authenticate tool registry snapshot: %w", err))
 	}
 	snapshotDirectory = authenticatedDirectory
+	executable := filepath.Join(snapshotDirectory, toolWorkerExecutableFilename)
 	runtimeRoot := filepath.Join(snapshotDirectory, manifest.RuntimeRoot)
 	if err := writeToolWorkerManifest(snapshotDirectory, manifest); err != nil {
 		return fail(err)
