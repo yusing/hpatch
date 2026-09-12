@@ -2023,11 +2023,6 @@ func (t *mekugiResponseTransform) transformOutputItem(item *responsesItem) (bool
 		if detected && warningInput == "" {
 			outputWarning = nativeExecCommandWarning + "\n"
 		}
-		if detected {
-			if changed {
-				item.setInput(input)
-			}
-		}
 		input, commentaryChanged, err := t.lowerCodeModeCommentary(callID, input)
 		if err != nil {
 			return false, err
@@ -2042,6 +2037,7 @@ func (t *mekugiResponseTransform) transformOutputItem(item *responsesItem) (bool
 		if callID == "" {
 			return false, errors.New("Code Mode call has no call ID")
 		}
+		// Retain the provider input before applying warning or commentary rewrites.
 		history := mekugiHistory{
 			toolName: codeModeCommentaryHistoryTool,
 			script:   originalInput, carrierKind: codeModeCarrierCustom,

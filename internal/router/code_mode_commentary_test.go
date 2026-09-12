@@ -136,6 +136,62 @@ func TestCodeModeCommentaryLowersAuthoritativeStreamingInput(t *testing.T) {
 	}
 }
 
+func TestCodeModeNativeWarningPreservesDurableStreamingInput(t *testing.T) {
+	for _, source := range []string{
+		"const result = await tools.exec_command({cmd:\"true\",max_output_tokens:1000});\ntext(result);\n",
+		"await commentary('Working');\ntext(await tools.exec_command({cmd:'true'}));",
+	} {
+		t.Run(source, func(t *testing.T) {
+			transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
+			proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
+			directory := t.TempDir()
+			store, err := openMekugiReplayStore(directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			proxy.replayStore = store
+			item := map[string]any{
+				"type": "custom_tool_call", "id": "item-warning", "call_id": "call-warning",
+				"name": transform.codeModeToolName, "input": "", "status": "in_progress",
+			}
+			if _, err := transform.TransformSSE(mustTestJSON(t, map[string]any{
+				"type": "response.output_item.added", "item": item,
+			})); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := transform.TransformSSE(mustTestJSON(t, map[string]any{
+				"type": "response.custom_tool_call_input.done", "item_id": "item-warning",
+				"call_id": "call-warning", "input": source,
+			})); err != nil {
+				t.Fatal(err)
+			}
+			item["input"], item["status"] = source, "completed"
+			if _, err := transform.TransformSSE(mustTestJSON(t, map[string]any{
+				"type": "response.output_item.done", "item": item,
+			})); err != nil {
+				t.Fatalf("complete streamed call: %v", err)
+			}
+			store, err = openMekugiReplayStore(directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			history, found, err := store.lookup(t.Context(), transform.directory, "call-warning")
+			if err != nil || !found {
+				t.Fatalf("restart lookup: found=%v, error=%v", found, err)
+			}
+			if history.script != source || jsonString(history.upstreamItem, "input") != source {
+				t.Fatal("durable replay did not preserve original provider input")
+			}
+			if jsonString(history.upstreamItem, "status") != "completed" {
+				t.Fatal("durable replay did not retain completion")
+			}
+			if !strings.Contains(history.carrierPayload, nativeExecCommandWarning) {
+				t.Fatal("executor carrier lost the native-command warning")
+			}
+		})
+	}
+}
+
 func TestCodeModeWithoutExplicitCommentaryPreservesOutput(t *testing.T) {
 	transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
