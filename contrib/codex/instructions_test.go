@@ -351,7 +351,7 @@ func TestInstructionsTeachCompactChangeHandoffs(t *testing.T) {
 	for _, model := range []string{"gpt-6-astra", "gpt-5.6-sol", "grok:grok-4.6"} {
 		for _, compact := range []bool{false, true} {
 			got := InstructionsForModel(model, compact)
-			for _, required := range []string{"hchanges read hp_a1..hp_a3", "recovery keeps that ID", "--history", "--cursor HASH:BYTE"} {
+			for _, required := range []string{"hchanges read hp_a1..hp_a3", "recovery keeps that ID", "--history", "--cursor HASH:BYTE", "rather than Git diff", "not before an already-needed", "do not routinely pair", "Flags may appear before or after IDs"} {
 				if strings.Count(got, required) != 1 {
 					t.Errorf("model %q compact %v: expected one %q", model, compact, required)
 				}

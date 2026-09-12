@@ -200,25 +200,39 @@ func codeModeExecutionHeader(text string) (status, cell string, body string) {
 	return status, cell, body
 }
 
-func nativeExecutionSession(text string) int64 {
+func nativeExecutionHeader(text string) (state, body string) {
 	line, rest, ok := strings.Cut(text, "\n")
 	if strings.HasPrefix(line, "Chunk ID: ") {
 		line, rest, ok = strings.Cut(rest, "\n")
 	}
 	if !ok || !strings.HasPrefix(line, "Wall time: ") || !strings.HasSuffix(line, " seconds") {
-		return 0
+		return "", ""
+	}
+	duration := strings.TrimSuffix(strings.TrimPrefix(line, "Wall time: "), " seconds")
+	if _, err := strconv.ParseFloat(duration, 64); err != nil {
+		return "", ""
+	}
+	state, rest, ok = strings.Cut(rest, "\n")
+	if !ok {
+		return "", ""
 	}
 	line, rest, ok = strings.Cut(rest, "\n")
-	id, running := strings.CutPrefix(line, "Process running with session ID ")
-	if !ok || !running {
-		return 0
-	}
-	line, _, ok = strings.Cut(rest, "\n")
 	if strings.HasPrefix(line, "Original token count: ") {
-		_, rest, _ = strings.Cut(rest, "\n")
-		line, _, ok = strings.Cut(rest, "\n")
+		if _, err := strconv.ParseUint(strings.TrimPrefix(line, "Original token count: "), 10, 64); err != nil {
+			return "", ""
+		}
+		line, rest, ok = strings.Cut(rest, "\n")
 	}
 	if !ok || (line != "Output:" && line != "Final output:") {
+		return "", ""
+	}
+	return state, rest
+}
+
+func nativeExecutionSession(text string) int64 {
+	state, _ := nativeExecutionHeader(text)
+	id, running := strings.CutPrefix(state, "Process running with session ID ")
+	if !running {
 		return 0
 	}
 	value, err := strconv.ParseInt(id, 10, 64)

@@ -29,8 +29,10 @@ Durable review evidence survives expiration of the temporary continuation handle
 The shell-private command is:
 
 ```text
-hchanges read [--summary|--history] [--path PATH] [--workspace DIR] [--max-tokens N] [--cursor HASH:BYTE] ID[..ID] ...
+hchanges read ID[..ID] ... [--summary|--history] [--path PATH] [--workspace DIR] [--max-tokens N] [--cursor HASH:BYTE]
 ```
+
+Flags may precede, follow, or be interleaved with IDs. Duplicate flags reject.
 
 It has no standalone model-visible tool schema or installed executable. It runs inside
 the Bash/POSIX shell worker, including when it is the sole shell command. `read` performs
@@ -51,11 +53,19 @@ or cleaned-up records produce explicit failures, not a current-workspace reconst
 A reserved ID without a published attempt is reported as pending.
 
 Default output contains a compact attempt/outcome summary and each successful evaluation's
-review diff, once, with three context lines per hunk. Rejected attempts do not carry
-proposed changes as applied diffs. `--summary` omits diff bodies and lists recorded paths.
+review diff, once, with three context lines per hunk. A single attempt uses one ID/status
+line; multiple attempts retain their numbered outcomes. Unified diff headers replace the
+redundant operation header; empty-file changes and pure moves retain an operation header.
+Rejected attempts do not carry proposed changes as applied diffs.
+`--summary` omits diff bodies and lists operations, paths, and added/removed line counts
+per evaluated file. An unchanged path appears once per entry. Repeated evaluations remain
+separate, not a synthetic net diff or a current workspace status.
 `--history` additionally returns original inputs, recovery amendments, rebuilt scripts
 when different, and full diagnostics. `--path` matches either recorded before or after
-path exactly and filters diff/file entries, not the attempt history.
+path, accepting equivalent lexical absolute and workspace-relative spellings for workspace
+files. It does not consult current filesystem contents or resolve file symlinks. Retained
+shell-script paths match exactly. Filtering affects diff/file entries, not attempt history.
+A selection with no matching files explicitly says so.
 
 Review diffs are captured by the engine from immutable original content and final
 formatted content before external effects. They include additions, deleted contents,
@@ -70,7 +80,11 @@ combine several invocations into a synthetic net diff.
 An attempt is `rejected`, `no-op`, `prepared (application unconfirmed)`, or `applied`.
 A translated patch alone is never proof of application. Exact successful-report replay
 confirms application only after the entire incoming history validates; direct private
-application can confirm immediately. Persisted receipts support cross-agent review but
+application can confirm immediately. A report may be bare or in the matching host
+carrier's completed output envelope: native execution requires exit code zero, and
+Code Mode requires `Script completed`. The body must equal the entire retained report.
+Code Mode may supply a separate metadata-only completed header followed by one report
+block. Failed, running, truncated, or extra output does not confirm application. Persisted receipts support cross-agent review but
 never supply recovery or alias ancestry. Unknown or failed executor outcomes remain
 unconfirmed. Final cancellation and crash limitations remain those of `REQ-OUTPUT-001`.
 

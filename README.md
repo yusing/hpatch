@@ -441,19 +441,29 @@ Hpatch keeps durable review records in the router's replay store. An agent can h
 
 ```sh
 hchanges read hp_a1..hp_a3
-hchanges read --summary hp_a1..hp_a3
-hchanges read --history hp_a2
+hchanges read hp_a1..hp_a3 --summary
+hchanges read hp_a2 --history
 ```
 
 Ranges are inclusive and stay within one agent's stream. Recovery keeps the original ID.
 Default reads show outcomes and captured diffs, not repeated recovery scripts; `--history`
-includes the full chain. These are hpatch's evaluated changes, including formatting, not
+includes the full chain. Use `--summary` when you only need operations, paths, and
+added/removed line counts. Counts describe each edit separately, not the net change
+across several edits. A normal update looks like:
+
+```text
+hp_a1 applied
+update "src/parser.go" +8 -3
+```
+
+These are hpatch's evaluated changes, including formatting, not
 a record of shell edits or other workspace changes. Prepared diffs are marked unconfirmed
 until execution is confirmed; the host's newline handling can still affect applied bytes.
 
 Reads default to 4,000 output tokens. Use `--max-tokens N` to change that limit,
-`--path PATH` to select an exact recorded path, or `--workspace DIR` when reading from
-a subdirectory. Incomplete reads return a continuation cursor on stderr and a nonzero
+`--path PATH` to select a recorded path (absolute or relative to the selected workspace),
+or `--workspace DIR` when reading from a subdirectory. Flags work before or after IDs.
+A path with no matches is reported explicitly. Incomplete reads return a continuation cursor on stderr and a nonzero
 status. Repeat the same command with `--cursor VALUE` to continue. Missing records or
 a changed snapshot fail explicitly. Isolated executors need the router's replay directory
 mounted at its original absolute path. See the [change record contract](doc/spec/changes.md).
