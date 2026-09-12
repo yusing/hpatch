@@ -95,7 +95,11 @@ func TestMentorHandoffRecognizesMainAndCanonicalThreadSpawn(t *testing.T) {
 				}
 				return
 			}
-			if got := request.modelDescription(); got != mentorLeaderModel+" "+mentorLeaderEffort {
+			wantModel := mentorLeaderModel + " " + mentorLeaderEffort
+			if !isThreadSpawnSubagent(test.headers) && test.model == "gpt-5.6-luna" {
+				wantModel = "gpt-6-astra medium"
+			}
+			if got := request.modelDescription(); got != wantModel {
 				t.Fatalf("leader request = %q", got)
 			}
 			var reasoning map[string]json.RawMessage
@@ -111,8 +115,8 @@ func TestMentorHandoffRecognizesMainAndCanonicalThreadSpawn(t *testing.T) {
 
 func TestMentorHandoffIndependentToggles(t *testing.T) {
 	flags := newRouterFlags(io.Discard)
-	if *flags.mainMentorHandoffEnabled || !*flags.mentorHandoffEnabled {
-		t.Fatal("main mentor must default off and subagent mentor on")
+	if !*flags.mainMentorHandoffEnabled || !*flags.mentorHandoffEnabled {
+		t.Fatal("main and subagent mentor must default on")
 	}
 	for _, mainEnabled := range []bool{false, true} {
 		for _, subagentEnabled := range []bool{false, true} {
@@ -216,6 +220,9 @@ func TestMentorHandoffMainBoundary(t *testing.T) {
 			want := test.model + " medium"
 			if test.want {
 				want = mentorLeaderModel + " " + mentorLeaderEffort
+				if test.model == "gpt-5.6-luna" {
+					want = "gpt-6-astra medium"
+				}
 			}
 			if request.modelDescription() != want {
 				t.Fatalf("request=%q, want %q", request.modelDescription(), want)
@@ -505,5 +512,86 @@ func TestMentorHandoffRejectsInvalidReasoningWithoutSharingSessionCapacity(t *te
 	prepared, err := mentor.prepare(headers, metadata, valid, &request)
 	if err != nil || prepared == nil {
 		t.Fatalf("new child at session history limit = %#v, %v", prepared, err)
+	}
+}
+
+func TestMentorHandoffLunaMainMappingKeepsSubagentsUnchanged(t *testing.T) {
+	for _, effort := range []string{"low", "medium", "high", "xhigh", "max", "ultra", ""} {
+		for _, child := range []bool{false, true} {
+			headers := mentorTestHeaders(t, "thread")
+			if !child {
+				headers.Del(openAISubagentHeader)
+				headers.Set(codexTurnMetadataHeader, `{"request_kind":"turn"}`)
+			}
+			request := mentorTestRequest(t, "gpt-5.6-luna")
+			if effort == "" {
+				delete(request.fields, "reasoning")
+			} else if err := request.setModelAndReasoningEffort("gpt-5.6-luna", effort); err != nil {
+				t.Fatal(err)
+			}
+			metadata, valid := decodeCodexTurnMetadata(headers)
+			handoff, err := newMentorHandoff(true, true).prepare(headers, metadata, valid, &request)
+			want := "gpt-6-astra medium"
+			if child {
+				want = "gpt-5.6-sol high"
+			}
+			if err != nil || handoff == nil || request.modelDescription() != want {
+				t.Fatalf("child=%t effort=%q: model=%q handoff=%v err=%v", child, effort, request.modelDescription(), handoff, err)
+			}
+		}
+	}
+}
+
+func TestExecuteRequestMentorCommentaryDeliveredOnceAndStrippedOnReplay(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
+			proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+			mentor := newMentorHandoff(true, true)
+			workspace := t.TempDir()
+			headers := serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil})
+			headers.Set(threadIDHeader, "main")
+			var replay []any
+			for index := range 4 {
+				responseBody := mustTestJSON(t, map[string]any{
+					"status": "completed",
+					"output": []any{},
+					"usage":  map[string]any{"input_tokens": mentorInputTokenLimit},
+				})
+				response := serverHTTPResponse(string(responseBody))
+				if stream {
+					response = serverHTTPResponse("data: " + string(mustTestJSON(t, map[string]any{
+						"type": "response.completed", "response": json.RawMessage(responseBody),
+					})) + "\n\n")
+					response.Header.Set("Content-Type", "text/event-stream")
+				}
+				provider := &serverFakeProvider{results: []serverForwardResult{{response: response}}}
+				request := serverRequest(t, func(request map[string]any) {
+					request["model"] = "gpt-5.6-luna"
+					request["stream"] = stream
+					request["tools"] = testNativeResponsesTools()
+					request["input"] = replay
+				})
+				var output bytes.Buffer
+				if err := executeRequest(t.Context(), t.Context(), request, headers, "session",
+					provider, &output, nil, proxy, nil, mentor); err != nil {
+					t.Fatal(err)
+				}
+				const notice = "Mentor handoff complete."
+				if got := bytes.Contains(output.Bytes(), []byte(notice)); got != (index == 1) {
+					t.Fatalf("response %d notice=%t: %s", index, got, output.Bytes())
+				}
+				if bytes.Contains(provider.forwarded[0], []byte(notice)) {
+					t.Fatal("handoff commentary leaked into provider history")
+				}
+				if index == 1 {
+					for id := range proxy.commentaryMessageIDs(workspace + "\x00main") {
+						replay = append(replay, assistantCommentaryMessage(id, notice))
+					}
+					if len(replay) != 1 {
+						t.Fatalf("handoff provenance = %d messages", len(replay))
+					}
+				}
+			}
+		})
 	}
 }

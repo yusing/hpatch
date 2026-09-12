@@ -4,7 +4,7 @@
 
 Mentor Handoff is a `mekugi`-mode product schedule. Subagent handoff is enabled by default
 and disabled with `--mentor-handoff=false`. Main handoff is independently controlled by
-`--main-mentor-handoff`, which defaults to `false`. Passthrough mode keeps both off and
+`--main-mentor-handoff`, which defaults to `true`. Passthrough mode keeps both off and
 rejects an explicit enable of either. Its
 eligible requests are main-session turns (including ordinary forks) with valid Codex metadata,
 `request_kind: turn`, no subagent header, no `subagent_kind`, and a Codex thread ID; or AgentControl thread spawns
@@ -16,8 +16,10 @@ or instructions. Requests outside these boundaries remain unchanged.
 Main prewarm and compaction requests remain unchanged and do not start or consume the
 main handoff schedule.
 
-For an eligible request whose configured model is exactly `gpt-5.6-luna` or
-`gpt-5.6-terra`, the mentor is `gpt-5.6-sol` with `high` reasoning.
+For an eligible main request configured with `gpt-5.6-luna`, the mentor is
+`gpt-6-astra` with `medium` reasoning, regardless of the configured effort.
+Subagent mappings remain unchanged: `gpt-5.6-luna` and `gpt-5.6-terra` use
+`gpt-5.6-sol` with `high` reasoning. Main `gpt-5.6-terra` requests also retain that mapping.
 For exactly `gpt-5.6` or `gpt-5.6-sol`, the mentor is `gpt-6-astra` with one lower reasoning level,
 floored at `low` and capped at `xhigh`: `low` and `medium` map to `low`, `high` to
 `medium`, `xhigh` to `high`, and `max` and `ultra` to `xhigh`. Missing or unrecognized
@@ -44,3 +46,9 @@ The next request from that thread uses the model and reasoning supplied by Codex
 rewrite. Thread schedules are retained for the router lifetime so a completed schedule is never
 silently forgotten and restarted. State and progress logs retain counts and identifiers only, not
 prompt or response content. The capturer attributes each request to the model actually sent upstream.
+
+When a schedule completes, the router queues user-only commentary announcing the handoff.
+The next eligible response for that thread delivers it through the existing bounded runtime
+commentary path, with child attribution where applicable. It is emitted once and removed
+from later provider-bound history using retained provenance. An absent response or exhausted
+auxiliary capacity cannot block the handoff or create another model turn.
